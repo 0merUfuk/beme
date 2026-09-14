@@ -2,6 +2,27 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
+## [Unreleased] — learning and governance (WP9)
+
+### Added
+- `internal/learning`: the observation → candidate → batch-review pipeline
+  (blueprint §14). Observations carry hypothesis, evidence family, family
+  count, inherited sensitivity, and candidate scopes from creation.
+- Evidence-family dedup: repeated feedback from one model/session/workflow
+  increments a family count instead of creating independent observations
+  (§14.4 anti-self-training; FR-052).
+- Rejected-proposal tombstones with normalized fingerprints: equivalent
+  re-proposals (case/whitespace-insensitive) are refused, not re-filed
+  (§14.5; FR-053, threat case 13).
+- Batch-review CLI `beme candidate list|inspect|review` with all §14.5
+  actions: approve, edit, merge, reject, defer, situational, scope_limit,
+  counterexample. Approve records the decision; the canonical knowledge write
+  remains the owning repository's proposal path (Be Me has no
+  canonical-write API by design, FR-051).
+- `beme.report_feedback` (MCP) now writes through the learning store:
+  durable data dir, family dedup, tombstone enforcement, capability-derived
+  inherited sensitivity (FR-054).
+
 ## [0.1.0-alpha.1] — 2026-09-14
 
 Verification-recovery release for v0.1.0-alpha. No engine behavior changes.

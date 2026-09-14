@@ -73,12 +73,12 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 
 | ID | Requirement (summary) | Owner WP | Verification method | Evidence | Status |
 |---|---|---|---|---|---|
-| FR-050 | Agent feedback and inferred behavior create quarantined observations only | WP9 | Feedback-path test (threat case 11) | — | defined |
-| FR-051 | Canonical promotion and authority/scope changes require trusted user action | WP9 | Promotion lifecycle test | — | defined |
-| FR-052 | Evidence families deduplicated; correlated repetitions never appear independent | WP9 | Evidence-family fixtures (threat case 12) | — | defined |
-| FR-053 | Rejected candidates tombstoned against equivalent re-proposal | WP9 | Tombstone regression (threat case 13) | — | defined |
-| FR-054 | Work-restricted observations never become global personal knowledge without de-identification and approval | WP9 | Cross-namespace promotion regression | — | defined |
-| FR-055 | Canonical changes transactional, auditable, reversible; physical purge is distinct, RED, irreversible, tombstone-only | WP9 | Transaction/undo tests; purge workflow documentation | — | defined |
+| FR-050 | Agent feedback and inferred behavior create quarantined observations only | WP9 | Feedback-path test (threat case 11) | `internal/learning/store_test.go` TestObserveNeverCanonical; MCP rewired to learning store | implemented |
+| FR-051 | Canonical promotion and authority/scope changes require trusted user action | WP9 | Promotion lifecycle test | `candidate review --action approve` records decision only; canonical write is the owning repo's proposal path; no canonical-write API exists in Be Me | implemented |
+| FR-052 | Evidence families deduplicated; correlated repetitions never appear independent | WP9 | Evidence-family fixtures (threat case 12) | `internal/learning/store_test.go` TestFamilyDedupNeverIndependent | implemented |
+| FR-053 | Rejected candidates tombstoned against equivalent re-proposal | WP9 | Tombstone regression (threat case 13) | `internal/learning/store_test.go` TestRejectedTombstoneRefusesEquivalent (normalized fingerprints) | implemented |
+| FR-054 | Work-restricted observations never become global personal knowledge without de-identification and approval | WP9 | Cross-namespace promotion regression | `observationSensitivityFor`: work-safe feedback inherits public_general; TestSensitivityInherited | implemented |
+| FR-055 | Canonical changes transactional, auditable, reversible; physical purge is distinct, RED, irreversible, tombstone-only | WP9 | Transaction/undo tests; purge workflow documentation | Observation writes are atomic (tmp+rename) + full review outcome audit trail; physical purge remains RED (documented) | partial (physical-purge workflow owner-gated by design) |
 
 ## Portability and operation
 

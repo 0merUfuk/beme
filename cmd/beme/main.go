@@ -65,8 +65,8 @@ func main() {
 		fs.BoolVar(&jsonOut, "json", false, "JSON output")
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "profile", "personal", "profile")
-	case "adapter":
-		// handled directly below (needs raw positional args)
+	case "adapter", "candidate":
+		// handled directly below (need raw positional args)
 	default:
 		usage()
 		os.Exit(2)
@@ -186,6 +186,13 @@ func main() {
 		fmt.Printf("tombstoned %s (logical forget; derived purge happens on next rebuild)\\n", key)
 	case "adapter":
 		adapterCmd(args[1:])
+	case "candidate":
+		rtC, err := app.Load(configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		candidateCmd(rtC, args[1:])
 	case "serve", "mcp":
 		if transport != "stdio" {
 			fmt.Fprintf(os.Stderr, "error: only stdio transport is supported in v1 (ADR-014)\\n")

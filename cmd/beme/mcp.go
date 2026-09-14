@@ -9,6 +9,7 @@ import (
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
+	"github.com/0merUfuk/beme/internal/learning"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -127,25 +128,25 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		if strings.TrimSpace(args.Text) == "" {
 			return toolError("text is required"), nil, nil
 		}
-		// Quarantined write: pending observations dir under cache (data dir
-		// observations path is the durable home; cache is the drop point).
-		dir := sess.Runtime.Config.CacheDir
-		os.MkdirAll(dir+"/observations", 0o700)
-		entry := map[string]any{
-			"kind":   args.Kind,
-			"text":   args.Text,
-			"task":   args.Task,
-			"at":     cmdNowUTC(),
-			"status": "quarantined",
-		}
-		b, _ := json.Marshal(entry)
-		f, err := os.CreateTemp(dir+"/observations", "obs_*.json")
+		// Quarantined write through the learning store: durable data dir,
+		// evidence-family dedup (correlated repetitions are one family, not
+		// independent confirmations), and rejected-proposal tombstones
+		// (FR-052/053). Never canonical; promotion is user-owned.
+		ls, err := learning.Open(sess.Runtime.Config.DataDir)
 		if err != nil {
+			// Learning-write failure is separate from context reads (§13.7):
+			// reads remain unaffected; report the degradation honestly.
 			return toolError("observation queue unavailable (context reads unaffected)"), nil, nil
 		}
-		f.Write(b)
-		f.Close()
-		return toolText(`{"status":"quarantined","note":"queued for batch review; never canonical until user approval"}`), nil, nil
+		obs, obsErr := ls.Observe(args.Kind, args.Text, "mcp-session",
+			string(sess.Capability.Profile), observationSensitivityFor(sess.Capability.Profile), args.Task)
+		if obsErr != nil {
+			if strings.Contains(obsErr.Error(), "tombstoned") {
+				return toolText(`{"status":"refused_tombstoned","note":"an equivalent proposal was previously rejected in review"}`), nil, nil
+			}
+			return toolError("observation could not be recorded"), nil, nil
+		}
+		return toolText(fmt.Sprintf(`{"status":"quarantined","observation_id":%q,"family_count":%d,"note":"queued for batch review; never canonical until user approval"}`, obs.ObservationID, obs.FamilyCount)), nil, nil
 	})
 
 	type getItemArgs struct {

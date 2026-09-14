@@ -88,9 +88,13 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
   this is the owner's gate to run.
 - **Assured adapter surfaces:** none — no harness hook was measured at
   100% pre-decision use. All surfaces are labeled `advisory`.
-- **Batch review CLI** for candidates (approve/edit/merge/reject/defer on
-  quarantined observations): intake + tombstones shipped; the review
-  workflow is a UI stub away (WP9 partial).
+- ~~Batch review CLI~~ **WP9 complete (2026-09-14)**: `internal/learning`
+  implements the full §14 pipeline — observation → candidate → batch review
+  (`beme candidate list|inspect|review` with all 8 §14.5 actions),
+  evidence-family dedup, normalized-fingerprint tombstones, inherited
+  sensitivity, atomic writes. MCP `report_feedback` writes through the
+  store. FR-050–054 implemented and tested; FR-055 partial only in the
+  physical-purge workflow (RED/owner-gated by design).
 - **Fresh-agent documentation test** (clean checkout + new agent): designed
   in ACCEPTANCE §9; not run in this session.
 - **Linux/Windows:** built and unit-tested on macOS; CI covers Ubuntu

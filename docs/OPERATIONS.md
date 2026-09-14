@@ -32,6 +32,14 @@ beme preview --task "..." --workspace "$PWD"   # human pack preview
 beme preview --task "..." --json # machine pack
 beme forget rec_xxx "reason"      # logical tombstone (revokes from resolution)
 beme adapter install codex        # managed bootstrap block
+
+# Learning review (batch, low-friction):
+beme candidate list                       # quarantined observations pending review
+beme candidate inspect obs_xxxxxxxx
+beme candidate review obs_xxxxxxxx --action reject --note "reason"
+# actions: approve|edit|merge|reject|defer|situational|scope_limit|counterexample
+# approve records the decision; the canonical write happens in the owning
+# repository's proposal path. Be Me never writes canonical knowledge.
 ```
 
 ## Recovery
