@@ -37,7 +37,12 @@ DETECTOR_FILES = {
 }
 
 EXCLUDE_FILES = {"beme-project-blueprint-handoff.md", ".gitignore", "private_scan_terms.local"}
-EXCLUDE_DIRS = {".git"}
+
+# Machine-local environment/dependency directories: never committed
+# (git-ignored) and their third-party internals would bury real leaks.
+# Scanning still covers every repository-owned file.
+EXCLUDE_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__",
+                ".tox", ".mypy_cache", ".pytest_cache"}
 
 
 def load_extra_terms():

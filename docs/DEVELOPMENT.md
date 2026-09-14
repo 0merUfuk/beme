@@ -39,8 +39,10 @@ any Python 3.11+ interpreter explicitly instead, e.g.
 **Private evaluation (owner-gated, never in public CI):**
 
 ```sh
-make validate-private   # with BEME_PRIVATE_EVAL_DIR unset →
-                        # "private eval: not_run — …" and exit 3
+# Same venv PATH prefix as every other Python gate:
+PATH="$PWD/.venv/bin:$PATH" make validate-private
+# with BEME_PRIVATE_EVAL_DIR unset →
+#   "private eval: not_run — …" and exit 3 (never a silent pass)
 ```
 
 The private corpus lives on the owner's machine only; its validation

@@ -20,3 +20,6 @@ tasks/
 config.local.yaml
 # Owner-private scan terms (deployment data; never commit)
 scripts/private_scan_terms.local
+
+# Local validation environment (documented bootstrap)
+.venv/
