@@ -14,22 +14,42 @@ WP3 Contracts/schemas ─▶ WP2B Frozen fixtures + thresholds ─▶ [PRODUCTIO
                      WP9 Learning/review ─▶ WP10 Hardening/dogfood ─▶ WP11 Public release
 ```
 
-## Status snapshot (2026-09-14)
+## Status snapshot
+
+> The single canonical current-status section is
+> [`docs/HANDOFF.md`](HANDOFF.md) §1. This table records per-work-package
+> scope and completion state; refresh it from HANDOFF when a package lands.
+> Counts below are evidence-linked, not prose promises: contract checks are
+> re-derived by `make validate`, test counts by `go test -list '.*' ./...`.
 
 | WP | Scope | Status |
 |---|---|---|
-| WP0 | Live evidence and drift validation | **Complete** (private evidence report; snapshot re-verified; 2 read-only verification clones; 18 gold candidates identified) |
-| WP1 | Constitution, decision ledger, traceability | **Complete** (`docs/PROJECT_CONTEXT.md`, `docs/DECISIONS.md` ADR-001…021, `docs/REQUIREMENTS.md` per-ID matrix) |
-| WP2A | Evaluation contract + candidate corpus | **Complete** (`evals/EVALUATION_CONTRACT.md`; 18 private candidate cases, all `status: candidate`) |
-| WP3 | Contracts and schemas | **Complete** (8 versioned schemas; fixtures 35/35; elevation structurally unrepresentable) |
-| WP2B | Frozen fixtures + thresholds | **Blocked on user (RED):** candidate gold approval; then splits/threshold freeze |
-| WP4–WP11 | Production code → release | Not authorized until WP2B exit gate passes |
+| WP0 | Live evidence and drift validation | **Complete** (2026-09-14; private evidence report; 2 read-only verification clones; gold candidates identified) |
+| WP1 | Constitution, decision ledger, traceability | **Complete** (ADR-001…023; per-ID requirements matrix) |
+| WP2A | Evaluation contract + candidate corpus | **Complete** (evaluation contract; 34-case private corpus approved under ADR-022 delegation) |
+| WP3 | Contracts and schemas | **Complete** (8 versioned schemas; public fixture checks via `make validate`; elevation structurally unrepresentable) |
+| WP2B | Frozen fixtures + thresholds | **Complete** (2026-09-14, ADR-022 delegation; splits 13/13/8; thresholds at design targets; private freeze manifest) |
+| WP4 | Source and projection architecture | **Complete** (registry, safe ingestion, adapters, separate stores, revocation; work-safe boundary tested at construction) |
+| WP5 | Resolver vertical slice | **Complete** (two-stage policy→resolution; determinism, budget, unknowns tested) |
+| WP6 | Administrative CLI | **Complete** (status/doctor/build/preview/forget/adapter/candidate) |
+| WP7 | MCP boundary | **Complete** (4-tool stdio server; surface contract + elevation + transport tests) |
+| WP8 | Harness adapters | **Complete** (codex + claude-code install targets; hermes + cursor documented contracts; all `advisory` — see ADR-013) |
+| WP9 | Learning and review | **Complete** (observation→candidate→batch-review pipeline; §14.5 actions; tombstones; FR-050..054 tested; FR-055 partial: physical purge RED by design) |
+| WP10 | Hardening | **Complete for this alpha** (CI matrix, migrations FR-064, private-data scan, regression suite; behavioral beta gates pending live-model runs) |
+| WP11 | Public release | **v0.1.0-alpha.1 published** (verification defects of alpha corrected post-publish; clean history, tarball artifacts, honest platform labels) |
 
-## What each remaining WP owns
+**Remaining** (owner-gated or future work): live-model B4-vs-B0 behavioral
+evaluation (paid API runs); `assured` adapter surfaces (requires measured
+100% pre-decision use); Windows runtime verification.
+
+## What each WP owns (scope record)
+
+All work packages through WP11 have shipped scope as recorded in the
+status table above; this section is the scope definition each was held to.
 
 - **WP2B:** user-approved locked seed corpus, frozen splits, exact scoring
-  contract, calibrated thresholds, sealed holdout. *Entry needs nothing more
-  from the agent; approval is the user's.*
+  contract, calibrated thresholds, sealed holdout. *Executed 2026-09-14
+  under ADR-022 delegation.*
 - **WP4:** source registry, safe ingestion, adapters (canonical-knowledge style, project
   policy, optional Rifja contract), projection builders, separate
   personal/work-safe stores, revocation/deletion semantics.

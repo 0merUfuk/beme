@@ -5,9 +5,13 @@
 > implementing agent must follow. Blueprint-derived. Maintained alongside
 > `docs/DECISIONS.md`.
 
-**Status:** Contracts phase (WP0–WP3 contracts + eval contract + schema work).
-Production engine implementation is gated behind WP2B (evaluation corpus
-freeze + user approval). See `docs/ROADMAP.md`.
+**Status:** Alpha — `v0.1.0-alpha.1` released. The runtime, contracts,
+MCP surface, CLI, adapter contracts, and learning-review pipeline are
+implemented. Canonical current status lives in
+[`docs/HANDOFF.md`](HANDOFF.md) §1; work-package state in
+[`docs/ROADMAP.md`](ROADMAP.md). Production engine code was authorized at
+the WP2B freeze (2026-09-14) and has shipped; this document records the
+product contract, not the phase.
 
 ## 1. Definition
 

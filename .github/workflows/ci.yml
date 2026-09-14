@@ -26,6 +26,8 @@ jobs:
         run: make validate
       - name: CI regression suite (public/private separation invariants)
         run: python3 scripts/test_ci_regression.py
+      - name: Documentation consistency suite
+        run: python3 scripts/test_docs_consistency.py
       - name: Build
         run: go build ./...
       - name: Vet

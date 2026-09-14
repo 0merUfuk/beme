@@ -31,26 +31,47 @@ inspectable `ContextPack` objects for AI coding agents.
 
 ## Status
 
-**Contracts phase — pre-implementation.** The engine design, trust model,
-requirement traceability, decision ledger (ADR-001…021), evaluation contract,
-and versioned JSON schemas are defined and fixture-validated. Engine code
-begins only after the evaluation corpus freeze (see `docs/ROADMAP.md`).
+**Alpha.** `v0.1.0-alpha.1` is released: contracts, runtime, narrow MCP
+surface, CLI, adapter contracts, and the learning-review pipeline are
+implemented and tested. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for the
+canonical current status and [`docs/ROADMAP.md`](docs/ROADMAP.md) for
+work-package state. Known alpha limitations (advisory-only adapter
+assurance, no live-model behavioral evaluation yet, Windows
+ported-unverified) are listed in the
+[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1).
 
 ```
 beme/
 ├── docs/        # constitution, requirements, architecture, decisions, evaluation
 ├── schemas/     # versioned JSON contracts (source, record, policy, pack, eval)
-├── testdata/    # synthetic fixtures + negative/injection fixtures
+├── internal/    # Go runtime: policy, resolver, storage, ingestion, workspace, learning
+├── cmd/beme/    # CLI + MCP stdio server
+├── adapters/    # harness adapter assets (Codex, Claude Code, Hermes, Cursor)
 ├── evals/       # public evaluation assets (synthetic cases, privacy invariants)
+├── testdata/    # synthetic fixtures + negative/injection fixtures
 ├── scripts/     # contract validation tooling
 └── examples/    # synthetic deployment examples
 ```
 
-## Quick start (contracts validation)
+## Quick start (validation from a clean checkout)
 
 ```sh
-make validate     # validates all fixtures against the versioned schemas
+# 1. Python deps for contract validation (Python 3.11+; isolated venv —
+#    never modify your system Python):
+python3 -m venv .venv
+.venv/bin/pip install jsonschema pyyaml
+
+# 2. Public contract validation (repo-local; runs on any clean checkout):
+PATH="$PWD/.venv/bin:$PATH" make validate
+
+# 3. Go build + tests (Go 1.25+):
+go build ./... && go test ./...
 ```
+
+If your system `python3` is older than 3.11, use any Python 3.11+
+interpreter explicitly (e.g. `python3.13 -m venv .venv`). See
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full environment
+guide and the owner-gated private-evaluation workflow.
 
 ## Documentation
 

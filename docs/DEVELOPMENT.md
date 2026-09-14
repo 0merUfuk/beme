@@ -4,32 +4,83 @@
 
 ## Environment
 
-- Go ≥ 1.25 (engine, once WP4+ begins; ADR-004).
-- Python 3.11+ with `jsonschema` and `pyyaml` for contract validation.
-- SQLite 3.54+ tooling optional (inspecting derived stores later).
+- Go ≥ 1.25 (engine; ADR-004).
+- Python ≥ 3.11 with `jsonschema` and `pyyaml` for contract validation.
+- SQLite 3.54+ tooling optional (inspecting derived stores).
 
-## Validation (contracts phase)
+## Validation environment bootstrap (clean checkout)
+
+The public validation path is **repo-local only**: it reads no file outside
+the repository and never requires the private evaluation corpus (ADR-023).
 
 ```sh
-make validate            # all fixtures vs versioned schemas; also validates
-                         # the private candidate corpus if present locally
+# 1. Isolated environment for validation deps — never modify your system
+#    Python. Requires Python 3.11+:
+python3 -m venv .venv
+.venv/bin/pip install jsonschema pyyaml
+
+# 2. Public contract validation (repo-local; safe on any clean checkout
+#    and on CI runners):
+PATH="$PWD/.venv/bin:$PATH" make validate
+
+# 3. Go gates:
+go build ./... && go vet ./... && go test ./...
+
+# 4. Public/private separation regression suite + private-data scan:
+PATH="$PWD/.venv/bin:$PATH" python3 scripts/test_ci_regression.py
+python3 scripts/scan_private_data.py
 ```
 
-The validator enforces the WP3 exit gate: positive fixtures must pass, and
-elevation attempts (`profile`, `capability` fields) must be **rejected** by
-the resolution-request schema.
+**If your system `python3` is older than 3.11:** the venv step fails. Use
+any Python 3.11+ interpreter explicitly instead, e.g.
+`python3.13 -m venv .venv` (Homebrew: `brew install python@3.13`). Do not
+`pip install --user` into a system Python.
+
+**Private evaluation (owner-gated, never in public CI):**
+
+```sh
+make validate-private   # with BEME_PRIVATE_EVAL_DIR unset →
+                        # "private eval: not_run — …" and exit 3
+```
+
+The private corpus lives on the owner's machine only; its validation
+reports an explicit `not_run` (exit 3) when unavailable — it never
+silently passes and never blocks public CI. This behavior is itself
+regression-tested (R3/R3b in `scripts/test_ci_regression.py`).
+
+The public validator enforces the WP3 exit gate: positive fixtures must
+pass, and elevation attempts (`profile`, `capability` fields) must be
+**rejected** by the resolution-request schema.
 
 ## Layout
 
 - `schemas/` — versioned JSON contracts. Changes require a schema_version
   bump or a reviewed in-place revision before any production code consumes
   them.
+- `internal/` — Go runtime packages (policy, resolver, storage, ingestion,
+  workspace, learning, projection, app). Domain logic never imports CLI,
+  MCP, or storage-driver specifics (NFR-010).
+- `cmd/beme/` — CLI entry point and MCP stdio server.
 - `testdata/synthetic/` — public, fully synthetic fixtures. No real data.
 - `testdata/injection/` — negative/injection regression fixtures.
 - `evals/` — public evaluation assets. Real cases live privately (never here).
-- `scripts/` — validation tooling.
+- `scripts/` — validation tooling, including the CI regression suite.
 - `docs/` — normative project docs (see ownership rules in
   `docs/PROJECT_CONTEXT.md` §7).
+
+## Documentation-consistency rules
+
+- `docs/HANDOFF.md` §1 is the **single canonical current-status section**.
+  Other documents reference it; they must not maintain independent phase
+  descriptions.
+- Prefer evidence-linked references over hard-coded counts: "public fixture
+  checks via `make validate`", "test inventory via `go test -list '.*' ./...`".
+  Where a count is useful, derive it from the command's actual output.
+- `scripts/test_docs_consistency.py` (runs in CI) fails on the known stale
+  patterns that broke the first fresh-agent documentation test: lifecycle
+  phase contradictions, hard-coded evidence counts, and any doc
+  reintroducing private-corpus validation into the public path. The exact
+  pattern list lives in the script, not in this prose.
 
 ## Conventions
 

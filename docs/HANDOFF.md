@@ -1,8 +1,11 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 6 — 2026-09-14
-**Position:** `v0.1.0-alpha.1` published and fully verified. Recovery task
-complete; CI green on the release commit; all artifacts verified.
+**Revision:** 7 — 2026-09-14
+**Position:** `v0.1.0-alpha.1` published and verified. First fresh-agent
+documentation test FAILED the documentation gate (stale lifecycle claims,
+undocumented validation bootstrap); remediation complete on `main`, docs
+consistency now regression-gated in CI. Re-test from clean checkout pending
+below.
 
 ## 1. Status
 
@@ -24,6 +27,18 @@ Verified for `v0.1.0-alpha.1` (release commit 8cee5b9):
 - Tagged module install `go install …@v0.1.0-alpha.1` verified outside
   the checkout; installed binary runs; transport elevation rejected (exit 3).
 
+**Documentation gate (blueprint §24 / ACCEPTANCE §9):** the first
+fresh-agent test (2026-09-14, clean checkout @ `15bbda7`) verified
+runtime/CI/separation behaviors but FAILED the documentation gate: stale
+lifecycle phase claims in three docs, an undocumented validation
+bootstrap, and a stale description of pre-ADR-023 validation coupling.
+Remediation: one canonical status section (here, §1), all stale claims
+removed, bootstrap documented in README + DEVELOPMENT, hard-coded counts
+replaced with command-derived evidence, and a documentation-consistency
+regression suite wired into CI so these classes cannot regress. A
+clean-checkout re-test at the new HEAD is the gate. Full findings and the
+verbatim stale strings are recorded in DECISIONS.md (ADR-024).
+
 ## 2. Verified evidence snapshot
 
 Pinned evidence repositories re-verified locally at WP0 (report in the
@@ -40,7 +55,7 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 ## 4. Work completed (engine)
 
 - **Contracts** (`schemas/`, 8 versioned JSON Schemas; public fixture checks
-  19/19 pass repo-locally; private-corpus validation is a separate owner-gated
+  pass repo-locally via `make validate` — zero failures by gate; private-corpus validation is a separate owner-gated
   gate; elevation structurally unrepresentable in the request schema).
 - **Stage-A policy** (`internal/policy`): sensitivity monotonicity,
   profile/work/task scope, lifecycle/validity, trust, revocation
@@ -136,12 +151,12 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 
 | Check | Result |
 |---|---|
-| Contract fixtures vs schemas (`make validate`) | 19/19 PASS, exit 0 (public, repo-local; CI regression suite 7/7) |
-| Private eval corpus (owner-run `make validate-private`) | 34/34 PASS locally (exit 0 with `BEME_PRIVATE_EVAL_DIR` set; `not_run`/exit 3 when absent — never in public CI) |
+| Contract fixtures vs schemas (`make validate`) | exit 0, all public checks pass (repo-local); separation regression suite green |
+| Private eval corpus (owner-run `make validate-private`) | exit 0 with `BEME_PRIVATE_EVAL_DIR` set, all cases valid; `not_run`/exit 3 when absent — never in public CI |
 | Elevation fixtures rejected by request schema | 2/2 rejected (P1 cases) |
 | `go build ./...` | OK (macOS darwin/arm64) |
 | `go vet ./...` | OK |
-| `go test ./...` | 34 tests PASS across 7 packages (policy, resolver, ingestion, storage, workspace, app, cmd) |
+| `go test ./...` | all packages pass, exit 0 (inventory via `go test -list '.*' ./...`; zero failures by gate) |
 | Work-safe boundary end-to-end (construction + pack + store) | PASS — personal content provably absent |
 | Injection clamp (self-assigned authority → informational) | PASS |
 | Secret scan + symlink containment + bounds | PASS (ingestion tests) |
@@ -153,6 +168,8 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 | Mandatory-content budget protection (FR-035) | PASS |
 | Unknown-preference negative control (never invented) | PASS |
 | Clean history for publication | Single squashed root commit from audited tree (no private-term history) |
+| Documentation consistency (D1–D6) | `python3 scripts/test_docs_consistency.py` → all checks pass, exit 0 (CI-gated) |
+| Released module install | `go install github.com/0merUfuk/beme/cmd/beme@v0.1.0-alpha.1` → exit 0; installed binary runs (`status --json` OK; transport elevation rejected, exit 3) |
 
 ## 10. Reply/ownership venue
 

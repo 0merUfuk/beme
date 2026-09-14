@@ -385,6 +385,41 @@ public tree (private-path leak, in addition to the CI breakage).
 **Reopen:** a verified need for public CI to exercise private data (never,
 per ADR-015) or a schema change that couples public and private validation.
 
+## ADR-024 — Documentation gate failed; canonical status single-sourced; docs consistency CI-gated
+
+**Status:** Ratified (2026-09-14) · **Reversibility:** GREEN
+**Decision:** The first fresh-agent documentation test (blueprint §24 /
+ACCEPTANCE §9) FAILED and its verdict is binding: the runtime, CI, release
+recovery, and public/private separation passed, but a fresh agent could not
+determine the current project phase or run the documented validation path
+without undocumented recovery work. Verified stale claims removed:
+"Contracts phase — pre-implementation" (README), "production implementation
+gated behind WP2B" (PROJECT_CONTEXT), "WP2B Blocked on user" and "WP4–WP11
+not authorized" (ROADMAP), "fixtures 35/35" (ROADMAP), "34 tests across 7
+packages" (HANDOFF), and DEVELOPMENT.md's "make validate … also validates the
+private candidate corpus if present locally" — the pre-ADR-023 coupling that
+caused the original CI failure. Remediation: HANDOFF §1 is the single
+canonical status section (other docs reference it); README/DEVELOPMENT
+document a reproducible validation bootstrap (Python 3.11+ requirement,
+isolated venv, jsonschema+pyyaml, behavior when system Python is older,
+exact clean-checkout commands); hard-coded evidence counts are replaced by
+command-derived references; `scripts/test_docs_consistency.py` (D1 phase
+contradictions, D2 stale counts, D3 public/private validation semantics,
+D4 bootstrap presence, D5 link integrity, D6 status anchor) runs in CI.
+**Alternatives rejected:** patching only the failing strings without a
+regression gate (the drift would recur); moving status to ROADMAP (HANDOFF
+is the blueprint's recovery entrypoint and already the most-recently-updated
+document).
+**Evidence:** fresh-agent transcript + report (2026-09-14, checkout @
+`15bbda7`): `make validate` failed first run with FATAL jsonschema missing
+(no documented bootstrap); stale claims listed above; final verdict "Yes,
+with the caveat that status claims are stale".
+**Consequences:** docs edits that reintroduce these classes fail CI.
+Lifecycle claims must derive from HANDOFF §1. No new release for docs-only
+changes; `v0.1.0-alpha.1` source retains the stale docs (recorded in its
+release notes) and the next release carries the remediated set.
+**Reopen:** a future fresh-agent test failure re-opens this ADR.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |
