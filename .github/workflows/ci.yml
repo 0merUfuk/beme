@@ -17,8 +17,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
-      - name: Install contract validation deps
-        run: python3 -m pip install --quiet jsonschema pyyaml
+      - name: Set up Python validation deps (venv; PEP 668-safe)
+        run: |
+          python3 -m venv /tmp/beme-venv
+          /tmp/beme-venv/bin/pip install --quiet jsonschema pyyaml
+          echo "/tmp/beme-venv/bin" >> "$GITHUB_PATH"
       - name: Validate contract fixtures (public only)
         run: make validate
       - name: CI regression suite (public/private separation invariants)
