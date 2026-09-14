@@ -36,7 +36,8 @@ compatibility commitments.
 - Advisory-only adapter assurance; no `assured` surface in v1 (no verified
   prompt-bound hook measured at 100%).
 - No live-model behavioral evaluation yet (requires paid API runs —
-  owner-gated; runner and scoring contract ready).
+  owner-gated; scoring contract and frozen splits ready; runner not yet
+  implemented).
 - Learning loop ships observation intake + tombstones; batch review CLI
   (candidate approve/edit/merge/reject) is pending.
 - macOS verified; Linux/Windows ported-unverified (NFR-007).

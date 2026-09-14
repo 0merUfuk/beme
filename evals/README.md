@@ -9,7 +9,10 @@ Public evaluation assets for the engine's claims.
   published under `schemas/evaluation/` at the repo root (canonical location).
 - `public/` — synthetic, anonymized public cases and privacy/policy
   regression fixtures. **No real user data ever lives here.**
-- `runners/` — evaluation runners (added with WP5/WP10 implementation).
+- `runners/` — evaluation runners. **Not yet implemented.** The behavioral
+  evaluation protocol (baselines, rubric, manifest) is defined in
+  `EVALUATION_CONTRACT.md`; the executable runner arrives with the first
+  owner-gated live-model evaluation session.
 
 ## Hard rules
 

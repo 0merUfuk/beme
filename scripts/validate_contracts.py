@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Validate all Be Me contract fixtures against the versioned schemas.
+"""Validate public Be Me contract fixtures against the versioned schemas.
 
 WP3 exit gate: schemas validate all seed fixtures, and the elevation-negative
 fixtures must be REJECTED by the request schema (the schema cannot represent
 model-selected authority elevation).
+
+Public contract: this script depends ONLY on files inside the repository.
+It never reads the operator's home directory, environment-specific paths, or
+any private evaluation corpus (ADR-023). Private evaluation data is validated
+by scripts/validate_private_eval.py, which is owner-gated and never runs in
+public CI.
 """
 import json
 import sys
@@ -114,7 +120,11 @@ ok_request = {"schema_version": "1", "task": "Decide storage", "workspace_hint":
 errs = list(validator.iter_errors(ok_request))
 check("clean request validates", not errs, "; ".join(e.message for e in errs[:2]))
 
-# --- WP3 gate: golden-case schema validates a private candidate shape (synthetic stand-in)
+# --- golden-case schema against the public synthetic case (evals/public)
+gc_public = load(ROOT / "evals" / "public" / "synthetic" / "decision.architecture.storage.embedded-vs-server.synthetic.v1.json")
+validate(SCHEMAS / "evaluation" / "golden-case.schema.json", gc_public, "golden-case public synthetic fixture")
+
+# --- golden-case schema against the inline synthetic stand-in
 gc_synthetic = {
     "id": "decision.architecture.storage.embedded-vs-server.synthetic.v1",
     "schema_version": "1",
@@ -138,21 +148,10 @@ gc_synthetic = {
 }
 validate(SCHEMAS / "evaluation" / "golden-case.schema.json", gc_synthetic, "golden-case synthetic fixture")
 
-# --- private candidate corpus: validate every YAML case against golden-case schema (if pyyaml available)
-private_dir = Path.home() / ".config" / "beme" / "evals" / "omer-regression-pack" / "candidates"
-try:
-    import yaml
-    n = 0
-    for f in sorted(private_dir.glob("*.yaml")):
-        with open(f) as fh:
-            doc = yaml.safe_load(fh)
-        # strip comment header lines handled by yaml parser already
-        validate(SCHEMAS / "evaluation" / "golden-case.schema.json", doc, f"private candidate {f.name}")
-        n += 1
-    if n == 0:
-        check("private candidates found", False, f"none in {private_dir}")
-except ImportError:
-    check("private candidates validated", False, "pyyaml missing")
+# --- run-manifest schema sanity (required fields present in schema)
+rm = load(SCHEMAS / "evaluation" / "run-manifest.schema.json")
+check("run-manifest schema loads with required fields", len(rm.get("required", [])) >= 30,
+      f"only {len(rm.get('required', []))} required fields")
 
 print(f"\n{'=' * 50}\n{len(passed)} passed, {len(failed)} failed")
 sys.exit(1 if failed else 0)

@@ -1,19 +1,23 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 3 — 2026-09-14
-**Position:** WP0–WP10 complete; public release candidate (WP11) executed
-under ADR-022 delegation. Engine is alpha: contracts + runtime + narrow MCP
-surface + Tier-1/Tier-2 adapter contracts, all tested.
+**Revision:** 4 — 2026-09-14
+**Position:** v0.1.0-alpha published (tag `e172e0f`); its CI-verification
+failure recovered on `main` (ADR-023). `v0.1.0-alpha.1` pending after full
+green CI + artifact verification.
 
 ## 1. Status
 
-The full authorized sequence ran to completion: WP0 (evidence/drift) → WP1
-(constitution/ADRs/traceability) → WP2A (eval contract) → WP3 (schemas) →
-WP2B freeze (34 approved cases under ADR-022 delegation; splits 13/13/8;
-thresholds at design targets) → WP4–WP5 (sources, projections, resolver) →
-WP6 (CLI) → WP7 (MCP boundary) → WP8 (adapters) → WP9 (learning quarantine
-intake) → WP10 (hardening: CI, private-data scan, full docs) → WP11
-(publication with clean history).
+v0.1.0-alpha shipped with a release-verification failure: public CI's
+`make validate` read a private corpus path that cannot exist on a public
+runner, so both CI runs failed and the macOS job was cancelled — meaning
+the release's "Linux passes CI" and "51 fixture checks" claims were
+unsupported. Recovery (ADR-023) is complete in the tree: public validation
+is repo-local (19/19), private evaluation is owner-gated via
+`BEME_PRIVATE_EVAL_DIR` (not_run/exit 3 when absent, never silent), a
+7-check regression suite guards the exact failure, and docs claims now
+match observable evidence. Remaining before `v0.1.0-alpha.1`: push, full
+green Linux+macOS CI, tagged module-path install verification, release
+artifact verification.
 
 ## 2. Verified evidence snapshot
 
@@ -30,8 +34,9 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 
 ## 4. Work completed (engine)
 
-- **Contracts** (`schemas/`, 8 versioned JSON Schemas; fixture-validated
-  51/51; elevation structurally unrepresentable in the request schema).
+- **Contracts** (`schemas/`, 8 versioned JSON Schemas; public fixture checks
+  19/19 pass repo-locally; private-corpus validation is a separate owner-gated
+  gate; elevation structurally unrepresentable in the request schema).
 - **Stage-A policy** (`internal/policy`): sensitivity monotonicity,
   profile/work/task scope, lifecycle/validity, trust, revocation
   tombstones — every exclusion carries a reason.
@@ -122,7 +127,8 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 
 | Check | Result |
 |---|---|
-| Contract fixtures vs schemas (`make validate`) | 51/51 PASS, exit 0 |
+| Contract fixtures vs schemas (`make validate`) | 19/19 PASS, exit 0 (public, repo-local; CI regression suite 7/7) |
+| Private eval corpus (owner-run `make validate-private`) | 34/34 PASS locally (exit 0 with `BEME_PRIVATE_EVAL_DIR` set; `not_run`/exit 3 when absent — never in public CI) |
 | Elevation fixtures rejected by request schema | 2/2 rejected (P1 cases) |
 | `go build ./...` | OK (macOS darwin/arm64) |
 | `go vet ./...` | OK |

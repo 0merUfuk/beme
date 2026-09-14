@@ -38,7 +38,9 @@
 - [x] Versioned schemas: source descriptor, workspace identity, normalized
       record, provenance, resolution request, context pack, golden case, run
       manifest.
-- [x] All seed fixtures validate (`make validate` → 35/35 pass).
+- [x] All public fixtures validate (`make validate` → 19/19 pass,
+      repo-local only; private-corpus validation is the separate owner-gated
+      `make validate-private` gate per ADR-023).
 - [x] Elevation-negative fixtures are structurally rejected by the request
       schema — the contract cannot represent model-selected authority
       elevation (WP3 exit gate).

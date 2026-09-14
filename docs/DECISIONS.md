@@ -356,6 +356,35 @@ preferences."
 
 ---
 
+## ADR-023 — Public validation is repo-local; private evaluation is owner-gated and explicitly not_run when unavailable
+
+**Status:** Ratified (2026-09-14, recovery of the v0.1.0-alpha CI failure) · **Reversibility:** GREEN
+**Decision:** `make validate` (public contract validation) may depend only on
+files inside the repository. It never reads the operator's home directory,
+environment-specific paths, or private evaluation corpora. Private
+evaluation data is validated by `scripts/validate_private_eval.py`, which
+locates its corpus exclusively via `BEME_PRIVATE_EVAL_DIR` (no hard-coded
+paths), is never invoked by public CI, and exits 3 (`not_run`) when the
+corpus is unavailable — a private evaluation must never silently pass
+because its data is missing, and its absence must never fail public CI.
+**Alternatives rejected:** (a) keep validating the private corpus in public
+CI with a skip-if-absent fallback — rejected: it fails closed on public
+runners (the observed failure) and, worse, a silent skip would let private
+validation silently pass; (b) upload the corpus to CI — rejected: private
+evaluation data never reaches public runners (ADR-015).
+**Evidence:** CI run 34794708408 failed at `make validate` with
+`private candidates found — none in /home/runner/.config/beme/evals/<private>/candidates`;
+regression suite `scripts/test_ci_regression.py` (R1–R5) reproduces and
+guards the exact failure and the separation invariants; both run in public
+CI.
+**Consequences:** public "fixture checks" counts refer only to public
+fixtures (19 as of this ADR); private-corpus validation (34 cases) is an
+owner-run gate reported separately. The published validator previously
+embedded the private corpus path name — that string was removed from the
+public tree (private-path leak, in addition to the CI breakage).
+**Reopen:** a verified need for public CI to exercise private data (never,
+per ADR-015) or a schema change that couples public and private validation.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |
