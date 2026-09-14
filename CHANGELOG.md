@@ -2,6 +2,32 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
+## [Unreleased] — documentation reconciliation (ADR-024)
+
+### Fixed
+- Removed stale lifecycle claims that failed the first fresh-agent
+  documentation test: "contracts phase / pre-implementation" (README),
+  "production implementation gated behind WP2B" (PROJECT_CONTEXT),
+  "WP2B blocked on user" and "WP4–WP11 not authorized" (ROADMAP), stale
+  fixture/test counts, and DEVELOPMENT.md's pre-ADR-023 description of
+  private-corpus coupling in the public validation path.
+- `docs/HANDOFF.md` §1 is now the single canonical current-status section;
+  every other lifecycle statement derives from it.
+- README and DEVELOPMENT now document a reproducible clean-checkout
+  validation bootstrap: Python 3.11+ requirement, isolated venv creation,
+  jsonschema + pyyaml install, behavior when the system Python is older,
+  and the exact commands that work from a clean checkout.
+- Evidence claims use command-derived references instead of hard-coded
+  counts (drift-prone prose).
+
+### Added
+- `scripts/test_docs_consistency.py` (D1–D6, CI-gated): phase
+  contradictions, stale hard-coded counts, public/private validation
+  semantics, bootstrap documentation presence, link integrity, and the
+  canonical status anchor.
+- ADR-024: binding record of the failed documentation gate, remediation,
+  and reopen condition.
+
 ## [Unreleased] — learning and governance (WP9)
 
 ### Added
