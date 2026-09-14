@@ -1,25 +1,28 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 5 — 2026-09-14
-**Position:** v0.1.0-alpha published (tag `e172e0f`); its CI-verification
-failure recovered on `main` (ADR-023). `v0.1.0-alpha.1` pending after full
-green CI + artifact verification.
+**Revision:** 6 — 2026-09-14
+**Position:** `v0.1.0-alpha.1` published and fully verified. Recovery task
+complete; CI green on the release commit; all artifacts verified.
 
 ## 1. Status
 
-v0.1.0-alpha shipped with a release-verification failure: public CI's
-`make validate` read a private corpus path that cannot exist on a public
-runner, so both CI runs failed and the macOS job was cancelled — meaning
-the release's "Linux passes CI" and "51 fixture checks" claims were
-unsupported. Recovery (ADR-023) is complete in the tree: public validation
-is repo-local (19/19), private evaluation is owner-gated via
-`BEME_PRIVATE_EVAL_DIR` (not_run/exit 3 when absent, never silent), a
-7-check regression suite guards the exact failure, and docs claims now
-match observable evidence. Green CI run 34844385100 (macOS+Ubuntu+scan) verified on `main` @ 269b66d;
-tagged module install verified outside the checkout; v0.1.0-alpha release
-artifacts downloaded, checksum-verified, and smoke-executed (darwin×2,
-linux×2 via Docker, Windows PE-verified). alpha.1 adds tarball distribution
-(action exec-bit loss) and action-major bumps.
+v0.1.0-alpha shipped with a release-verification failure (public CI read a
+private corpus path; both CI runs failed). Recovery is complete and
+verified: public validation is repo-local (ADR-023), private evaluation is
+owner-gated with explicit `not_run` semantics, a 7-check regression suite
+guards the failure, and `v0.1.0-alpha.1` is published with green CI on
+macOS + Ubuntu, verified artifacts, and honest platform claims.
+v0.1.0-alpha's release notes carry a post-publish correction; the tag was
+never moved.
+
+Verified for `v0.1.0-alpha.1` (release commit 8cee5b9):
+- CI run 34845025922: test(macos) ✓ test(ubuntu) ✓ private-data-scan ✓, zero annotations.
+- Fresh download of every tarball + checksums.txt: all checksums OK.
+- Exec bit survives tarball extraction (0o755); darwin-arm64/amd64 run
+  natively; linux-amd64/arm64 run via Docker; Windows PE-verified only
+  (runtime untested — ported, unverified).
+- Tagged module install `go install …@v0.1.0-alpha.1` verified outside
+  the checkout; installed binary runs; transport elevation rejected (exit 3).
 
 ## 2. Verified evidence snapshot
 
