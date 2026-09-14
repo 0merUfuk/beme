@@ -13,8 +13,8 @@ jobs:
         os: [macos-latest, ubuntu-latest]
         go: ["1.25"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Set up Python validation deps (venv; PEP 668-safe)
@@ -36,6 +36,6 @@ jobs:
   private-data-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scan for private data leakage
         run: python3 scripts/scan_private_data.py

@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 4 — 2026-09-14
+**Revision:** 5 — 2026-09-14
 **Position:** v0.1.0-alpha published (tag `e172e0f`); its CI-verification
 failure recovered on `main` (ADR-023). `v0.1.0-alpha.1` pending after full
 green CI + artifact verification.
@@ -15,9 +15,11 @@ unsupported. Recovery (ADR-023) is complete in the tree: public validation
 is repo-local (19/19), private evaluation is owner-gated via
 `BEME_PRIVATE_EVAL_DIR` (not_run/exit 3 when absent, never silent), a
 7-check regression suite guards the exact failure, and docs claims now
-match observable evidence. Remaining before `v0.1.0-alpha.1`: push, full
-green Linux+macOS CI, tagged module-path install verification, release
-artifact verification.
+match observable evidence. Green CI run 34844385100 (macOS+Ubuntu+scan) verified on `main` @ 269b66d;
+tagged module install verified outside the checkout; v0.1.0-alpha release
+artifacts downloaded, checksum-verified, and smoke-executed (darwin×2,
+linux×2 via Docker, Windows PE-verified). alpha.1 adds tarball distribution
+(action exec-bit loss) and action-major bumps.
 
 ## 2. Verified evidence snapshot
 

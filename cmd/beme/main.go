@@ -16,7 +16,7 @@ import (
 	"github.com/0merUfuk/beme/internal/storage"
 )
 
-const version = "0.1.0-alpha"
+const version = "0.1.0-alpha.1"
 
 func main() {
 	if len(os.Args) < 2 {

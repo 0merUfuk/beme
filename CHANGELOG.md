@@ -2,7 +2,36 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
+## [0.1.0-alpha.1] — 2026-09-14
+
+Verification-recovery release for v0.1.0-alpha. No engine behavior changes.
+
+### Fixed
+- Public contract validation is repo-local: it no longer reads the
+  operator's home directory or any private evaluation-corpus path. On a
+  clean checkout or CI runner it previously failed; it now passes with an
+  empty HOME (ADR-023).
+- Private evaluation is a separate owner-gated gate (`make
+  validate-private`, corpus via `BEME_PRIVATE_EVAL_DIR` only) that reports
+  an explicit `not_run` (exit 3) when the corpus is unavailable — never a
+  silent pass, never a public-CI dependency.
+- CI installs Python validation deps in a venv (PEP 668-safe on GitHub's
+  Homebrew-managed macOS runners) and pins current action majors (v7),
+  removing Node-20 deprecation warnings.
+- CI runs a 7-check regression suite reproducing the exact v0.1.0-alpha
+  failure and the public/private separation invariants.
+- Distribution: release binaries ship as tarballs so the executable bit
+  survives download (bare binaries downloaded from the v0.1.0-alpha page
+  arrive non-executable; `chmod +x` works around it there).
+
+### Documentation
+- Release and handoff claims corrected to match observable evidence:
+  19 public fixture checks (private 34 reported separately, owner-run);
+  the eval runner is documented as not-yet-implemented; v0.1.0-alpha
+  release notes carry a post-publish correction.
+
 ## [0.1.0-alpha] — 2026-09-14
+
 
 First alpha: contracts + engine + narrow MCP surface. Pre-release; no
 compatibility commitments.
