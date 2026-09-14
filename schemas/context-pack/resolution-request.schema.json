@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/context-pack/resolution-request.v1.json",
+  "title": "Be Me Resolution Request (v1)",
+  "description": "Agent-supplied task context, never authority. The runtime independently verifies workspace identity, clamps all hints to the immutable session capability, and records assumptions. Structurally incapable of representing elevation: there is no profile, authority, capability, source, or sensitivity field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "description": "Untrusted retrieval hint. Never creates or overrides policy; never inherits user authority unless the harness integrity-binds a captured user prompt (Tier-2 task authority, ADR-016)."
+    },
+    "workspace_hint": {
+      "type": "string",
+      "maxLength": 1024,
+      "description": "Untrusted matching signal only."
+    },
+    "task_kind_hints": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      }
+    },
+    "risk_hint": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "description": "Hint; the resolver re-derives risk."
+    },
+    "budget_hint_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000,
+      "description": "Hint; clamped to capability ceiling. May only narrow."
+    },
+    "harness": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Present only when the trusted harness boundary captured the user-authored prompt before model transformation and integrity-bound it. Absence means task text is a non-normative hint.",
+      "properties": {
+        "integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "digest"
+          ],
+          "properties": {
+            "algorithm": {
+              "enum": [
+                "sha256"
+              ]
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "captured_by": {
+          "enum": [
+            "trusted_harness_boundary"
+          ],
+          "description": "Only one origin kind exists in v1. Model-supplied text can never claim it."
+        }
+      }
+    }
+  },
+  "not": {
+    "description": "Structural elevation guards (defense in depth; additionalProperties:false is the primary guard).",
+    "anyOf": [
+      {
+        "required": [
+          "profile"
+        ]
+      },
+      {
+        "required": [
+          "capability"
+        ]
+      },
+      {
+        "required": [
+          "authority"
+        ]
+      },
+      {
+        "required": [
+          "sources"
+        ]
+      },
+      {
+        "required": [
+          "sensitivity"
+        ]
+      },
+      {
+        "required": [
+          "expand_all"
+        ]
+      }
+    ]
+  }
+}

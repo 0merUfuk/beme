@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/record/normalized-record.v1.json",
+  "title": "Be Me Normalized Record (v1)",
+  "description": "Derived runtime representation of a canonical source item. Never a competing canonical document. Sensitivity is monotonic: derived records may retain or increase sensitivity, never lower it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "source_id",
+    "source_record_id",
+    "kind",
+    "status",
+    "confidence",
+    "authority",
+    "source_role",
+    "trust",
+    "sensitivity",
+    "scope",
+    "provenance_refs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "record_id": {
+      "$ref": "#/$defs/id"
+    },
+    "source_id": {
+      "$ref": "#/$defs/source_id"
+    },
+    "source_record_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_revision": {
+      "type": "string",
+      "description": "git commit or content digest the record was derived from"
+    },
+    "key": {
+      "type": "string",
+      "description": "dotted semantic key, e.g. engineering.reliability.evidence-before-completion"
+    },
+    "decision_key": {
+      "type": "string",
+      "description": "dotted key grouping records that decide the same question"
+    },
+    "kind": {
+      "description": "Closed set. observation/candidate/inference are learned-model states, NOT canonical kinds.",
+      "enum": [
+        "directive",
+        "fact",
+        "preference",
+        "principle",
+        "heuristic",
+        "pattern",
+        "workflow",
+        "failure_mode",
+        "capability",
+        "precedent",
+        "unmapped_reference"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "compact_text": {
+      "type": "string",
+      "description": "bounded pack-ready text derived from statement; never raw source excerpt unless explicitly authorized"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "deprecated"
+      ],
+      "description": "Canonical lifecycle. superseded/revoked/stale_suspected are resolver states, not canonical statuses."
+    },
+    "confidence": {
+      "enum": [
+        "observed",
+        "validated"
+      ],
+      "description": "Epistemic confidence. No invented decimals."
+    },
+    "authority": {
+      "enum": [
+        "informational",
+        "recommended",
+        "default"
+      ],
+      "description": "Normative authority assigned by the trusted registration/approval path. Source content cannot set this."
+    },
+    "source_role": {
+      "enum": [
+        "canonical_foundation",
+        "canonical_reusable_knowledge",
+        "trusted_project_policy",
+        "trusted_reference",
+        "episodic_evidence",
+        "declassified_safe",
+        "learned_observation"
+      ]
+    },
+    "trust": {
+      "enum": [
+        "canonical",
+        "trusted_project",
+        "reference",
+        "untrusted_data",
+        "quarantined"
+      ]
+    },
+    "sensitivity": {
+      "type": "string",
+      "description": "Monotonic during normalization. work_restricted requires a registered workspace namespace.",
+      "pattern": "^(public_general|personal_private|secret_never_ingest|work_restricted:[a-z0-9][a-z0-9-]*)$"
+    },
+    "criticality": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "stability": {
+      "enum": [
+        "stable",
+        "evolving",
+        "time_bound"
+      ]
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "validity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "effective_from": {
+          "type": "string",
+          "format": "date"
+        },
+        "review_after": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        }
+      }
+    },
+    "relationships": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "challenges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "conflicts_with": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "refines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "provenance_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "declassified_from": {
+      "$ref": "#/$defs/id",
+      "description": "Present only on declassified_safe records: the personal record this safe record was explicitly derived from. Never present on relabeled copies (relabeling is forbidden)."
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*_[0-9a-z]{8,}$",
+      "description": "opaque runtime ID"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "personal",
+              "work-safe"
+            ]
+          }
+        },
+        "workspace_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path_globs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "task_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lifecycle_phases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "technologies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "harnesses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk_levels": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Explicit excludes override includes."
+        }
+      }
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    }
+  }
+}

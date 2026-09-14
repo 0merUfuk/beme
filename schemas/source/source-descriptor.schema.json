@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/source/source-descriptor.v1.json",
+  "title": "Be Me Source Descriptor (v1)",
+  "description": "Registers a source root. Registration sets a trust ceiling and sensitivity; it never approves every future revision. Normative paths are pinned to approved revisions/digests; changed content stays pending until reapproved. A repository file is not trusted policy merely because Git tracks it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_id", "type", "root", "purpose", "trust", "instruction_semantics", "authority_ceiling", "sensitivity", "profiles_allowed", "ingestion_mode"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "source_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "type": { "enum": ["git_repository", "directory", "rifja_contract"] },
+    "root": { "type": "string", "description": "Configured root. Resolved against config, never hard-coded. Real-path checked; symlinks may not escape." },
+    "purpose": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["canonical_foundation", "reusable_knowledge", "evidence", "trusted_project_policy", "safe_declassified", "episodic_evidence"] }
+    },
+ "trust": { "enum": ["canonical", "trusted_project", "reference", "untrusted_data"] },
+    "instruction_semantics": { "enum": ["registered_files_only", "data_only"], "description": "data_only: content is never instruction. registered_files_only: only explicitly registered policy files may carry directive semantics, pinned to approved revision." },
+    "authority_ceiling": { "enum": ["informational", "recommended", "default"], "description": "Maximum authority any record from this source can ever hold. Content cannot raise it." },
+    "sensitivity": { "enum": ["public_general", "personal_private", "work_restricted", "secret_never_ingest"], "description": "Baseline; records may be stricter." },
+    "profiles_allowed": { "type": "array", "minItems": 1, "items": { "enum": ["personal", "work-safe"] } },
+    "ingestion_mode": { "enum": ["index_content", "reference_only", "contract_only"] },
+    "include": { "type": "array", "items": { "type": "string" }, "description": "Globs. Only registered roots are ever walked." },
+    "exclude": { "type": "array", "items": { "type": "string" }, "description": "Always includes hard excludes: .git, credentials, .env, keys, browser data. .gitignore is respected but not sufficient secret protection." },
+    "refresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "informational_content": { "enum": ["explicit_or_on_change", "disabled"] },
+        "normative_content": { "const": "approval_required" }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["git_commit", "content_digest"] },
+        "approved_digest": { "type": "string", "description": "The trusted-approved revision/digest for normative paths." }
+      }
+    },
+    "rifja": {
+      "type": "object",
+      "description": "Present only when type=rifja_contract (ADR-019).",
+      "additionalProperties": false,
+      "properties": {
+        "surface": { "enum": ["mcp_stdio", "cli_json"] },
+        "tools_allowed": { "type": "array", "items": { "enum": ["status", "projects", "search", "resume", "tasks", "daily", "explain", "memory"] } },
+        "bounded": { "const": true }
+      }
+    }
+  }
+}

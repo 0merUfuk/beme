@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/policy/workspace.v1.json",
+  "title": "Be Me Workspace Identity (v1)",
+  "description": "A trusted registry object, never a value inferred from requests. Request paths, remotes, repository contents, and workspace_hint are untrusted matching signals only: they cannot create registration, grant authorization, or widen policy. A clone is not trusted because it shares a remote.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "workspace_id", "canonical_roots", "sensitivity_namespace", "authority_ceiling"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "workspace_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "canonical_roots": { "type": "array", "minItems": 1, "items": { "type": "string", "description": "Authorized real paths. Reference form: workspace-id::relative/path. Path moves require a trusted registry update." } },
+    "expected_remote_identity": { "type": ["string", "null"], "description": "Normalized Git remote identity when present. A matching remote is a signal, not an approval credential." },
+    "fingerprint": { "type": ["string", "null"], "description": "Repository/root fingerprint for identity matching." },
+    "approved_revision_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pinned_commit": { "type": "string" },
+        "content_digest": { "type": "string" }
+      }
+    },
+    "worktree_ids": { "type": "array", "items": { "type": "string" } },
+    "sensitivity_namespace": { "enum": ["personal", "work_restricted"], "description": "Namespaced work_restricted:<workspace-id>. Cross-namespace joins denied by default." },
+    "bound_project_policy": {
+      "type": "array",
+      "description": "Trusted project policy requires this out-of-band registration. Git tracking/author identity/branch protection is not approval.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "approved_digest", "scope", "authority_ceiling"],
+        "properties": {
+          "path": { "type": "string" },
+          "approved_digest": { "type": "string" },
+          "scope": { "type": "string" },
+          "authority_ceiling": { "enum": ["informational", "recommended", "default"] }
+        }
+      }
+    },
+    "authority_ceiling": { "enum": ["informational", "recommended", "default"] }
+  }
+}

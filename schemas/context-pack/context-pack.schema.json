@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/context-pack/context-pack.v1.json",
+  "title": "Be Me ContextPack (v1)",
+  "description": "Canonical versioned JSON output. Deterministic ordering; trace digest. Harness Markdown is a renderer output. Learned observations appear only in the dedicated non-normative section and only when explicitly enabled in personal mode; never in work-safe.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "pack_id", "generated_at", "request", "resolution", "constraints", "guidance", "unknowns", "conflicts", "assumptions", "degradations", "provenance", "budget", "trace_ref"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "pack_id": { "type": "string", "pattern": "^ctx_[0-9a-z]{8,}$" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_summary"],
+      "properties": {
+        "task_summary": { "type": "string" },
+        "task_kinds": { "type": "array", "items": { "type": "string" } },
+        "repository_id": { "type": ["string", "null"] },
+        "harness": { "type": ["string", "null"] },
+        "risk": { "enum": ["low", "medium", "high", null] }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "profile", "profile_ceiling", "completeness", "policy_digest", "index_revision"],
+      "properties": {
+        "capability_id": { "type": "string", "pattern": "^cap_[0-9a-z]{8,}$" },
+        "profile": { "enum": ["personal", "work-safe"] },
+        "profile_ceiling": { "enum": ["personal", "work-safe"], "description": "Immutable process-bound ceiling; equal to profile in v1 (a process never serves above its bound capability)." },
+        "completeness": { "enum": ["complete", "incomplete"] },
+        "policy_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "source_revision_digest": { "type": ["string", "null"] },
+        "index_revision": { "type": "string" }
+      }
+    },
+    "constraints": { "type": "array", "items": { "$ref": "#/$defs/context_item" }, "description": "Non-droppable obligations and prohibitions." },
+    "guidance": { "type": "array", "items": { "$ref": "#/$defs/context_item" }, "description": "Principles, preferences, heuristics, patterns, workflows." },
+    "precedents": { "type": "array", "items": { "$ref": "#/$defs/context_item" }, "description": "Comparable past decisions with context, rationale, outcomes." },
+    "knowledge": { "type": "array", "items": { "$ref": "#/$defs/knowledge_ref" }, "description": "Bounded references or safe excerpts from external knowledge sources." },
+    "unknowns": { "type": "array", "items": { "$ref": "#/$defs/unknown" }, "description": "Task-material facts/preferences with no reliable evidence." },
+    "conflicts": { "type": "array", "items": { "$ref": "#/$defs/conflict" }, "description": "Unresolved, shadowed, stale, scope-separated states requiring awareness." },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "degradations": { "type": "array", "items": { "$ref": "#/$defs/degradation" }, "description": "Unavailable sources, stale projections, reduced assurance." },
+    "learned_experimental": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/context_item" },
+      "description": "Dedicated non-normative section. Present only when explicitly enabled (personal mode only); items can never be constraints."
+    },
+    "provenance": { "type": "array", "items": { "$ref": "#/$defs/pack_provenance" } },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_tokens", "estimated_tokens", "truncated", "omitted_advisory_count"],
+      "properties": {
+        "requested_tokens": { "type": "integer", "minimum": 0 },
+        "estimated_tokens": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "omitted_advisory_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "trace_ref": { "type": "string", "pattern": "^trace_[0-9a-z]{8,}$" }
+  },
+  "$defs": {
+    "context_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_id", "kind", "text", "force", "confidence", "authority", "sensitivity", "selection_reason", "provenance_refs"],
+      "properties": {
+        "record_id": { "type": "string" },
+        "kind": { "enum": ["directive", "fact", "preference", "principle", "heuristic", "pattern", "workflow", "failure_mode", "capability", "precedent"] },
+        "text": { "type": "string", "description": "Compact bounded text. No raw source excerpts unless explicitly authorized." },
+        "force": { "enum": ["must", "should", "may"] },
+        "confidence": { "enum": ["observed", "validated"] },
+        "authority": { "enum": ["informational", "recommended", "default"] },
+        "sensitivity": { "type": "string" },
+        "selection_reason": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "provenance_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "expand_ref": { "type": "string", "description": "Opaque, unguessable, short-lived capability bound to one pack, session capability, workspace identity, projection revision, and expiry. A raw record ID is not a credential." }
+      }
+    },
+    "knowledge_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "description"],
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "locator": { "type": ["string", "null"], "description": "Omitted in work-safe when private." },
+        "provenance_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "unknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question", "why_material"],
+      "properties": {
+        "question": { "type": "string" },
+        "why_material": { "type": "string" },
+        "suggested_escalation": { "enum": ["ask_user", "proceed_with_assumption", null] }
+          }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "description"],
+      "properties": {
+        "state": { "enum": ["resolved", "shadowed", "unresolved", "stale_suspected", "scope_separated"] },
+        "description": { "type": "string" },
+        "record_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "degradation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": { "enum": ["source_unavailable", "stale_projection", "reduced_assurance", "unavailable", "policy_blocked", "rebuild_required"] },
+        "detail": { "type": "string" }
+      }
+    },
+    "pack_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_role", "record_count"],
+      "properties": {
+        "source_id": { "type": ["string", "null"], "description": "Omitted in work-safe when private." },
+        "source_role": { "type": "string" },
+        "record_count": { "type": "integer", "minimum": 0 },
+        "source_revision": { "type": ["string", "null"] },
+        "content_hash": { "type": ["string", "null"], "description": "Omitted in work-safe when correlatable to private content." }
+      }
+    }
+  }
+}

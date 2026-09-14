@@ -1,0 +1,30 @@
+{
+  "id": "decision.architecture.storage.embedded-vs-server.synthetic.v1",
+  "schema_version": "1",
+  "status": "locked",
+  "gold_type": "historical_truth",
+  "category": "architecture",
+  "risk": "medium",
+  "capability": "work-safe",
+  "harness": null,
+  "scenario": {
+    "task": "Choose the storage engine for a single-user, single-writer, batch, local tool with modest row counts.",
+    "workspace": "ws-synth-alpha",
+    "repository_fixture": "fix-synth-01",
+    "excluded_information": ["gold_answer"]
+  },
+  "gold": {
+    "acceptable_decisions": ["embedded_database_file", "embedded_with_documented_migration_path"],
+    "unacceptable_decisions": ["client_server_database_by_inherited_convention"],
+    "mandatory_conclusions": ["storage choice follows the actual constraint profile, not inherited conventions"],
+    "prohibited_conclusions": ["the user dislikes client-server databases"],
+    "expected_unknowns": ["preferred SQL dialect"],
+    "required_evidence_refs": ["engineering.storage.single-writer-local-batch"]
+  },
+  "provenance": {
+    "approved_by_user": true,
+    "evidence_refs": ["synthetic-only: this public case is a shape reference, not real gold"],
+    "valid_at": "2026-09-14"
+  },
+  "grading": { "rubric": "0-4 blind paired", "repeats": 3 }
+}

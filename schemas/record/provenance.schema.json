@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/record/provenance.v1.json",
+  "title": "Be Me Provenance Record (v1)",
+  "description": "Lineage explanation. Provenance alone never proves authority; authority comes from the registered source role and trusted approval path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provenance_id",
+    "source_id",
+    "source_record_id",
+    "locator",
+    "source_revision",
+    "content_hash",
+    "captured_at",
+    "ingestion_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "provenance_id": {
+      "type": "string",
+      "pattern": "^prov_[0-9a-z]{8,}$"
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "source_record_id": {
+      "type": "string"
+    },
+    "locator": {
+      "type": "string",
+      "description": "Repository-relative locator within the registered root. Never absolute machine paths."
+    },
+    "source_revision": {
+      "type": "string"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ingestion_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "transformation_chain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "parser",
+          "mapping"
+        ],
+        "properties": {
+          "parser": {
+            "type": "string"
+          },
+          "mapping": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "approval_event_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Trusted user approval event, when the record required one (e.g. declassification)."
+    },
+    "safe_view": {
+      "type": "boolean",
+      "description": "True when this provenance is the work-safe scoped view: omits private source IDs, repo names, absolute paths, private locators, denied relationship metadata, correlatable content hashes."
+    }
+  }
+}

@@ -1,0 +1,87 @@
+[
+  {
+    "provenance_id": "prov_seed0001",
+    "source_id": "knowhow-synthetic",
+    "source_record_id": "SYN-001",
+    "locator": "knowledge/entries/SYN-001.md",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "captured_at": "2026-09-14T00:00:00Z",
+    "ingestion_version": 1,
+    "transformation_chain": [
+      {
+        "parser": "markdown-frontmatter-v1",
+        "mapping": "canonical-knowledge-v1"
+      }
+    ],
+    "approval_event_id": null
+  },
+  {
+    "provenance_id": "prov_seed0002",
+    "source_id": "project-synthetic",
+    "source_record_id": "SYN-ADR-013",
+    "locator": "docs/DECISIONS.md#d-013",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+    "content_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "captured_at": "2026-09-14T00:00:00Z",
+    "ingestion_version": 1,
+    "transformation_chain": [
+      {
+        "parser": "markdown-adr-v1",
+        "mapping": "project-policy-v1"
+      }
+    ],
+    "approval_event_id": null
+  },
+  {
+    "provenance_id": "prov_seed0003",
+    "source_id": "knowhow-synthetic",
+    "source_record_id": "SYN-002",
+    "locator": "knowledge/entries/SYN-002.md",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+    "content_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "captured_at": "2026-09-14T00:00:00Z",
+    "ingestion_version": 1,
+    "transformation_chain": [
+      {
+        "parser": "markdown-frontmatter-v1",
+        "mapping": "canonical-knowledge-v1"
+      }
+    ],
+    "approval_event_id": null
+  },
+  {
+    "provenance_id": "prov_seed0004",
+    "source_id": "knowhow-synthetic",
+    "source_record_id": "SYN-003",
+    "locator": "knowledge/entries/SYN-003.md",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+    "content_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "captured_at": "2026-09-14T00:00:00Z",
+    "ingestion_version": 1,
+    "transformation_chain": [
+      {
+        "parser": "markdown-frontmatter-v1",
+        "mapping": "canonical-knowledge-v1"
+      }
+    ],
+    "approval_event_id": null
+  },
+  {
+    "provenance_id": "prov_seed0005",
+    "source_id": "declass-synthetic",
+    "source_record_id": "SYN-SAFE-001",
+    "locator": "safe/entries/SYN-SAFE-001.md",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+    "content_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "captured_at": "2026-09-14T00:00:00Z",
+    "ingestion_version": 1,
+    "transformation_chain": [
+      {
+        "parser": "markdown-frontmatter-v1",
+        "mapping": "declassification-v1"
+      }
+    ],
+    "approval_event_id": "appr_00000001"
+  }
+]

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "beme:schemas/evaluation/golden-case.v1.json",
+  "title": "Be Me Golden Case (v1)",
+  "description": "Ground truth may come only from: explicit user decision + rationale; repository ADR with user confirmation; repeated cross-context pattern later approved; user-approved decision set. Agent inference alone can never become gold.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema_version",
+    "status",
+    "gold_type",
+    "category",
+    "risk",
+    "scenario",
+    "gold",
+    "provenance",
+    "grading"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^decision\\.[a-z0-9.-]+\\.v[0-9]+$"
+    },
+    "status": {
+      "enum": [
+        "candidate",
+        "approved",
+        "locked",
+        "retired"
+      ],
+      "description": "locked = sealed in the frozen corpus. Only the user can move candidate→approved→locked."
+    },
+    "gold_type": {
+      "enum": [
+        "historical_truth",
+        "current_preference",
+        "acceptable_decision_set"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "risk": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "capability": {
+      "enum": [
+        "personal",
+        "work-safe"
+      ]
+    },
+    "harness": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task"
+      ],
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_fixture": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "excluded_information": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "gold_answer",
+              "post_decision_outcome"
+            ]
+          }
+        }
+      }
+    },
+    "gold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptable_decisions",
+        "unacceptable_decisions"
+      ],
+      "properties": {
+        "acceptable_decisions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "unacceptable_decisions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "mandatory_conclusions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "prohibited_conclusions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approved_by_user"
+      ],
+      "properties": {
+        "approved_by_user": {
+          "type": "boolean"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "valid_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "candidate_note": {
+          "type": "string",
+          "description": "Drafting note; required empty once approved/locked."
+        }
+      }
+    },
+    "grading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rubric",
+        "repeats"
+      ],
+      "properties": {
+        "rubric": {
+          "const": "0-4 blind paired"
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
+    }
+  }
+}

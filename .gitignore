@@ -1,0 +1,22 @@
+# Confidential planning baseline — never commit or publish
+beme-project-blueprint-handoff.md
+*-blueprint-handoff.md
+
+# Local agent ecosystem state (private by default)
+.claude/
+.codex/
+.hermes/
+.tasks/
+.handoff/
+tasks/
+*.handoff.md
+
+# Local runtime / scratch state
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/tmp/
+config.local.yaml
+# Owner-private scan terms (deployment data; never commit)
+scripts/private_scan_terms.local

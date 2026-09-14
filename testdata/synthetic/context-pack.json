@@ -1,0 +1,124 @@
+{
+  "schema_version": "1",
+  "pack_id": "ctx_seed0001",
+  "generated_at": "2026-09-14T00:00:00Z",
+  "request": {
+    "task_summary": "Decide the storage engine for a single-writer local batch tool",
+    "task_kinds": [
+      "architecture"
+    ],
+    "repository_id": null,
+    "harness": null,
+    "risk": "medium"
+  },
+  "resolution": {
+    "capability_id": "cap_worksafe01",
+    "profile": "work-safe",
+    "profile_ceiling": "work-safe",
+    "completeness": "complete",
+    "policy_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_revision_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "index_revision": "idx_seed0001"
+  },
+  "constraints": [
+    {
+      "record_id": "rec_seed0004",
+      "kind": "principle",
+      "text": "Unaccepted agent output is quarantined, not canonical.",
+      "force": "must",
+      "confidence": "validated",
+      "authority": "default",
+      "sensitivity": "public_general",
+      "selection_reason": [
+        "kind: principle",
+        "criticality: high",
+        "task facet matched: governance"
+      ],
+      "provenance_refs": [
+        "prov_seed0004"
+      ],
+      "expand_ref": "beme://expand/01EXAMPLECAPABILITY"
+    }
+  ],
+  "guidance": [
+    {
+      "record_id": "rec_seed0005",
+      "kind": "heuristic",
+      "text": "No measured problem, no new complexity.",
+      "force": "should",
+      "confidence": "validated",
+      "authority": "recommended",
+      "sensitivity": "public_general",
+      "selection_reason": [
+        "task facet matched: architecture",
+        "declassified safe record"
+      ],
+      "provenance_refs": [
+        "prov_seed0005"
+      ],
+      "expand_ref": "beme://expand/02EXAMPLECAPABILITY"
+    }
+  ],
+  "precedents": [
+    {
+      "record_id": "rec_seed0002",
+      "kind": "precedent",
+      "text": "Match storage to the actual constraint profile (single writer, local, batch), not inherited conventions.",
+      "force": "should",
+      "confidence": "validated",
+      "authority": "default",
+      "sensitivity": "work_restricted:ws-synth-alpha",
+      "selection_reason": [
+        "workspace matched: ws-synth-alpha",
+        "decision_key matched: storage.choice"
+      ],
+      "provenance_refs": [
+        "prov_seed0002"
+      ],
+      "expand_ref": "beme://expand/03EXAMPLECAPABILITY"
+    }
+  ],
+  "knowledge": [],
+  "unknowns": [
+    {
+      "question": "Preferred SQL dialect beyond documented needs",
+      "why_material": "No approved evidence exists for dialect preference",
+      "suggested_escalation": "proceed_with_assumption"
+    }
+  ],
+  "conflicts": [],
+  "assumptions": [
+    "Workspace matched by registered canonical root; no elevation hints honored"
+  ],
+  "degradations": [],
+  "provenance": [
+    {
+      "source_id": "knowhow-synthetic",
+      "source_role": "canonical_reusable_knowledge",
+      "record_count": 1,
+      "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+      "content_hash": null
+    },
+    {
+      "source_id": "declass-synthetic",
+      "source_role": "declassified_safe",
+      "record_count": 1,
+      "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+      "content_hash": null
+    },
+    {
+      "source_id": "project-synthetic",
+      "source_role": "trusted_project_policy",
+      "record_count": 1,
+      "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "content_hash": null
+    }
+  ],
+  "budget": {
+    "requested_tokens": 3000,
+    "estimated_tokens": 850,
+    "truncated": false,
+    "omitted_advisory_count": 0
+  },
+  "trace_ref": "trace_seed0001"
+}

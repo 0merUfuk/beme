@@ -1,0 +1,273 @@
+[
+  {
+    "schema_version": "1",
+    "record_id": "rec_seed0001",
+    "source_id": "knowhow-synthetic",
+    "source_record_id": "SYN-001",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "key": "engineering.reliability.evidence-before-completion",
+    "decision_key": "completion.claim",
+    "kind": "principle",
+    "title": "Evidence before completion claims",
+    "statement": "Agent output and successful tool calls are claims, not proof; completion requires trace, state, and relevant verification.",
+    "compact_text": "Verify observable end state before claiming completion.",
+    "status": "active",
+    "confidence": "validated",
+    "authority": "default",
+    "source_role": "canonical_reusable_knowledge",
+    "trust": "canonical",
+    "sensitivity": "public_general",
+    "criticality": "high",
+    "stability": "stable",
+    "scope": {
+      "profiles": [
+        "personal",
+        "work-safe"
+      ],
+      "workspace_ids": [],
+      "path_globs": [],
+      "task_kinds": [
+        "implementation",
+        "audit",
+        "release"
+      ],
+      "lifecycle_phases": [],
+      "technologies": [],
+      "harnesses": [],
+      "risk_levels": [],
+      "environments": [],
+      "exclude": []
+    },
+    "validity": {
+      "effective_from": "2026-09-02",
+      "review_after": null,
+      "expires_at": null
+    },
+    "relationships": {
+      "supersedes": [],
+      "challenges": [],
+      "conflicts_with": [],
+      "refines": [],
+      "derived_from": []
+    },
+    "provenance_refs": [
+      "prov_seed0001"
+    ]
+  },
+  {
+    "schema_version": "1",
+    "record_id": "rec_seed0002",
+    "source_id": "project-synthetic",
+    "source_record_id": "SYN-ADR-013",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+    "key": "engineering.storage.single-writer-local-batch",
+    "decision_key": "storage.choice",
+    "kind": "precedent",
+    "title": "Embedded database for single-writer local batch tools",
+    "statement": "For single-user, single-writer, batch, local tools with modest row counts, an embedded database file is preferred over a client-server database; inherited conventions are not constraints.",
+    "compact_text": "Match storage to the actual constraint profile (single writer, local, batch), not inherited conventions.",
+    "status": "active",
+    "confidence": "validated",
+    "source_role": "trusted_project_policy",
+    "trust": "trusted_project",
+    "authority": "default",
+    "sensitivity": "work_restricted:ws-synth-alpha",
+    "criticality": "medium",
+    "stability": "stable",
+    "scope": {
+      "profiles": [
+        "personal",
+        "work-safe"
+      ],
+      "workspace_ids": [
+        "ws-synth-alpha"
+      ],
+      "path_globs": [],
+      "task_kinds": [
+        "architecture"
+      ],
+      "lifecycle_phases": [],
+      "technologies": [],
+      "harnesses": [],
+      "risk_levels": [],
+      "environments": [],
+      "exclude": []
+    },
+    "validity": {
+      "effective_from": "2026-04-22",
+      "review_after": null,
+      "expires_at": null
+    },
+    "relationships": {
+      "supersedes": [],
+      "challenges": [],
+      "conflicts_with": [],
+      "refines": [],
+      "derived_from": []
+    },
+    "provenance_refs": [
+      "prov_seed0002"
+    ]
+  },
+  {
+    "schema_version": "1",
+    "record_id": "rec_seed0003",
+    "source_id": "knowhow-synthetic",
+    "source_record_id": "SYN-002",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+    "key": "engineering.preferences.boring-components",
+    "decision_key": "component.choice",
+    "kind": "preference",
+    "title": "Prefer boring, demonstrated components",
+    "statement": "Prefer proven operational components over novel ones when they solve the demonstrated problem.",
+    "compact_text": "Boring beats novel unless a demonstrated need exists.",
+    "status": "active",
+    "confidence": "validated",
+    "authority": "recommended",
+    "source_role": "canonical_reusable_knowledge",
+    "trust": "canonical",
+    "sensitivity": "personal_private",
+    "criticality": "medium",
+    "stability": "evolving",
+    "scope": {
+      "profiles": [
+        "personal"
+      ],
+      "workspace_ids": [],
+      "path_globs": [],
+      "task_kinds": [
+        "architecture",
+        "implementation"
+      ],
+      "lifecycle_phases": [],
+      "technologies": [],
+      "harnesses": [],
+      "risk_levels": [],
+      "environments": [],
+      "exclude": []
+    },
+    "validity": {
+      "effective_from": "2026-01-01",
+      "review_after": "2026-12-01",
+      "expires_at": null
+    },
+    "relationships": {
+      "supersedes": [],
+      "challenges": [],
+      "conflicts_with": [],
+      "refines": [],
+      "derived_from": []
+    },
+    "provenance_refs": [
+      "prov_seed0003"
+    ]
+  },
+  {
+    "schema_version": "1",
+    "record_id": "rec_seed0004",
+    "source_id": "knowhow-synthetic",
+    "source_record_id": "SYN-003",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+    "key": "engineering.governance.no-canonical-self-promotion",
+    "decision_key": "governance.promotion",
+    "kind": "principle",
+    "title": "Agent output never promotes itself to canonical",
+    "statement": "Agent-generated recommendations not explicitly accepted by the user are never evidence of user preference; promotion requires trusted user action.",
+    "compact_text": "Unaccepted agent output is quarantined, not canonical.",
+    "status": "active",
+    "confidence": "validated",
+    "authority": "default",
+    "source_role": "canonical_reusable_knowledge",
+    "trust": "canonical",
+    "sensitivity": "public_general",
+    "criticality": "high",
+    "stability": "stable",
+    "scope": {
+      "profiles": [
+        "personal",
+        "work-safe"
+      ],
+      "workspace_ids": [],
+      "path_globs": [],
+      "task_kinds": [
+        "implementation",
+        "audit"
+      ],
+      "lifecycle_phases": [],
+      "technologies": [],
+      "harnesses": [],
+      "risk_levels": [],
+      "environments": [],
+      "exclude": []
+    },
+    "validity": {
+      "effective_from": "2026-09-14",
+      "review_after": null,
+      "expires_at": null
+    },
+    "relationships": {
+      "supersedes": [],
+      "challenges": [],
+      "conflicts_with": [],
+      "refines": [],
+      "derived_from": []
+    },
+    "provenance_refs": [
+      "prov_seed0004"
+    ]
+  },
+  {
+    "schema_version": "1",
+    "record_id": "rec_seed0005",
+    "source_id": "declass-synthetic",
+    "source_record_id": "SYN-SAFE-001",
+    "source_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+    "key": "engineering.reliability.measured-need",
+    "decision_key": "complexity.justification",
+    "kind": "heuristic",
+    "title": "Complexity needs a measured problem",
+    "statement": "Introduce operational complexity only for a demonstrated, measured need.",
+    "compact_text": "No measured problem, no new complexity.",
+    "status": "active",
+    "confidence": "validated",
+    "authority": "recommended",
+    "source_role": "declassified_safe",
+    "trust": "canonical",
+    "sensitivity": "public_general",
+    "criticality": "high",
+    "stability": "stable",
+    "declassified_from": "rec_seed0003",
+    "scope": {
+      "profiles": [
+        "work-safe"
+      ],
+      "workspace_ids": [],
+      "path_globs": [],
+      "task_kinds": [
+        "architecture",
+        "implementation"
+      ],
+      "lifecycle_phases": [],
+      "technologies": [],
+      "harnesses": [],
+      "risk_levels": [],
+      "environments": [],
+      "exclude": []
+    },
+    "validity": {
+      "effective_from": "2026-09-14",
+      "review_after": null,
+      "expires_at": null
+    },
+    "relationships": {
+      "supersedes": [],
+      "challenges": [],
+      "conflicts_with": [],
+      "refines": [],
+      "derived_from": []
+    },
+    "provenance_refs": [
+      "prov_seed0005"
+    ]
+  }
+]
