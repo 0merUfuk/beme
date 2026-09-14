@@ -3,6 +3,8 @@
 // projection; personal and work-safe never share files (ADR-005).
 package storage
 
+// The schema lives in migrations (migrate.go); this file holds the store API.
+
 import (
 	"database/sql"
 	"encoding/json"
@@ -22,39 +24,6 @@ type Store struct {
 	path string
 }
 
-const schemaMigrations = `
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS records (
-  record_id        TEXT PRIMARY KEY,
-  source_id        TEXT NOT NULL,
-  source_record_id TEXT NOT NULL,
-  kind             TEXT NOT NULL,
-  decision_key     TEXT NOT NULL DEFAULT '',
-  payload          TEXT NOT NULL,
-  sensitivity      TEXT NOT NULL,
-  status           TEXT NOT NULL,
-  authority        TEXT NOT NULL,
-  source_role      TEXT NOT NULL,
-  trust            TEXT NOT NULL,
-  criticality      TEXT NOT NULL DEFAULT '',
-  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_records_source ON records(source_id);
-CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
-CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
-  record_id UNINDEXED, body, tokenize='unicode61'
-);
-CREATE TABLE IF NOT EXISTS provenance (
-  provenance_id    TEXT PRIMARY KEY,
-  source_id        TEXT NOT NULL,
-  source_record_id TEXT NOT NULL,
-  payload          TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tombstones (
-  key TEXT PRIMARY KEY, reason TEXT NOT NULL, at TEXT NOT NULL
-);
-`
-
 // Open creates/opens a projection store at path.
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -67,11 +36,16 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // single-writer discipline
-	if _, err := db.Exec(schemaMigrations); err != nil {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
+		return nil, fmt.Errorf("meta: %w", err)
 	}
-	return &Store{db: db, path: path}, nil
+	st := &Store{db: db, path: path}
+	if err := st.Migrate(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return st, nil
 }
 
 // Close closes the store.
