@@ -1,7 +1,7 @@
 # Be Me — Architecture
 
-> Contracts-phase document. Defines component boundaries and the resolution
-> pipeline as they must be implemented in WP4–WP8. Schemas referenced here live
+> Component boundaries and the resolution pipeline as implemented in
+> WP4–WP8. Schemas referenced here live
 > in `schemas/` and are normative.
 
 ## 1. Component map

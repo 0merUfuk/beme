@@ -7,6 +7,9 @@
 **Legend:** Status — `defined` (contract only) · `planned` (design exists, no
 code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence).
 
+**Status counts** (derived from the rows below; CI-checked by
+`scripts/test_docs_consistency.py` D7): 63 rows — 59 implemented · 0 partial · 2 not-applicable-v1 · 2 active.
+
 ## Core and ownership
 
 | ID | Requirement (summary) | Owner WP | Verification method | Evidence | Status |
@@ -39,7 +42,7 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | FR-023 | Secret/never-ingest paths and patterns excluded before indexing | WP4 | Secret-pattern fixtures (threat case 17) | `TestSecretScanBlocksCredentials` + `TestHardExcludesNeverIngested`| implemented |
 | FR-024 | Every derived item retains revision, locator, hash, transformation, trust ceiling, sensitivity | WP4 | Provenance round-trip test | Provenance records locator/revision/hash/transformation; `TestPutAndFetchRecords`| implemented |
 | FR-025 | Missing/moved/revoked/changed sources produce explicit stale/unavailable state | WP4 | Stale-state fixtures | doctor reports missing sources/roots as degraded with remediation; empty projection → stale_projection degradation (`Serve` + `doctor`)| implemented |
-| FR-026 | Source deletion/revocation invalidates derived indexes, caches, observations, authorized expansion refs | WP4/WP9 | Revoke lifecycle test (threat cases 10, 18, 24) | `Store.Tombstone`/`RevokedSet` + `TestRevocationTombstone` + policy revocation check| implemented |
+| FR-026 | Source deletion/revocation invalidates derived indexes, caches, observations, authorized expansion refs | WP4/WP9 | Revoke lifecycle test (threat cases 10, 18, 24) | `Store.Tombstone`/`RevokedSet` + durable ledger merged at resolution (ADR-027); `TestRevocationTombstone`, `TestForgetSurvivesRestoreAndCorruptRecovery`; threat cases 10 and 18 executed| implemented |
 
 ## Resolver and pack
 
@@ -78,7 +81,7 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | FR-052 | Evidence families deduplicated; correlated repetitions never appear independent | WP9 | Evidence-family fixtures (threat case 12) | `internal/learning/store_test.go` TestFamilyDedupNeverIndependent | implemented |
 | FR-053 | Rejected candidates tombstoned against equivalent re-proposal | WP9 | Tombstone regression (threat case 13) | `internal/learning/store_test.go` TestRejectedTombstoneRefusesEquivalent (normalized fingerprints) | implemented |
 | FR-054 | Work-restricted observations never become global personal knowledge without de-identification and approval | WP9 | Cross-namespace promotion regression | `observationSensitivityFor`: work-safe feedback inherits public_general; TestSensitivityInherited | implemented |
-| FR-055 | Canonical changes transactional, auditable, reversible; physical purge is distinct, RED, irreversible, tombstone-only | WP9 | Transaction/undo tests; purge workflow documentation | Observation writes are atomic (tmp+rename) + full review outcome audit trail; physical purge remains RED (documented) | partial (physical-purge workflow owner-gated by design) |
+| FR-055 | Canonical changes transactional, auditable, reversible; physical purge is distinct, RED, irreversible, tombstone-only | WP9 | Transaction/undo tests; purge workflow documentation | Observation writes atomic (tmp+rename) + review audit trail; physical purge `beme purge` / `app.PhysicalPurge` (RED: typed confirmation, dry run, on-disk erasure from stores/traces/observations, optional canonical removal, fingerprint-only ledger, Git/backup residuals reported) — `TestPhysicalPurgeErasesAndBlocksResurrection`, `TestPhysicalPurgeRequiresExactConfirmation`, `TestPhysicalPurgeDryRunChangesNothing`, threat case 30 (ADR-027); running it on real data is an owner action| implemented |
 
 ## Portability and operation
 
@@ -86,7 +89,7 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 |---|---|---|---|---|---|
 | FR-060 | Core functionality works without network access | WP4/WP6/WP10 | Offline build + resolve in network-disabled environment | Zero network imports in `internal/` (grep-verified); stdio-only MCP| implemented |
 | FR-061 | V1 exposes MCP over local stdio only; network serving deferred pending ratified threat model | WP7 | Transport enumeration test; no listener in binary surface | `TestStdioOnlyTransport` rejects non-stdio; no listener in binary| implemented |
-| FR-062 | Config, durable data, cache, runtime state use platform-appropriate directories and remain separable | WP4 | Platform-dir tests (macOS verified first) | `app.DefaultDirs()` platform dirs + BEME_*_HOME overrides; clean-machine test verified| implemented |
+| FR-062 | Config, durable data, cache, runtime state use platform-appropriate directories and remain separable | WP4 | Platform-dir tests (macOS verified first) | `app.DefaultDirs()` per OS — macOS `~/Library`, Linux XDG, Windows `%AppData%`/`%LocalAppData%` — + BEME_*_HOME overrides; `TestDefaultDirsPerPlatform` (ADR-028)| implemented |
 | FR-063 | Canonical profile/source path configurable; no hard-coded `~/.beme` | WP4 | Config-resolution tests | Config root from env/config only; no `~/.beme` constant in code| implemented |
 | FR-064 | Schema and index migrations versioned, atomic, rollback-aware, tested | WP4 | Migration fixtures | `migrate.go` + `TestMigrationsFreshAndIdempotent`/`RollbackAndReapply`/`FailedMigrationLeavesPriorIntact`| implemented |
 | FR-065 | Corrupt operational state recoverable through rebuild without changing canonical sources | WP4/WP10 | Corruption-recovery test | `Wipe()` rebuild; doctor flags rebuild-needed; rebuild never touches sources| implemented |
@@ -97,12 +100,12 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 |---|---|---|---|---|
 | NFR-001 Reliability | No completion claim without required evidence; incomplete runs cannot mark state complete | Process gate: evidence recorded in HANDOFF | `docs/HANDOFF.md` | active |
 | NFR-002 Determinism | Identical source revisions, capability, request, policy, index version → structurally stable packs | Pack snapshot stability tests (WP5) | `TestDeterministicPacks`| implemented |
-| NFR-003 Privacy | Forbidden profile leakage rate zero in the defined regression corpus | Privacy corpus runner (WP10) | Boundary tests zero-leak (work-safe construction test, scan gate); full regression corpus pending eval harness| partial |
+| NFR-003 Privacy | Forbidden profile leakage rate zero in the defined regression corpus | Privacy corpus runner (WP10) | All §19 threat cases executed and passing, none `not_run` (`TestPrivacyCorpusDeterministic`); work-safe construction test; scan gate| implemented |
 | NFR-004 Security | Authority and scope assigned by trusted config/ingestion paths, never source content or model arguments | Threat corpus 100% pass (WP10) | Injection-clamp + elevation-rejection + capability-binding tests| implemented |
 | NFR-005 Inspectability | Every selected material item and exclusion class has a traceable reason | Trace assertions in resolver tests | Every Stage-A exclusion carries a reason; pack items carry selection_reason (schema-required)| implemented |
 | NFR-006 Reversibility | Configuration, projection build, adapter install, candidate review, schema migration have rollback/rebuild paths | Rollback tests per area | Migrations rollback-aware; Wipe rebuild; adapter uninstall preserves; candidate review reversible| implemented |
-| NFR-007 Portability | macOS verified first; Linux/Windows claims remain ported/unverified until independently tested | Platform matrix | macOS verified; Ubuntu CI-verified; Windows ported-unverified (release notes matrix)| partial |
-| NFR-008 Performance | Interactive resolution targets sub-second on seed corpus after warm index; correctness gates outrank; budgets set at calibration | Benchmark evidence (WP10) | Not yet measured; correctness gates outrank (documented)| partial |
+| NFR-007 Portability | macOS verified first; Linux/Windows claims remain ported/unverified until independently tested | Platform matrix | Full Go test suite in CI on macOS, Ubuntu, and Windows (`test-windows` job, ADR-028); released-binary use inside Windows harnesses not exercised| implemented |
+| NFR-008 Performance | Interactive resolution targets sub-second on seed corpus after warm index; correctness gates outrank; budgets set at calibration | Benchmark evidence (WP10) | `internal/benchmark` + `cmd/beme-bench` (`make bench`); `evals/benchmarks/seed-baseline.json` — warm resolution p95 far below the 1 s target at 1×, 20×, and 200× seed scale| implemented |
 | NFR-009 Boundedness | File ingestion and context output enforce explicit size/time/depth limits | Bounds fixtures (threat case 29) | Ingestion Limits + `TestBoundsEnforced`| implemented |
 | NFR-010 Maintainability | Domain logic independent of CLI, MCP, storage driver, harness adapter | Dependency-direction audit | `internal/` domain packages import no CLI/MCP/SDK (grep-verified); MCP SDK isolated to `cmd/beme`| implemented |
 | NFR-011 Extensibility | Source adapters and pack renderers have internal interfaces; no public plugin SDK in v1 | Interface tests | Source ingestion via descriptor; renderers derive from pack; no public SDK| implemented |

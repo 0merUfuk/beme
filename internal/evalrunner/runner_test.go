@@ -248,3 +248,85 @@ func TestRunnerNotRunStates(t *testing.T) {
 	}
 	_ = rt
 }
+
+// TestRunnerRetrievalMetrics proves context precision/recall measurement
+// (ACCEPTANCE §5 mechanism) on synthetic fixtures: per-case recall and
+// precision against required_evidence_refs, micro-averaged aggregate,
+// threshold evaluation, and explicit not_run when refs are absent.
+func TestRunnerRetrievalMetrics(t *testing.T) {
+	rt, _ := fixtureDeployment(t)
+	dir := t.TempDir()
+	write := func(name, id string, refs []string) {
+		c := map[string]any{
+			"id": id, "schema_version": "1", "status": "locked", "gold_type": "historical_truth",
+			"category": "architecture", "risk": "medium", "capability": "work-safe",
+			"scenario": map[string]any{"task": "Choose the storage engine for a single-writer local batch tool."},
+			"gold":     map[string]any{"acceptable_decisions": []string{"embedded database file"}, "required_evidence_refs": refs},
+			"grading":  map[string]any{"repeats": 1},
+		}
+		b, _ := json.Marshal(c)
+		os.WriteFile(filepath.Join(dir, name), b, 0o600)
+	}
+	write("a.json", "synthetic.retrieval.all-found", []string{"P-001", "P-002"})
+	write("b.json", "synthetic.retrieval.one-missing", []string{"P-001", "P-404"})
+	write("c.json", "synthetic.retrieval.no-refs", nil)
+	corpus, err := evalrunner.LoadCorpus(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(profile contracts.Profile, task, ws string) (resolver.Pack, error) {
+		s, err := rt.Serve(profile, "cap_eval_retrieval", false)
+		if err != nil {
+			return resolver.Pack{}, err
+		}
+		defer s.Store.Close()
+		return s.ResolveOnly(task, ws)
+	}
+	refs := func(profile contracts.Profile, recordID string) []string {
+		s, err := rt.Serve(profile, "cap_eval_refs", false)
+		if err != nil {
+			return nil
+		}
+		defer s.Store.Close()
+		for _, r := range s.Store.Records() {
+			if r.RecordID == recordID {
+				return []string{r.SourceRecordID, r.Key}
+			}
+		}
+		return nil
+	}
+	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{
+		Arms: []evalrunner.Arm{evalrunner.ArmB4}, OutputDir: t.TempDir(), Refs: refs,
+	}, evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]evalrunner.RetrievalCase{}
+	for _, c := range sum.Retrieval.Cases {
+		byID[c.CaseID] = c
+	}
+	all := byID["synthetic.retrieval.all-found"]
+	if all.Recall != 1 || all.Selected == 0 || all.Precision != float64(all.Relevant)/float64(all.Selected) {
+		t.Fatalf("all-found case: %+v", all)
+	}
+	miss := byID["synthetic.retrieval.one-missing"]
+	if miss.Recall != 0.5 || miss.Retrieved != 1 || miss.Outcome != evalrunner.OutcomeFailed {
+		t.Fatalf("one-missing case must score recall 0.5 and fail the threshold: %+v", miss)
+	}
+	if none := byID["synthetic.retrieval.no-refs"]; none.Outcome != evalrunner.OutcomeNotRun {
+		t.Fatalf("a case without required refs must be not_run, got %+v", none)
+	}
+	if sum.Retrieval.Measured != 2 || sum.Retrieval.Recall != 0.75 || sum.Retrieval.ThresholdsMet {
+		t.Fatalf("aggregate retrieval: %+v", sum.Retrieval)
+	}
+
+	// no lookup configured → every case explicitly not_run
+	sum2, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: []evalrunner.Arm{evalrunner.ArmB0}, OutputDir: t.TempDir()},
+		evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum2.Retrieval.Measured != 0 || sum2.Retrieval.ThresholdsMet {
+		t.Fatalf("retrieval without a refs lookup must not be measured: %+v", sum2.Retrieval)
+	}
+}

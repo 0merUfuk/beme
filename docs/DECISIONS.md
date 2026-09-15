@@ -458,11 +458,85 @@ set `data_dir` explicitly in config.yaml.
 **Reopen:** a test or subprocess path that writes to the default data home
 again.
 
+## ADR-027 — Physical purge workflow and durable tombstone ledger
+
+**Date:** 2026-09-15
+**Status:** accepted (mechanism implemented; executing it on real data stays RED/owner-owned)
+**Context:** §7.8 and FR-055 require a physical purge distinct from logical
+forget, leaving only a non-content anti-resurrection tombstone. Two gaps
+existed: no purge workflow at all (threat case 30 was `not_run`), and
+tombstones lived only inside projection stores — which are derived and get
+wiped, recovered from corruption (file deleted), rolled back (tables
+dropped), or restored from backup. Any of those silently reactivated
+forgotten records (threat case 18 was `not_run`).
+**Decision:**
+1. A durable ledger at `<canonical_root>/ledger/tombstones.json`
+   (operator-owned configuration, never inside the data dir). `forget`
+   writes the store tombstone and a ledger revocation; resolution merges
+   both. An unreadable ledger fails closed for resolution and rebuild.
+2. `beme purge --confirm <key> <key>` (`app.PhysicalPurge`): typed
+   confirmation (exit 3 without it), dry run, and in order — ledger purge
+   entry first (crash-safe), then erasure from both projection stores
+   (`secure_delete`, FTS `optimize`, `VACUUM`, WAL truncate), persisted
+   traces naming the record, and pending observations restating it;
+   `--remove-canonical` deletes the source file (root-contained). Purge
+   entries hold only SHA-256 fingerprints: record ID, source content hash,
+   and normalized statement text — so re-keyed or re-synced copies are
+   refused at rebuild and filtered at resolution.
+3. Git history and external backups are out of reach; the report lists them
+   as explicit residuals with the remediation instead of claiming erasure.
+**Evidence:** `TestPhysicalPurgeErasesAndBlocksResurrection` (raw bytes
+absent from data/cache/canonical root; no resurrection via sync, re-keyed
+content, backup restore, or migration rollback),
+`TestForgetSurvivesRestoreAndCorruptRecovery`, `TestCorruptLedgerFailsClosed`,
+threat cases 18 and 30 executed in `TestPrivacyCorpusDeterministic`.
+**Alternatives rejected:** ledger inside the data dir (restored with the
+store — defeats the purpose); storing plain record text in the ledger
+(violates non-content tombstone); Be Me rewriting Git history (destructive
+to user-owned repositories; out of ownership boundary, §5).
+**Consequences:** a restored pre-purge store still holds the bytes until the
+next `beme build`; resolution filters them and `Serve` reports a
+degradation. A normalized-text fingerprint could block a later, deliberately
+re-authored identical statement; re-authorization means removing the ledger
+entry (explicit operator act).
+**Rollback:** delete `internal/app/purge.go`/`ledger.go` and the ledger merge
+in `Session.Resolve`; existing ledgers become inert files.
+**Reopen:** a resurrection path not covered by the ledger, or a requirement
+for Be Me-managed Git history rewriting.
+
+## ADR-028 — Platform directories per OS; Windows runtime verification in CI
+
+**Date:** 2026-09-15
+**Status:** accepted (YELLOW — behavior change on Linux/Windows defaults)
+**Context:** `DefaultDirs` used the macOS `~/Library` layout on every OS, so
+Linux and Windows deployments wrote to a nonsensical `~/Library` tree.
+NFR-007 kept Windows `ported-unverified`: no Windows runtime had ever run the
+test suite. Adding a `windows-latest` job immediately exposed that ingestion
+produced backslash-separated relative paths, so include globs matched nothing
+and Windows ingested zero records.
+**Decision:** macOS keeps `~/Library/Application Support/beme` and
+`~/Library/Caches/beme`; Linux follows XDG (`$XDG_CONFIG_HOME`,
+`$XDG_DATA_HOME`, `$XDG_CACHE_HOME`, defaulting to `~/.config`,
+`~/.local/share`, `~/.cache`); Windows uses `%AppData%\beme` and
+`%LocalAppData%\beme`. `BEME_*_HOME` overrides win everywhere. Ingestion
+relative paths and provenance locators are slash-separated on every OS. CI
+runs build, vet, and the full Go test suite on `windows-latest`.
+**Evidence:** `TestDefaultDirsPerPlatform`; CI jobs `test (macos-latest)`,
+`test (ubuntu-latest)`, `test-windows`.
+**Alternatives rejected:** `os.UserConfigDir` alone (no data-dir notion on
+Linux); keeping `~/Library` everywhere (wrong on two of three platforms).
+**Consequences:** a Linux/Windows alpha.1 deployment that relied on the old
+`~/Library` default must move its files or set `BEME_*_HOME`. Windows is now
+test-suite verified in CI; released-binary behavior inside Windows harnesses
+is still not exercised.
+**Rollback:** restore the single-layout `DefaultDirs` and drop the CI job.
+**Reopen:** a platform convention change or a Windows failure CI cannot see.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |
 |---|---|---|
-| Exact harness hook mechanics per harness | Verify installed versions at WP8; use wrapper where hooks insufficient | No safe pre-decision path exists on a claimed supported surface |
-| Performance budget | Measure on seed corpus at WP10 calibration | Meeting a usable SLO requires architecture expansion |
+| Exact harness hook mechanics per harness | Installed Claude Code 2.1.271 and Codex 0.154.0 verified at config-lifecycle level (both) and harness-connection level (Claude Code); pre-decision use needs live model sessions | No safe pre-decision path exists on a claimed supported surface |
+| Performance budget | Measured on the public seed corpus (`evals/benchmarks/seed-baseline.json`); warm p95 far below the 1 s NFR-008 target up to 200× scale | Meeting a usable SLO requires architecture expansion |
 | Promotion UX | Batch CLI first (ADR-010 governance) | CLI friction makes the learning loop unusable in dogfood |
-| Physical purge workflow | Document as RED destructive workflow (§7.8) | The user requests actual erasure |
+| Physical purge workflow | Implemented and tested on synthetic data (ADR-027); running it on real data is an owner-run RED action | The user requests actual erasure |

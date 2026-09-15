@@ -33,10 +33,43 @@ never silently edited outside the managed block.
 
 `assured` labeling requires a verified harness boundary resolving context
 before every material decision with measured 100% pre-decision use
-(FR-045/046). No surface is labeled assured in v1; hook mechanics are
-version-sensitive and were not verified against installed harnesses during
-this build session. Before calling any surface supported, verify against the
-currently installed harness version.
+(FR-045/046). No surface is labeled assured in v1.
+
+### Verification levels (installed harnesses, 2026-09-15)
+
+Four levels are tracked separately; a higher level is never inferred from a
+lower one.
+
+| Harness (installed) | MCP protocol | Config lifecycle | Harness connection | Pre-decision use |
+|---|---|---|---|---|
+| Claude Code 2.1.271 | verified | verified | verified | not verified |
+| Codex 0.154.0 | verified | verified | not verified | not verified |
+| Hermes | verified | documented contract only | not run | not verified |
+| Cursor (not installed) | verified | documented contract only | not run | not verified |
+
+- **MCP protocol** — a real MCP client (official Go SDK) drives the real
+  stdio server (`TestMCPClientEndToEnd`). Harness-independent, so it holds
+  for every row.
+- **Config lifecycle** — the installed harness CLI registers, parses, lists,
+  and removes the beme server in an isolated config home
+  (`TestClaudeCodeHarnessIntegration`, `TestCodexHarnessIntegration`), and
+  `beme adapter install|remove` is byte-exact on the harness instruction file
+  (`TestAdapterInstallRemoveByteExact`).
+- **Harness connection** — the harness itself spawns beme and completes the
+  MCP handshake. Claude Code: `claude mcp get beme` reports Connected. Codex
+  has no MCP health check without a model session (`codex doctor` validates
+  config only; `codex exec` would spend model usage), so it stays
+  unverified.
+- **Pre-decision use** — whether the agent resolves context before each
+  material decision. Measuring it needs live model sessions (owner-run), so
+  it is unverified for every harness and no surface is `assured`.
+
+Run the installed-harness tests locally (they skip in CI; no model calls,
+real harness configs untouched):
+
+```sh
+BEME_HARNESS_INTEGRATION=1 go test ./cmd/beme -run HarnessIntegration -v
+```
 
 ## Rifja (ADR-019)
 

@@ -31,9 +31,20 @@ never evidence of preference.
 
 ## Deletion
 
-`beme forget` tombstones (logical forget). Rebuild purges derived copies.
-Physical purge from Git history is a distinct, user-owned, irreversible
-action with an anti-resurrection tombstone only (FR-055).
+`beme forget` is a logical forget: the record is tombstoned in its projection
+and in the durable ledger under the canonical root, so it never resolves
+again — even after a rebuild, corrupt-store recovery, or a restored backup.
+A rebuild does not erase the content; the source still holds it.
+
+`beme purge --confirm <key> <key>` is the physical purge (FR-055, ADR-027):
+a distinct, user-owned, irreversible action. It erases the record from both
+projection stores (rewriting the files so the bytes do not survive), from
+persisted traces, and from pending observations that restate it; with
+`--remove-canonical` it also deletes the source file. Only a non-content
+fingerprint remains, which blocks re-ingestion and resolution if the content
+returns through sync, rollback, or a backup restore. Git history and external
+backups are outside Be Me's reach: the purge report lists them as residuals
+with the remediation.
 
 ## Public/private boundary
 

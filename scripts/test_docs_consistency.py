@@ -37,7 +37,7 @@ def check(name, ok, detail=""):
 
 # --- D1: phase contradictions (docs + README only; ADR evidence quotes exempt)
 PHASE_LIES = [
-    r"Contracts phase", r"pre-implementation",
+    r"Contracts[- ]phase", r"pre-implementation",
     r"gated behind WP2B", r"Blocked on user", r"Not authorized until WP2B",
 ]
 scan_files = [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md"))
@@ -127,6 +127,46 @@ refs = [f.name for f in [ROOT / "README.md", ROOT / "docs" / "PROJECT_CONTEXT.md
         if "HANDOFF.md" not in f.read_text()]
 check("D6 HANDOFF §1 status anchor exists and is referenced", anchor_ok and not refs,
       f"anchor={anchor_ok}; docs without HANDOFF reference: {refs}")
+
+# --- D7: requirements status counts are derived from the matrix rows
+req = (ROOT / "docs" / "REQUIREMENTS.md").read_text()
+req_rows = [l for l in req.splitlines() if re.match(r"\|\s*(FR|NFR)-\d+", l)]
+statuses = [l.strip().strip("|").split("|")[-1].strip() for l in req_rows]
+canonical = {"defined", "planned", "partial", "implemented", "verified", "not-applicable-v1", "active"}
+d7 = [f"non-canonical status cell '{st}'" for st in statuses if st not in canonical][:3]
+m = re.search(r"(\d+) rows — (\d+) implemented · (\d+) partial · (\d+) not-applicable-v1 · (\d+) active", req)
+if not m:
+    d7.append("status-count summary line missing")
+else:
+    claimed = tuple(int(x) for x in m.groups())
+    actual = (len(req_rows), statuses.count("implemented"), statuses.count("partial"),
+              statuses.count("not-applicable-v1"), statuses.count("active"))
+    if claimed != actual:
+        d7.append(f"summary {claimed} != rows {actual}")
+check("D7 requirements status counts match the matrix rows", not d7, "; ".join(d7))
+
+# --- D8: no doc claims the evaluation runner is unimplemented once it exists
+d8 = []
+if (ROOT / "internal" / "evalrunner" / "runner.go").exists():
+    for rel in ["README.md", "evals/README.md", "docs/ACCEPTANCE.md", "docs/HANDOFF.md", "docs/ROADMAP.md", "docs/REQUIREMENTS.md"]:
+        text = (ROOT / rel).read_text()
+        for pat in [r"runners?\W[^.]{0,60}?not\s+yet\s+implemented", r"\bNot yet implemented\b"]:
+            for mm in re.finditer(pat, text, re.IGNORECASE):
+                d8.append(f"{rel}: '{' '.join(mm.group(0).split())}'")
+check("D8 docs agree the evaluation runner is implemented", not d8, "; ".join(d8[:4]))
+
+# --- D9: every Go test named in the docs exists
+go_tests = set()
+for f in ROOT.rglob("*_test.go"):
+    if any(part in {".git", ".venv", "node_modules"} for part in f.parts):
+        continue
+    go_tests.update(re.findall(r"^func ((?:Test|Benchmark)\w+)\(", f.read_text(), re.M))
+d9 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    for name in re.findall(r"`((?:Test|Benchmark)[A-Z]\w+)`", f.read_text()):
+        if name not in go_tests:
+            d9.append(f"{f.name}: {name}")
+check("D9 Go tests referenced in docs exist", not d9, "; ".join(sorted(set(d9))[:5]))
 
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]

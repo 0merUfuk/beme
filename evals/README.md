@@ -9,10 +9,26 @@ Public evaluation assets for the engine's claims.
   published under `schemas/evaluation/` at the repo root (canonical location).
 - `public/` — synthetic, anonymized public cases and privacy/policy
   regression fixtures. **No real user data ever lives here.**
-- `runners/` — evaluation runners. **Not yet implemented.** The behavioral
-  evaluation protocol (baselines, rubric, manifest) is defined in
-  `EVALUATION_CONTRACT.md`; the executable runner arrives with the first
-  owner-gated live-model evaluation session.
+- `benchmarks/` — NFR-008 performance evidence on the public seed corpus
+  (`make bench` regenerates `seed-baseline.json`).
+
+## Executable runners (implemented; live execution owner-gated)
+
+The runners live in Go packages so they share the production runtime path:
+
+- `internal/evalrunner` — the EVALUATION_CONTRACT.md runner: B0–B4 arms,
+  ablations, repeat runs, immutable manifests, blinded packaging, retrieval
+  recall/precision, explicit `passed`/`failed`/`not_run`. Proven end to end
+  with deterministic mock providers on public synthetic fixtures
+  (`TestRunnerFullPipelineB0ThroughB4`, `TestRunnerRetrievalMetrics`).
+- `internal/privacycorpus` — every §19 threat case as a deterministic suite
+  (`TestPrivacyCorpusDeterministic`).
+- `internal/benchmark` + `cmd/beme-bench` — the reproducible performance
+  harness.
+
+Running the behavioral evaluation against live models (paid API use) and
+against the private corpus is owner-gated: wire a real provider into
+`evalrunner.Provider` and run it outside public CI (ADR-023).
 
 ## Hard rules
 

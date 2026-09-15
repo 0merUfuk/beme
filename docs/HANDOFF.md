@@ -1,26 +1,31 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 10 — 2026-09-15
-**Position:** `v0.1.0-alpha.1` published. Evaluation-infrastructure session
-(user-directed continuation): the executable evaluation runner
-(EVALUATION_CONTRACT.md) is implemented and proven with deterministic mock
-providers (B0–B4 arms, ablations, repeat runs, immutable manifests, blinded
-packaging, explicit not_run/failed/passed); the deterministic privacy
-threat-case corpus runs all 30 §19 cases (28 passed, 2 explicit not_run —
-the backup/restore and physical-purge cases, which need owner-gated
-infrastructure); a critical test/production data-isolation defect was found
-and fixed (ADR-026); an ingestion off-by-one (markdown bodies starting with
-"-") and an FTS tombstone deadlock were found and fixed. The documentation
-gate still PASSES; ACCEPTANCE §7 remains checked except the owner-owned
-release-approval item.
+**Revision:** 11 — 2026-09-15
+**Position:** `v0.1.0-alpha.1` published. Continuation work is on branch
+`feat/eval-runner-and-privacy-corpus`, PR
+[#1](https://github.com/0merUfuk/beme/pull/1). Every safely implementable
+prerequisite from the owner's 14-item continuation list is implemented and
+verified: the evaluation runner (now with retrieval recall/precision); the
+privacy threat corpus with all 30 §19 cases executed and passing (none
+`not_run`); the physical-purge workflow and durable tombstone ledger
+(ADR-027); the NFR-008 benchmark harness with a measured seed baseline;
+Windows CI runtime verification with per-OS directories (ADR-028);
+installed-harness integration tests at four explicit verification levels;
+and the requirements/docs reconciliation with an expanded docs-consistency
+gate (D1–D9).
 
-Remaining owner-gated work (cannot be executed by the agent):
-live-model B4-vs-B0 behavioral evaluation (paid API runs; protocol, corpus,
-and the runner itself are now ready); `assured` adapter labeling (needs
-measured pre-decision use); Windows runtime verification; explicit
+Remaining work is owner-gated only (ACCEPTANCE §7a): live-model B4-vs-B0
+behavioral evaluation (paid API runs); private-corpus retrieval measurement
+(owner-run, ADR-023); pre-decision-use measurement in live harness sessions
+before any `assured` label; running a physical purge on real data (RED);
 non-alpha release approval.
 
 ## 1. Status
+
+**Current (rev 11):** PR #1 is open against `main` with CI on macOS, Ubuntu,
+and Windows plus the private-data scan. Nothing from this continuation is
+released or tagged; `main` is unchanged until the owner merges. The alpha
+release history below remains accurate.
 
 v0.1.0-alpha shipped with a release-verification failure (public CI read a
 private corpus path; both CI runs failed). Recovery is complete and
@@ -67,6 +72,11 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
   standing instruction (recorded verbatim; reopen on any re-assertion).
 - Dependency verification baked into ADR-004 (MCP go-sdk v1.7.0, modernc
   sqlite FTS5, CGo-free, go1.25.6).
+- **ADR-026** — explicit config dir is a self-contained deployment root
+  (test/production data isolation).
+- **ADR-027** — physical purge workflow + durable tombstone ledger.
+- **ADR-028** — per-OS platform directories; Windows runtime verification
+  in CI.
 
 ## 4. Work completed (engine)
 
@@ -110,26 +120,51 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
   vet, tests, private-data scan.
 - **Private-data scan** (`scripts/scan_private_data.py`): generic public
   patterns; owner inventory in git-ignored local terms file; exit-1 gate.
+- **Evaluation runner** (`internal/evalrunner`): B0–B4, ablations, repeats,
+  immutable manifests, blinded packaging, explicit states, and retrieval
+  recall/precision against `required_evidence_refs` (`RunConfig.Refs`).
+  Proven with deterministic mocks (`TestRunnerFullPipelineB0ThroughB4`,
+  `TestRunnerRetrievalMetrics`).
+- **Privacy threat corpus** (`internal/privacycorpus`): all 30 §19 cases run
+  on isolated synthetic deployments, all passing (`TestPrivacyCorpusDeterministic`).
+- **Forget + physical purge** (`internal/app/purge.go`, `ledger.go`,
+  `beme purge`): ADR-027. Verified at raw-byte level on synthetic data;
+  no resurrection through sync, re-keyed content, backup restore, migration
+  rollback, or corrupt-store recovery.
+- **Benchmark** (`internal/benchmark`, `cmd/beme-bench`, `make bench`):
+  `evals/benchmarks/seed-baseline.json` — on the development machine
+  (darwin/arm64) warm resolution p95 is well under a millisecond at 1× seed
+  scale and about 10 ms at 200× (1,000 records); build about 74 ms at 200×.
+- **Harness integration** (`cmd/beme/harness_integration_test.go`, opt-in):
+  Claude Code 2.1.271 config lifecycle + harness connection verified; Codex
+  0.154.0 config lifecycle verified; see INTEGRATIONS "Verification levels".
+- **Portability** (ADR-028): per-OS directories; slash-separated ingestion
+  paths; `test-windows` CI job.
+- **CLI fixes:** output newlines (literal `\n` before); `forget` error
+  handling.
 
 ## 5. Work NOT completed (honest gaps)
 
 - **Live-model behavioral evaluation** (B4-vs-B0 blind paired grading):
-  requires paid model-API runs — a paid action, explicitly excluded from
-  ADR-022 delegation. Runner, rubric, splits, and thresholds are ready;
-  this is the owner's gate to run.
-- **Assured adapter surfaces:** none — no harness hook was measured at
-  100% pre-decision use. All surfaces are labeled `advisory`.
-- ~~Batch review CLI~~ **WP9 complete (2026-09-14)**: `internal/learning`
-  implements the full §14 pipeline — observation → candidate → batch review
-  (`beme candidate list|inspect|review` with all 8 §14.5 actions),
-  evidence-family dedup, normalized-fingerprint tombstones, inherited
-  sensitivity, atomic writes. MCP `report_feedback` writes through the
-  store. FR-050–054 implemented and tested; FR-055 partial only in the
-  physical-purge workflow (RED/owner-gated by design).
-- **Fresh-agent documentation test** (clean checkout + new agent): designed
-  in ACCEPTANCE §9; not run in this session.
-- **Linux/Windows:** built and unit-tested on macOS; CI covers Ubuntu
-  build/test; platform claims remain ported-unverified beyond CI (NFR-007).
+  paid model-API runs — owner-gated. The runner, rubric, splits, and
+  thresholds are ready; `evalrunner.Provider` is the single integration
+  point.
+- **Private-corpus retrieval measurement:** owner-run (ADR-023). Mechanism
+  ready: pass a `Refs` lookup that maps record IDs to the refs the private
+  gold uses.
+- **Pre-decision use / `assured` surfaces:** needs live model sessions in
+  each harness. No surface is `assured`.
+- **Codex harness connection:** Codex has no MCP health check without a model
+  session (`codex exec`); config lifecycle is verified, connection is not.
+- **Hermes and Cursor:** documented contracts only; installed-harness tests
+  were not run (Cursor is not installed).
+- **Physical purge on real data:** the mechanism is done; executing it is a
+  RED owner action. Git history rewriting stays out of scope (ADR-027).
+- **Windows released-binary use inside harnesses:** the test suite runs on
+  Windows CI; a Windows harness session has not been exercised.
+- **Release:** nothing from PR #1 is released; a non-alpha release needs
+  explicit owner approval.
+
 
 ## 6. Do not redo
 
@@ -142,6 +177,11 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 - Do not publish releases/tags without the owner (ADR-022 covers this
   repo's initial publication; future releases with private-data deltas
   re-run the scan first).
+- Do not move tombstones back into projection stores only — the durable
+  ledger is what makes forget/purge survive restore and rebuild (ADR-027).
+- Do not reintroduce OS-separated ingestion paths; globs and locators are
+  slash-separated everywhere (ADR-028).
+
 
 ## 7. Known drift/risks
 
@@ -150,23 +190,24 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 - The private regression pack must never be committed or referenced by
   public CI; the scan gate enforces the repository side.
 - Learned observations are opt-in and non-normative; promotion is
-  user-owned (ADR-010) — the review CLI stub is the only missing piece.
+  user-owned (ADR-010); the batch-review CLI is implemented.
 
 ## 8. Exact next step
 
-1. **Owner:** run the live behavioral evaluation (B0/B1/B2/B3/B4 + ablations)
-   against the private corpus — the one gate this delegation could not
-   cover (paid API usage). `evals/EVALUATION_CONTRACT.md` §4–§6 defines the
-   protocol; the executable runner is implemented
-   (`internal/evalrunner`, deterministic-mock proof in
-   `internal/evalrunner/runner_test.go`); the frozen split map is in the
-   private pack. Wire a real provider (paid API client) into
-   `evalrunner.Provider` — the interface is the single integration point.
-2. **Then:** dogfood — `beme build`, `beme preview` in a real registered
-   workspace; extend the corpus in thin categories (TR/EN, bounded-output).
-3. **Optional:** batch-review CLI for quarantined observations (WP9
-   completion); assured-mode wrapper experiments per harness; performance
-   benchmark harness on the public seed corpus (NFR-008 measurement).
+1. **Owner:** review and merge PR #1 once its CI (macOS, Ubuntu, Windows,
+   private-data scan) is green.
+2. **Owner:** run the live behavioral evaluation (B0–B4 + ablations) against
+   the private corpus — wire a paid provider into `evalrunner.Provider`;
+   protocol in `evals/EVALUATION_CONTRACT.md` §4–§6.
+3. **Owner:** measure retrieval recall/precision on the private corpus with
+   `evalrunner.Run(..., RunConfig{Refs: ...})` and record the evidence bundle
+   against ACCEPTANCE §5.
+4. **Owner:** measure pre-decision use in live Claude Code/Codex sessions
+   before labeling any surface `assured`; verify the Codex harness connection
+   in the same session.
+5. **Then:** dogfood (`beme build`, `beme preview` in a real registered
+   workspace); extend the corpus in thin categories.
+
 
 ## 9. Acceptance evidence (this session)
 
@@ -191,6 +232,15 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 | Clean history for publication | Single squashed root commit from audited tree (no private-term history) |
 | Documentation consistency (D1–D6) | `python3 scripts/test_docs_consistency.py` → all checks pass, exit 0 (CI-gated) |
 | Released module install | `go install github.com/0merUfuk/beme/cmd/beme@v0.1.0-alpha.1` → exit 0; installed binary runs (`status --json` OK; transport elevation rejected, exit 3) |
+| Privacy threat corpus (`TestPrivacyCorpusDeterministic`) | all 30 §19 cases executed and passing; none `not_run` |
+| Physical purge on synthetic data (`TestPhysicalPurgeErasesAndBlocksResurrection`) | purged text absent from every file under data, cache, and canonical root; no resurrection via sync, re-key, restore, rollback |
+| `beme purge` / `beme forget` CLI on a synthetic deployment | unconfirmed → exit 3; unknown key → exit 4; dry run changes nothing; JSON report carries no content; ledger holds fingerprints only |
+| Benchmark (`make bench`) | report written; every scale within the NFR-008 target |
+| Retrieval metrics (`TestRunnerRetrievalMetrics`) | per-case + aggregate recall/precision; `not_run` without refs |
+| Installed harnesses (`BEME_HARNESS_INTEGRATION=1`) | Claude Code: config lifecycle + connection verified; Codex: config lifecycle verified |
+| Windows (`test-windows` CI job) | build, vet, full test suite |
+| Documentation consistency (D1–D9) | `python3 scripts/test_docs_consistency.py` → all checks pass |
+
 
 ## 10. Reply/ownership venue
 

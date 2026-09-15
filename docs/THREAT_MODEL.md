@@ -1,7 +1,7 @@
 # Be Me — Threat Model
 
-> Contracts-phase document. Data-flow, attacker, boundary, misuse,
-> mitigation, and non-goal analysis. The 30 ship-blocking regression cases map
+> Data-flow, attacker, boundary, misuse, mitigation, and non-goal analysis
+> for the implemented runtime. The 30 ship-blocking regression cases map
 > to the invariants in `evals/EVALUATION_CONTRACT.md` §7.
 
 ## 1. Security thesis

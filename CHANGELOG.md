@@ -2,6 +2,46 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
+## [Unreleased] — purge, benchmark, harness verification, Windows
+
+### Added
+- `beme purge` / `app.PhysicalPurge` (FR-055, ADR-027): RED physical purge
+  with typed confirmation and dry run. Erases the record from both
+  projection stores (files rewritten), persisted traces, and restating
+  observations; optionally deletes the source file; reports Git history and
+  external backups as residuals.
+- Durable tombstone ledger under the canonical root (ADR-027): forget and
+  purge survive rebuild, corrupt-store recovery, migration rollback, and
+  backup restore. Purges store fingerprints only.
+- Privacy corpus: threat cases 18 and 30 now execute; no case is `not_run`.
+- `internal/benchmark`, `cmd/beme-bench`, `make bench` (NFR-008) and the
+  measured `evals/benchmarks/seed-baseline.json`.
+- Retrieval recall/precision in `internal/evalrunner` (ACCEPTANCE §5
+  mechanism), with explicit `not_run` when refs are unavailable.
+- Opt-in installed-harness integration tests for Claude Code and Codex with
+  four separately reported verification levels (docs/INTEGRATIONS.md).
+- CI `test-windows` job (build, vet, full test suite).
+- Docs-consistency checks D7 (requirements counts derived from rows), D8
+  (runner readiness), D9 (referenced Go tests exist); D1 now also catches
+  "Contracts-phase".
+
+### Fixed
+- CLI and MCP output printed a literal `\n` instead of newlines.
+- `beme forget` swallowed every tombstone error (the check compared an error
+  with itself).
+- Ingestion on Windows ingested nothing: relative paths used backslashes, so
+  include globs never matched. Paths and locators are now slash-separated.
+- Linux and Windows default directories used the macOS `~/Library` layout
+  (ADR-028: XDG on Linux, `%AppData%`/`%LocalAppData%` on Windows).
+- Requirements matrix: FR-055 carried a non-canonical status cell, which hid
+  one of the four `partial` rows from counts; statuses are now canonical and
+  the summary line is CI-checked.
+
+### Changed
+- Removed stale "Contracts-phase document" banners (ARCHITECTURE,
+  THREAT_MODEL); evals/README, ACCEPTANCE, ROADMAP, PRIVACY, OPERATIONS, and
+  INTEGRATIONS reconciled with the implemented state.
+
 ## [Unreleased] — end-to-end verification hardening
 
 ### Added

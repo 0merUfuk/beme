@@ -35,10 +35,10 @@ inspectable `ContextPack` objects for AI coding agents.
 surface, CLI, adapter contracts, and the learning-review pipeline are
 implemented and tested. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for the
 canonical current status and [`docs/ROADMAP.md`](docs/ROADMAP.md) for
-work-package state. Known alpha limitations (advisory-only adapter
-assurance, no live-model behavioral evaluation yet, Windows
-ported-unverified) are listed in the
-[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1).
+work-package state. Known alpha.1 limitations (advisory-only adapter
+assurance, no live-model behavioral evaluation yet) are listed in the
+[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1);
+since alpha.1 the full test suite also runs on Windows in CI (ADR-028).
 
 ```
 beme/

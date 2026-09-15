@@ -68,14 +68,16 @@
 - [x] Private regression pack never referenced by public CI.
 - **Exit:** production code authorized. WP4–WP7 begin.
 
-## 5. Gate: core alpha (WP5) — engine tested; measurement pending
+## 5. Gate: core alpha (WP5) — engine tested; measurement mechanism ready, owner-run measurement pending
 
-Evidence status (2026-09-14): the deterministic items below pass in CI
+Evidence status (2026-09-15): the deterministic items below pass in CI
 (`go test ./...`, migration fixtures, work-safe boundary, determinism,
-provenance/selection-reason assertions). The retrieval *measurement* items
-(recall, precision) require evaluation-harness runs against the private
-corpus — owner-gated, runner not yet implemented; they remain unchecked
-until measured.
+provenance/selection-reason assertions). The retrieval *measurement*
+mechanism is implemented — `internal/evalrunner` computes per-case and
+micro-averaged recall/precision against `required_evidence_refs` with these
+thresholds (`TestRunnerRetrievalMetrics`). Measuring the private corpus is an
+owner-run step (ADR-023), so the two items stay unchecked until that evidence
+bundle exists.
 
 - [x] Schema and migration fixtures: 100% pass (CI-gated).
 - [x] Policy/precedence tests: 100% pass (CI-gated).
@@ -83,20 +85,21 @@ until measured.
       pack section assertions).
 - [x] Unsupported authoritative personal claims: 0 (injection-clamp and
       unknown-preference negative-control tests).
-- [ ] Required-record retrieval recall: ≥90% — needs eval-harness
-      measurement (owner-gated).
-- [ ] Context precision: ≥80% — needs eval-harness measurement
-      (owner-gated).
+- [ ] Required-record retrieval recall: ≥90% — mechanism implemented;
+      owner-run private-corpus measurement pending.
+- [ ] Context precision: ≥80% — mechanism implemented; owner-run
+      private-corpus measurement pending.
 - [x] Deterministic pack snapshots stable (structural-identity test).
 - [x] Every selected item has valid provenance and a selection reason
       (pack schema requires both; contract-tested).
 
 ## 6. Gate: trusted local beta (WP10) — pending owner-run live-model evaluation
 
-Every item below requires the live-model B4-vs-B0 evaluation (blind paired
-grading over the private corpus). That requires paid model-API runs — an
-owner-gated action Be Me's delegation does not cover. No item is checked
-until those runs exist as an evidence bundle.
+Every item below except the privacy-adversarial item requires the live-model
+B4-vs-B0 evaluation (blind paired grading over the private corpus). That
+requires paid model-API runs — an owner-gated action Be Me's delegation does
+not cover. Those items stay unchecked until the runs exist as an evidence
+bundle. The privacy item is deterministic and checked on its own evidence.
 
 - [ ] Blind paired B4-vs-B0: B4 wins ≥60%, loses ≤20%, bootstrap 95% CI
       excludes a negative effect (decision and reasoning reported separately).
@@ -108,7 +111,9 @@ until those runs exist as an evidence bundle.
 - [ ] Avoidable-question rate improves over baseline.
 - [ ] Non-ambiguous cross-run decision stability: ≥85%.
 - [ ] Pre-decision context-use rate: 100% on every `assured` surface.
-- [ ] All privacy adversarial cases pass.
+- [x] All privacy adversarial cases pass — every §19 threat case executes
+      and passes in `TestPrivacyCorpusDeterministic`, none `not_run`
+      (backup restore and physical-purge resurrection included, ADR-027).
 
 ## 7. Gate: public release candidate (WP11) — alpha published; gate items partially evidenced
 
@@ -152,6 +157,31 @@ this gate passed. Item-level status:
 - [ ] User approval of external release (RED) — v0.1.0-alpha.1 publication
       was authorized by ADR-022 delegation; a *non-alpha* release still
       requires explicit approval.
+
+## 7a. Unchecked-item classification (2026-09-15)
+
+Every unchecked item above, sorted by what it needs. Mechanisms are never
+classified as owner-gated merely because *executing* them on private data,
+paid APIs, or a release needs the owner.
+
+| Item | Class | What remains |
+|---|---|---|
+| §5 retrieval recall ≥90% | owner-run execution (private corpus, no paid API) | Run `evalrunner` with a `Refs` lookup against the private deployment (ADR-023) |
+| §5 context precision ≥80% | owner-run execution (private corpus, no paid API) | Same run as recall |
+| §6 blind paired B4-vs-B0 | owner-paid model execution | Wire a live provider into `evalrunner.Provider`; blind human grading |
+| §6 general-task non-regression | owner-paid model execution | Same live run |
+| §6 invented-preference rate 0 | owner-paid model execution | Same live run (engine negative control already passes) |
+| §6 trusted project override accuracy | owner-paid model execution | Same live run |
+| §6 escalation recall ≥95% | owner-paid model execution | Same live run |
+| §6 avoidable-question rate | owner-paid model execution | Same live run |
+| §6 cross-run stability ≥85% | owner-paid model execution | Same live run (repeat runs implemented) |
+| §6 pre-decision use 100% on `assured` surfaces | owner-run live harness sessions | No surface is `assured` (FR-045 not-applicable-v1); measuring needs live model sessions |
+| §7 external release approval | approval-gated (RED) | Explicit owner approval of a non-alpha release |
+
+Implementation work the agent could complete was completed on 2026-09-15:
+retrieval metrics, all threat cases executed, physical-purge workflow on
+synthetic data, benchmark harness, Windows CI, and installed-harness
+verification levels (see HANDOFF §4). None remains in this class.
 
 ## 8. Evidence bundles
 

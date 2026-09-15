@@ -157,6 +157,46 @@ type RunConfig struct {
 	Harness       string
 	NetworkPolicy string // disabled | integration_only
 	// Only arms listed are executed; others are reported not_run.
+
+	// Refs maps a selected record to the identifiers gold
+	// required_evidence_refs may use (key, source record ID). When nil,
+	// retrieval metrics are reported not_run.
+	Refs RefsFn
+}
+
+// RefsFn returns the identifiers a record answers to under a profile.
+type RefsFn func(profile contracts.Profile, recordID string) []string
+
+// Retrieval thresholds (ACCEPTANCE §5; locked at blueprint design targets).
+const (
+	RecallThreshold    = 0.90
+	PrecisionThreshold = 0.80
+)
+
+// RetrievalCase is the context precision/recall measurement for one case
+// (contract dimension 8: the pack contains the right records). Precision is
+// measured against the case's required_evidence_refs.
+type RetrievalCase struct {
+	CaseID    string     `json:"case_id"`
+	Outcome   RunOutcome `json:"outcome"`
+	Reason    string     `json:"reason,omitempty"`
+	Required  int        `json:"required"`
+	Retrieved int        `json:"retrieved"`
+	Selected  int        `json:"selected"`
+	Relevant  int        `json:"relevant"`
+	Recall    float64    `json:"recall"`
+	Precision float64    `json:"precision"`
+}
+
+// RetrievalSummary micro-averages retrieval over measured cases.
+type RetrievalSummary struct {
+	Cases              []RetrievalCase `json:"cases"`
+	Measured           int             `json:"measured"`
+	Recall             float64         `json:"recall"`
+	Precision          float64         `json:"precision"`
+	RecallThreshold    float64         `json:"recall_threshold"`
+	PrecisionThreshold float64         `json:"precision_threshold"`
+	ThresholdsMet      bool            `json:"thresholds_met"`
 }
 
 // RunOutcome is the terminal state of one case×arm execution unit.
@@ -186,15 +226,16 @@ type RepeatResult struct {
 
 // Summary aggregates a run set.
 type Summary struct {
-	RunID         string       `json:"run_id"`
-	StartedAt     string       `json:"started_at"`
-	EndedAt       string       `json:"ended_at"`
-	Corpus        string       `json:"corpus"`
-	Arms          []Arm        `json:"arms"`
-	NetworkPolicy string       `json:"network_policy"`
-	CaseResults   []CaseResult `json:"case_results"`
-	Blockers      []string     `json:"blockers"`
-	ManifestPaths []string     `json:"manifest_paths"`
+	RunID         string           `json:"run_id"`
+	StartedAt     string           `json:"started_at"`
+	EndedAt       string           `json:"ended_at"`
+	Corpus        string           `json:"corpus"`
+	Arms          []Arm            `json:"arms"`
+	NetworkPolicy string           `json:"network_policy"`
+	CaseResults   []CaseResult     `json:"case_results"`
+	Blockers      []string         `json:"blockers"`
+	ManifestPaths []string         `json:"manifest_paths"`
+	Retrieval     RetrievalSummary `json:"retrieval"`
 }
 
 // ResolverFn resolves a pack for a case under a capability; injected so the
@@ -284,7 +325,9 @@ func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, resolv
 		NetworkPolicy: cfg.NetworkPolicy,
 	}
 
+	summary.Retrieval = RetrievalSummary{RecallThreshold: RecallThreshold, PrecisionThreshold: PrecisionThreshold}
 	for _, cs := range corpus.Cases {
+		summary.Retrieval.Cases = append(summary.Retrieval.Cases, measureRetrieval(cs, cfg.Refs, resolve))
 		for _, arm := range cfg.Arms {
 			// §18.6: the no-scope ablation runs ONLY on synthetic data in an
 			// isolated, no-network environment. Corpus dirs are synthetic in
@@ -349,6 +392,7 @@ func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, resolv
 			summary.CaseResults = append(summary.CaseResults, res)
 		}
 	}
+	summary.Retrieval.aggregate()
 	summary.EndedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// manifests + blinded packaging
@@ -443,4 +487,78 @@ func sortedNames(entries []os.DirEntry) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// measureRetrieval resolves the full (B4) pack once per case and scores it
+// against required_evidence_refs.
+func measureRetrieval(cs Case, refs RefsFn, resolve ResolverFn) RetrievalCase {
+	rc := RetrievalCase{CaseID: cs.ID, Required: len(cs.Gold.RequiredEvidenceRefs)}
+	if refs == nil {
+		rc.Outcome, rc.Reason = OutcomeNotRun, "no record reference lookup configured"
+		return rc
+	}
+	if rc.Required == 0 {
+		rc.Outcome, rc.Reason = OutcomeNotRun, "case declares no required_evidence_refs"
+		return rc
+	}
+	profile := armProfile(cs)
+	pack, err := resolve(profile, cs.Scenario.Task, cs.Scenario.Workspace)
+	if err != nil {
+		rc.Outcome, rc.Reason = OutcomeNotRun, "resolution failed: "+err.Error()
+		return rc
+	}
+	required := map[string]bool{}
+	for _, r := range cs.Gold.RequiredEvidenceRefs {
+		required[r] = true
+	}
+	found := map[string]bool{}
+	items := append(append(append([]resolver.ContextItem{}, pack.Constraints...), pack.Guidance...), pack.Precedents...)
+	for _, it := range items {
+		if it.RecordID == "" {
+			continue
+		}
+		rc.Selected++
+		relevant := false
+		for _, id := range append([]string{it.RecordID}, refs(profile, it.RecordID)...) {
+			if required[id] {
+				found[id] = true
+				relevant = true
+			}
+		}
+		if relevant {
+			rc.Relevant++
+		}
+	}
+	rc.Retrieved = len(found)
+	rc.Recall = ratio(rc.Retrieved, rc.Required)
+	rc.Precision = ratio(rc.Relevant, rc.Selected)
+	rc.Outcome = OutcomePassed
+	if rc.Recall < RecallThreshold || rc.Precision < PrecisionThreshold {
+		rc.Outcome = OutcomeFailed
+	}
+	return rc
+}
+
+func (r *RetrievalSummary) aggregate() {
+	required, retrieved, selected, relevant := 0, 0, 0, 0
+	for _, c := range r.Cases {
+		if c.Outcome == OutcomeNotRun {
+			continue
+		}
+		r.Measured++
+		required += c.Required
+		retrieved += c.Retrieved
+		selected += c.Selected
+		relevant += c.Relevant
+	}
+	r.Recall = ratio(retrieved, required)
+	r.Precision = ratio(relevant, selected)
+	r.ThresholdsMet = r.Measured > 0 && r.Recall >= RecallThreshold && r.Precision >= PrecisionThreshold
+}
+
+func ratio(n, d int) float64 {
+	if d == 0 {
+		return 0
+	}
+	return math.Round(float64(n)/float64(d)*1000) / 1000
 }
