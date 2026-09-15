@@ -39,9 +39,12 @@ func explainCmd(rt *app.Runtime, traceID, profile string, jsonOut bool) {
 	case errors.Is(err, app.ErrTraceUnavailable):
 		fmt.Fprintln(os.Stderr, "error: trace not available")
 		os.Exit(4)
-	case err != nil:
+	case errors.Is(err, app.ErrLedgerUnusable):
 		fmt.Fprintf(os.Stderr, "policy blocked: %v\n", err)
-		os.Exit(exitForReadErr(err))
+		os.Exit(3)
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 	if jsonOut {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{

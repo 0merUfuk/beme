@@ -225,12 +225,17 @@ func main() {
 		}
 		exportCmd(rtE, profile, exportOut, jsonOut)
 	case "candidate":
-		rtC, err := app.Load(configDir)
+		// candidate keeps raw positional arguments (observation IDs), so its
+		// deployment override is extracted here instead of through the flag
+		// set: without this it would silently fall back to the operator's
+		// real deployment (isolation rule, ADR-026).
+		rest, candidateConfig := extractConfigFlag(args[1:])
+		rtC, err := app.Load(candidateConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		candidateCmd(rtC, args[1:])
+		candidateCmd(rtC, rest)
 	case "purge":
 		// purge --confirm KEY [--remove-canonical] [--dry-run] [--json] KEY
 		rest := fs.Args()
@@ -357,17 +362,24 @@ func doctor(configDir string, jsonOut bool) {
 	rt, err := app.Load(configDir)
 	findings := []string{}
 	status := "healthy"
+	// raise keeps the most severe health state: a later, milder finding
+	// (e.g. a pending purge) never masks policy_blocked or unavailable.
+	raise := func(next string) {
+		if healthSeverity[next] > healthSeverity[status] {
+			status = next
+		}
+	}
 	if err != nil {
-		status = "unavailable"
+		raise("unavailable")
 		findings = append(findings, "config load failed: "+err.Error())
 	} else {
 		if len(rt.Sources) == 0 {
-			status = "degraded"
+			raise("degraded")
 			findings = append(findings, "no registered sources; register sources under <config>/sources/")
 		}
 		for _, s := range rt.Sources {
 			if _, err := os.Stat(s.Root); err != nil {
-				status = "degraded"
+				raise("degraded")
 				findings = append(findings, fmt.Sprintf("source %s root missing: %s", s.SourceID, s.Root))
 			}
 		}
@@ -379,17 +391,24 @@ func doctor(configDir string, jsonOut bool) {
 		for _, p := range []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe} {
 			pf, err := rt.ProjectionFindings(p)
 			if err != nil {
-				status = "policy_blocked"
+				raise("policy_blocked")
 				findings = append(findings, fmt.Sprintf("projection %s cannot be read safely: %v", p, err))
 				continue
 			}
-			if len(pf) > 0 && status == "healthy" {
-				status = "degraded"
+			if len(pf) > 0 {
+				raise("degraded")
 			}
 			findings = append(findings, pf...)
 		}
+		if of, err := rt.ObservationFindings(); err != nil {
+			raise("policy_blocked")
+			findings = append(findings, fmt.Sprintf("observation store cannot be read safely: %v", err))
+		} else if len(of) > 0 {
+			raise("degraded")
+			findings = append(findings, of...)
+		}
 		if n := rt.PendingPurges(); n > 0 {
-			status = "degraded"
+			raise("degraded")
 			findings = append(findings, fmt.Sprintf("%d interrupted physical purge(s) pending: re-run the same `beme purge --confirm <key> <key>` command to finish the cleanup", n))
 		}
 	}
@@ -402,6 +421,29 @@ func doctor(configDir string, jsonOut bool) {
 		fmt.Printf("  - %s\n", f)
 	}
 }
+
+// extractConfigFlag removes "--config DIR" / "--config=DIR" from raw
+// arguments and returns the remaining arguments and the directory.
+func extractConfigFlag(args []string) (rest []string, configDir string) {
+	rest = []string{}
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--config" || args[i] == "-config":
+			if i+1 < len(args) {
+				i++
+				configDir = args[i]
+			}
+		case strings.HasPrefix(args[i], "--config="), strings.HasPrefix(args[i], "-config="):
+			_, configDir, _ = strings.Cut(args[i], "=")
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return rest, configDir
+}
+
+// healthSeverity orders doctor states (§23.1); doctor reports the most severe.
+var healthSeverity = map[string]int{"healthy": 0, "degraded": 1, "rebuild_required": 2, "policy_blocked": 3, "unavailable": 4}
 
 func renderPackHuman(pack any) {
 	b, _ := json.MarshalIndent(pack, "", "  ")
