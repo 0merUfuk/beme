@@ -1,13 +1,21 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 8 — 2026-09-15
-**Position:** `v0.1.0-alpha.1` published and verified. The documentation gate
-(blueprint §24) now PASSES: first fresh-agent test failed (ADR-024),
-remediation landed, and the clean-checkout re-test at `8896df9` returned
-PASS with zero improvisation (all six documented gates exit 0; `not_run`
-semantics reproduced; no contradictions). Remaining owner-gated work is
-unchanged: live-model behavioral evaluation; `assured` adapter surfaces;
-Windows runtime verification.
+**Revision:** 9 — 2026-09-15
+**Position:** `v0.1.0-alpha.1` published; blueprint execution complete to
+the boundary of owner-gated evidence. The documentation gate PASSES
+(fresh-agent re-test at `8896df9`, zero improvisation). End-to-end
+verification hardening landed: real-MCP e2e (official Go SDK client against
+the real stdio server, protocol-level elevation rejection), corrupt-store
+recovery by rebuild (FR-065), byte-exact adapter cycles verified against
+the installed Codex 0.154.0 and Claude Code 2.1.271 (FR-043). ACCEPTANCE §7
+is fully checked except the owner-owned release-approval item; §5
+recall/precision and the §6 beta gates require the owner-run live-model
+evaluation.
+
+Remaining owner-gated work (cannot be executed by the agent):
+live-model B4-vs-B0 behavioral evaluation (paid API runs; protocol and
+corpus ready); `assured` adapter labeling (needs measured pre-decision
+use); Windows runtime verification; explicit non-alpha release approval.
 
 ## 1. Status
 
