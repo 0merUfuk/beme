@@ -163,30 +163,69 @@ this gate passed. Item-level status:
       was authorized by ADR-022 delegation; a *non-alpha* release still
       requires explicit approval.
 
-## 7a. Unchecked-item classification (2026-09-15)
+## 7a. Completion ledger
 
-Every unchecked item above, sorted by what it needs. Mechanisms are never
-classified as owner-gated merely because *executing* them on private data,
-paid APIs, or a release needs the owner.
+The single completion-tracking record for Be Me. Per-requirement evidence stays
+in [`REQUIREMENTS.md`](REQUIREMENTS.md); current snapshot and next step in
+[`HANDOFF.md`](HANDOFF.md) §1. Statuses: **verified** (behavior proven by a
+test or command that exercises the real boundary), **implemented-unverified**,
+**not-implemented**, **blocked-approval**, **blocked-access**,
+**out-of-scope**. Nothing moves to verified without recorded evidence, and no
+threshold is lowered here.
 
-| Item | Class | What remains |
+Baseline for this revision: PR head `6c5b7d7` (CI run 35019956360 green).
+Every not-implemented safety item below was reproduced against that head.
+
+### Readiness (reported independently)
+
+| Category | State | Evidence / blocker |
 |---|---|---|
-| §5 retrieval recall ≥90% | owner-run execution (private corpus, no paid API) | Run `evalrunner` with a `Refs` lookup against the private deployment (ADR-023) |
-| §5 context precision ≥80% | owner-run execution (private corpus, no paid API) | Same run as recall |
-| §6 blind paired B4-vs-B0 | owner-paid model execution | Wire a live provider into `evalrunner.Provider`; blind human grading |
-| §6 general-task non-regression | owner-paid model execution | Same live run |
-| §6 invented-preference rate 0 | owner-paid model execution | Same live run (engine negative control already passes) |
-| §6 trusted project override accuracy | owner-paid model execution | Same live run |
-| §6 escalation recall ≥95% | owner-paid model execution | Same live run |
-| §6 avoidable-question rate | owner-paid model execution | Same live run |
-| §6 cross-run stability ≥85% | owner-paid model execution | Same live run (repeat runs implemented) |
-| §6 pre-decision use 100% on `assured` surfaces | owner-run live harness sessions | No surface is `assured` (FR-045 not-applicable-v1); measuring needs live model sessions |
-| §7 external release approval | approval-gated (RED) | Explicit owner approval of a non-alpha release |
+| Engineering ready for merge | no | safety items S1–S5, evaluation items E1–E3, benchmark item B1, diagnostics item D1 open |
+| Release verification complete | no | installed-binary smoke tests and fresh-checkout test not run at the current head; release notes not prepared |
+| Personal effectiveness demonstrated | blocked | live-model evaluation and private-corpus measurement need owner approval |
 
-Implementation work the agent could complete was completed on 2026-09-15:
-retrieval metrics, all threat cases executed, physical-purge workflow on
-synthetic data, benchmark harness, Windows CI, and installed-harness
-verification levels (see HANDOFF §4). None remains in this class.
+### Safety and data-integrity invariants
+
+| ID | Requirement / invariant | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
+|---|---|---|---|---|---|
+| S1 | Ledger fails closed on detectable partial, unreadable, or malformed state, without bricking an interrupted first-time initialization | fails closed on unreadable/corrupt JSON and missing key | missing `tombstones.json` with `purge.key` present was accepted as empty; `hmac-sha256:broken` accepted (both reproduced) | not-implemented | tests for each detectable state on every read, learning, and rebuild surface; recoverable interrupted init; documented undetectable cases |
+| S2 | Purge deletions reach the documented durability boundary before the journal is finalized, including on retry | ledger and journal writes durable | trace, observation, and canonical unlinks not directory-flushed; retries skip flushes for already-absent files | not-implemented | flush-failure injection per deletion class; retry completes outstanding flushes; platform limits stated from vendor docs |
+| S3 | Conflicting purge/forget/build operations cannot lose updates or resurrect content | none | 24 concurrent forgets kept 1 revocation (reproduced) | not-implemented | concurrency tests (incl. `-race`) for forget/purge/build/learning writes |
+| S4 | Observations in a completed purge stay hidden after a data-dir backup restore | observations deleted at purge | restored observations listed, inspected, reviewable (reproduced) | not-implemented | restored-backup test across candidate list/inspect/review, dedup, MCP feedback, CLI |
+| S5 | Every projection read surface applies the ledger and fails closed | resolve, export, explain, doctor, MCP status/expansion filtered; `TestRestoredBackupHiddenOnEveryReadSurface`, `TestRestoredBackupCannotResurrectOnAnySurface` | extend to learning surfaces (S4) and new ledger states (S1) | implemented-unverified | same tests extended to S1/S4 states |
+| S6 | Context-item expansion is pack-bound with one refusal | ADR-029; `TestExpandItemIsPackBound`, MCP e2e | re-check after S1/S3 changes | verified | tests pass at final head |
+| S7 | Physical purge keeps minimal non-content tombstones, confirmation, dry run, partial reports, resumability | ADR-027; purge test suites; mutation evidence in PR #1 | preserve through S1–S4 changes | verified | suites pass at final head |
+
+### Evaluation
+
+| ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
+|---|---|---|---|---|---|
+| E1 | Arms B0–B4 follow the contract (B1 real bootstrap; B2 all eligible, no selection/precedence/truncation; B3 pre-precedence retrieval without provenance) | B2 reused the B4 pack; B3 flattened a post-precedence pack; placeholder bootstrap | implement arm construction from resolver primitives | not-implemented | fixtures where arms must differ; per-arm input assertions; mutation evidence |
+| E2 | Ablations no-scope, no-provenance, no-unknowns, canonical-only, learned-only | no-scope and canonical-only `not_run`; no-provenance leaves provenance manifest | implement all; no-scope synthetic-only guard | not-implemented | same |
+| E3 | Manifests identify real model settings, prompts, corpus revisions, arm construction | placeholder hashes and hardcoded settings | record real values | not-implemented | manifest assertions |
+| E4 | Blockers fail units; generated text reaches raw and blinded artifacts | `TestRunnerBlockerFailsUnitAndPreservesText` | keep through E1–E3 | verified | suite passes at final head |
+| E5 | Retrieval recall ≥90% / precision ≥80% on the locked corpus (core alpha) | mechanism proven on synthetic fixtures | owner-authorized local run on the private corpus; runnable command | blocked-approval | evidence bundle kept outside the repository |
+| E6 | Blind paired B4-vs-B0 and the trusted-beta behavioral gates | runner proven with deterministic mocks | paid live-model runs | blocked-approval | §6 thresholds unchanged |
+
+### Benchmark, integration, platform, and documentation
+
+| ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
+|---|---|---|---|---|---|
+| B1 | Benchmark seed identifiers cannot escape owned dirs or inject metadata; explicit seed; accurate failure reporting | work-dir guard and marker ownership | seed ID traversal/injection; repo-relative default seed; cleanup error swallowed | not-implemented | traversal, separator, drive, control-char, collision, symlink tests |
+| B2 | NFR-008 measurement with environment conditions | `evals/benchmarks/seed-baseline.json` | re-measure after B1 | verified | report regenerated at final head |
+| D1 | Diagnostics: doctor never downgrades `policy_blocked`; error labels and exit codes match failure classes; guard tests fail on traversal errors | doctor downgraded `policy_blocked` to `degraded` (reproduced); explain labels all errors "policy blocked"; guard test swallows walk errors | fix and test | not-implemented | CLI-level tests |
+| H1 | Harness configuration lifecycle (Claude Code, Codex) | opt-in installed-CLI tests in isolated homes (2026-09-15) | re-run at final head | verified | `BEME_HARNESS_INTEGRATION=1` tests pass |
+| H2 | MCP protocol connection | `TestMCPClientEndToEnd`; Claude Code `mcp get` Connected | re-run | verified | e2e passes |
+| H3 | A real agent session retrieves context | not run | live session with synthetic data | blocked-approval | session transcript shows `beme.resolve_context` call |
+| H4 | Retrieval happens before a material decision | not run | same session | blocked-approval | tool call precedes the decision in the transcript |
+| H5 | Relevant context used; no invented preferences | not run | same session with negative-control prompt | blocked-approval | graded transcript |
+| H6 | `assured` surfaces with 100% pre-decision use | no surface claimed (FR-045) | none in v1 | out-of-scope | — |
+| P1 | Full test suite on macOS, Linux, Windows | CI 35019956360 | re-run at final head | verified | final-head CI |
+| P2 | Installed-binary smoke tests per OS at the release candidate | alpha.1 binaries verified; current head not | CI smoke job or recorded runs | not-implemented | `go install` + CLI smoke on each OS |
+| P3 | Fresh-checkout documentation test at the current head | passed at `8896df9` (stale) | re-run with public docs only | not-implemented | recorded run with zero improvisation |
+| P4 | Release notes and release-verification procedure | CHANGELOG Unreleased | draft notes + procedure (no publish) | not-implemented | reviewed draft |
+| P5 | No private data in public artifacts | scan clean at `6c5b7d7` | re-scan at final head | verified | scan output |
+| P6 | Non-alpha release approval | — | owner decision | blocked-approval | — |
 
 ## 8. Evidence bundles
 
