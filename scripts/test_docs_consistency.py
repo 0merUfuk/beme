@@ -37,7 +37,7 @@ def check(name, ok, detail=""):
 
 # --- D1: phase contradictions (docs + README only; ADR evidence quotes exempt)
 PHASE_LIES = [
-    r"Contracts phase", r"pre-implementation",
+    r"Contracts[- ]phase", r"pre-implementation",
     r"gated behind WP2B", r"Blocked on user", r"Not authorized until WP2B",
 ]
 scan_files = [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md"))
@@ -127,6 +127,128 @@ refs = [f.name for f in [ROOT / "README.md", ROOT / "docs" / "PROJECT_CONTEXT.md
         if "HANDOFF.md" not in f.read_text()]
 check("D6 HANDOFF §1 status anchor exists and is referenced", anchor_ok and not refs,
       f"anchor={anchor_ok}; docs without HANDOFF reference: {refs}")
+
+# --- D7: requirements status counts are derived from the matrix rows
+req = (ROOT / "docs" / "REQUIREMENTS.md").read_text()
+req_rows = [l for l in req.splitlines() if re.match(r"\|\s*(FR|NFR)-\d+", l)]
+statuses = [l.strip().strip("|").split("|")[-1].strip() for l in req_rows]
+canonical = {"defined", "planned", "partial", "implemented", "verified", "not-applicable-v1", "active"}
+d7 = [f"non-canonical status cell '{st}'" for st in statuses if st not in canonical][:3]
+m = re.search(r"(\d+) rows — (\d+) implemented · (\d+) partial · (\d+) not-applicable-v1 · (\d+) active", req)
+if not m:
+    d7.append("status-count summary line missing")
+else:
+    claimed = tuple(int(x) for x in m.groups())
+    actual = (len(req_rows), statuses.count("implemented"), statuses.count("partial"),
+              statuses.count("not-applicable-v1"), statuses.count("active"))
+    if claimed != actual:
+        d7.append(f"summary {claimed} != rows {actual}")
+check("D7 requirements status counts match the matrix rows", not d7, "; ".join(d7))
+
+# --- D8: no doc claims the evaluation runner is unimplemented once it exists
+d8 = []
+if (ROOT / "internal" / "evalrunner" / "runner.go").exists():
+    for rel in ["README.md", "evals/README.md", "docs/ACCEPTANCE.md", "docs/HANDOFF.md", "docs/ROADMAP.md", "docs/REQUIREMENTS.md"]:
+        text = (ROOT / rel).read_text()
+        for pat in [r"runners?\W[^.]{0,60}?not\s+yet\s+implemented", r"\bNot yet implemented\b"]:
+            for mm in re.finditer(pat, text, re.IGNORECASE):
+                d8.append(f"{rel}: '{' '.join(mm.group(0).split())}'")
+check("D8 docs agree the evaluation runner is implemented", not d8, "; ".join(d8[:4]))
+
+# --- D9: every Go test named in the docs exists
+go_tests = set()
+for f in ROOT.rglob("*_test.go"):
+    if any(part in {".git", ".venv", "node_modules"} for part in f.parts):
+        continue
+    go_tests.update(re.findall(r"^func ((?:Test|Benchmark)\w+)\(", f.read_text(), re.M))
+d9 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    for name in re.findall(r"`((?:Test|Benchmark)[A-Z]\w+)`", f.read_text()):
+        if name not in go_tests:
+            d9.append(f"{f.name}: {name}")
+check("D9 Go tests referenced in docs exist", not d9, "; ".join(sorted(set(d9))[:5]))
+
+# --- D10: the threat matrix (EVALUATION_CONTRACT §7) and the executable
+# registry list exactly the same cases under the same invariant groups
+cases_go = (ROOT / "internal" / "privacycorpus" / "cases.go").read_text()
+registry = dict(re.findall(r'group\["([^"]+)"\]\s*=\s*"([^"]+)"', cases_go))
+matrix = {}
+contract = (ROOT / "evals" / "EVALUATION_CONTRACT.md").read_text()
+for row in re.finditer(r"^\| (P[\d.]+) \| (.*?) \|", contract, re.M):
+    for group in re.findall(r"\(([^)]*)\)", row.group(2)):
+        for tok in (t.strip() for t in group.split(",")):
+            if re.fullmatch(r"\d+|S\d+", tok):
+                matrix[tok] = row.group(1)
+d10 = []
+if not registry:
+    d10.append("no cases found in internal/privacycorpus/cases.go")
+for case, grp in sorted(registry.items()):
+    if case not in matrix:
+        d10.append(f"case {case} missing from the threat matrix")
+    elif matrix[case] != grp:
+        d10.append(f"case {case}: registry {grp} vs matrix {matrix[case]}")
+for case in sorted(set(matrix) - set(registry)):
+    d10.append(f"matrix case {case} has no executable registry case")
+check("D10 threat matrix matches the executable case registry", not d10, "; ".join(d10[:5]))
+
+# --- D11: the privacy corpus runner claim is true — one shared registry used
+# by both the Go test and the runner, no empty placeholder API
+d11 = []
+corpus_go = (ROOT / "internal" / "privacycorpus" / "corpus.go").read_text()
+if re.search(r"func AllCases\(", corpus_go):
+    d11.append("placeholder AllCases() still present")
+corpus_test = (ROOT / "internal" / "privacycorpus" / "corpus_test.go").read_text()
+if "privacycorpus.NewSuite(" not in corpus_test:
+    d11.append("TestPrivacyCorpusDeterministic does not use the shared registry")
+runner = ROOT / "cmd" / "beme-threat-corpus" / "main.go"
+if not runner.exists() or "privacycorpus.NewSuite(" not in runner.read_text():
+    d11.append("cmd/beme-threat-corpus missing or not using the shared registry")
+for rel in ["evals/README.md", "docs/ACCEPTANCE.md", "docs/HANDOFF.md"]:
+    if "beme-threat-corpus" not in (ROOT / rel).read_text():
+        d11.append(f"{rel} does not name the threat corpus runner")
+check("D11 privacy corpus runner claim backed by a shared registry", not d11, "; ".join(d11))
+
+# --- D12: docs never describe the purge ledger as holding content-derived
+# digests (ADR-027 minimality). DECISIONS/CHANGELOG keep history verbatim.
+d12 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    if f.name in ("DECISIONS.md",):
+        continue
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if not re.search(r"ledger|tombstone|purge", line, re.I):
+            continue
+        if re.search(r"no (content|digest)|holds no|without content|no content", line, re.I):
+            continue
+        for pat in [r"content[ -]hash", r"text[ -]fingerprint", r"normali[sz]ed statement", r"sha-?256 of (the )?(content|text)"]:
+            if re.search(pat, line, re.I):
+                d12.append(f"{f.name}:{n}: '{line.strip()[:80]}'")
+check("D12 docs keep the purge ledger content-free", not d12, "; ".join(d12[:4]))
+
+# --- D13: the documented MCP tool table matches the registered contract, and
+# expansion is documented as pack-bound
+contract_go = (ROOT / "internal" / "contracts" / "mcp.go").read_text()
+registered_tools = set(re.findall(r'Tool\w+\s*=\s*"(beme\.[a-z_]+)"', contract_go))
+integrations = (ROOT / "docs" / "INTEGRATIONS.md").read_text()
+documented_tools = set(re.findall(r"^\| `(beme\.[a-z_]+)` \|", integrations, re.M))
+d13 = []
+if not registered_tools or registered_tools != documented_tools:
+    d13.append(f"INTEGRATIONS tools {sorted(documented_tools)} != contracts {sorted(registered_tools)}")
+if not re.search(r"`beme\.get_context_item`[^\n]*pack_id", integrations):
+    d13.append("INTEGRATIONS does not document that get_context_item requires pack_id")
+check("D13 MCP tool table matches the registered contract", not d13, "; ".join(d13))
+
+# --- D14: no unqualified crash-safety claims (ADR-027 documents the exact
+# durability boundary instead)
+d14 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if re.search(r"crash[- ]safe", line, re.I):
+            d14.append(f"{f.name}:{n}")
+check("D14 no unqualified crash-safety claims", not d14, "; ".join(d14[:4]))
+
+# --- D15: Keep a Changelog — one Unreleased section
+unreleased = re.findall(r"^## \[Unreleased\]", (ROOT / "CHANGELOG.md").read_text(), re.M)
+check("D15 CHANGELOG has a single Unreleased section", len(unreleased) <= 1, f"{len(unreleased)} Unreleased headings")
 
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]

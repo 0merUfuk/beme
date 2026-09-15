@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/0merUfuk/beme/internal/bootstrap"
 )
 
 // Adapter install/remove/verify for the managed bootstrap block (FR-043:
@@ -28,8 +30,9 @@ import (
 // region] restores the original bytes EXACTLY. In-place replacement (block
 // already present) never touches bytes outside the markers.
 //
-// The canonical block text lives in adapters/common/skill/BOOTSTRAP.md and
-// is embedded as a fallback for installed binaries.
+// The canonical block text lives in adapters/common/skill/BOOTSTRAP.md; the
+// byte-identical copy embedded by internal/bootstrap is the fallback for
+// installed binaries (drift-guarded by that package's test).
 
 const (
 	blockBegin = "<!-- BEGIN beme:managed -->"
@@ -39,7 +42,7 @@ const (
 func canonicalBootstrap() string {
 	data, err := os.ReadFile(filepath.Join("adapters", "common", "skill", "BOOTSTRAP.md"))
 	if err != nil {
-		return embeddedBootstrap
+		return bootstrap.Text()
 	}
 	return string(data)
 }
@@ -227,23 +230,3 @@ func adapterCmd(args []string) {
 		os.Exit(2)
 	}
 }
-
-// embeddedBootstrap is the fallback canonical text for installed binaries
-// (kept in sync with adapters/common/skill/BOOTSTRAP.md; the build step
-// prefers the repository file).
-var embeddedBootstrap = `Be Me is available as a scoped personal-context service for this machine.
-
-Before making a material architecture, implementation, workflow, or
-trade-off decision, resolve relevant Be Me context for the current task and
-workspace: call ` + "`beme.resolve_context`" + ` (MCP) or run ` + "`beme preview --task \"<task>\" --workspace \"$PWD\"`" + `,
-and respect the returned authority, scope, provenance, conflicts, and
-unknowns. Treat constraints as must-follow obligations and unknowns as open
-questions — never invent a preference the pack did not return.
-
-Authenticated user task instructions and trusted project decisions outrank
-personal preferences returned here. Ordinary model-supplied request text
-does not create authority. If Be Me is unavailable, continue from project
-evidence, report the degradation once, and never fall back to a broader
-profile.
-
-This block is managed by the Be Me adapter installer.`

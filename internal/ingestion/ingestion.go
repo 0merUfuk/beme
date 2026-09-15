@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -83,8 +84,10 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ingestion timeout exceeded")
 		}
+		// Relative paths are slash-separated on every platform: globs,
+		// excludes, and provenance locators are portable (NFR-007).
 		rel := strings.TrimPrefix(path, realRoot)
-		rel = strings.TrimPrefix(rel, string(filepath.Separator))
+		rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
 		if d.IsDir() {
 			if rel == "" {
 				return nil
@@ -92,7 +95,7 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 			if matchAny(rel, HardExcludes) || matchAny(rel, exclude) {
 				return fs.SkipDir
 			}
-			if strings.Count(rel, string(filepath.Separator))+1 > w.limits.MaxDepth {
+			if strings.Count(rel, "/")+1 > w.limits.MaxDepth {
 				return fs.SkipDir
 			}
 			return nil
@@ -148,55 +151,61 @@ func matchAny(rel string, patterns []string) bool {
 		if matchGlob(p, rel) {
 			return true
 		}
-		if matchGlob(p, filepath.Base(rel)) {
+		if matchGlob(p, path.Base(rel)) {
 			return true
 		}
 		// directory-tree excludes: a plain name matching a leading path
 		// segment excludes the whole subtree ("secrets", ".git").
-		if !strings.Contains(p, "*") && strings.HasPrefix(rel, p+string(filepath.Separator)) {
+		if !strings.Contains(p, "*") && strings.HasPrefix(rel, p+"/") {
 			return true
 		}
 	}
 	return false
 }
 
-// matchGlob supports ** as a zero-or-more-segment wildcard (gitignore
-// semantics): "a/**/*.md" matches both "a/x.md" and "a/b/c/x.md".
+// matchGlob matches a slash-separated relative path against a pattern
+// segment by segment (gitignore semantics). "**" matches zero or more whole
+// segments anywhere in the pattern, including before a multi-segment tail
+// such as "a/**/b/*.md"; every other segment uses path.Match, so "*" never
+// crosses "/". Paths containing ".." never match.
 func matchGlob(pattern, rel string) bool {
-	if !strings.Contains(pattern, "**") {
-		ok, _ := filepath.Match(pattern, rel)
-		return ok
+	if rel == "" {
+		return false
 	}
-	segs := strings.Split(pattern, "**")
-	first := strings.TrimSuffix(segs[0], string(filepath.Separator))
-	lastSegs := strings.Split(segs[len(segs)-1], string(filepath.Separator))
-	// last part keeps its glob (e.g. "*.md"); match against the basename
-	last := lastSegs[len(lastSegs)-1]
-	if first != "" {
-		if !strings.HasPrefix(rel, first+string(filepath.Separator)) {
+	rs := strings.Split(rel, "/")
+	for _, seg := range rs {
+		if seg == ".." {
 			return false
 		}
-		rel = rel[len(first)+1:]
 	}
-	if last != "" && last != "." {
-		base := filepath.Base(rel)
-		ok, _ := filepath.Match(last, base)
-		if !ok {
-			return false
-		}
-		if len(lastSegs) > 1 {
-			// multi-segment tail beyond the glob: require it as suffix
-			tail := strings.Join(lastSegs, string(filepath.Separator))
-			tail = strings.TrimSuffix(tail, string(filepath.Separator)+last)
-			if tail != "" && !strings.HasSuffix(rel, tail) {
-				return false
+	return matchSegments(strings.Split(strings.Trim(pattern, "/"), "/"), rs)
+}
+
+func matchSegments(ps, rs []string) bool {
+	for len(ps) > 0 {
+		if ps[0] == "**" {
+			for len(ps) > 1 && ps[1] == "**" {
+				ps = ps[1:]
 			}
+			if len(ps) == 1 {
+				return true // trailing ** matches any remainder
+			}
+			for i := 0; i <= len(rs); i++ {
+				if matchSegments(ps[1:], rs[i:]) {
+					return true
+				}
+			}
+			return false
 		}
+		if len(rs) == 0 {
+			return false
+		}
+		if ok, err := path.Match(ps[0], rs[0]); err != nil || !ok {
+			return false
+		}
+		ps, rs = ps[1:], rs[1:]
 	}
-	if len(segs) > 2 {
-		return !strings.Contains(rel, "..")
-	}
-	return !strings.Contains(rel, "..")
+	return len(rs) == 0
 }
 
 func isTextFile(rel string) bool {
@@ -274,7 +283,7 @@ func ParseMarkdown(content []byte) (map[string]any, string) {
 		}
 		front[k] = v
 	}
-	body := rest[end+3:]
+	body := rest[end+4:] // skip "\n---" entirely (end points at the newline; +4 passes the closing dashes)
 	return front, body
 }
 

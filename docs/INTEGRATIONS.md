@@ -8,12 +8,20 @@ Stdio only in v1 (ADR-014). Each serving process binds one immutable
 capability and one projection store; requests may narrow, never widen
 (FR-010/011).
 
+Expansion is pack-bound (ADR-029): pass the `pack_id` of a pack returned by
+`beme.resolve_context` in the same server session and the `record_id` of an
+item selected into it. Packs expire after 30 minutes and on server restart or
+projection rebuild; unknown, expired, unselected, denied, revoked, and
+nonexistent items all return "context item not available". Every tool reads
+through the durable tombstone ledger and returns `policy_blocked` when it
+cannot be read.
+
 Tool surface (ADR-009, contract-tested):
 
 | Tool | Purpose |
 |---|---|
 | `beme.resolve_context` | scoped ContextPack for the current task |
-| `beme.get_context_item` | expand a record already authorized in a current pack |
+| `beme.get_context_item` | expand a record selected into a ContextPack this server issued in the same session; requires `pack_id` + `record_id` (ADR-029) |
 | `beme.report_feedback` | quarantined observation/correction candidate |
 | `beme.status` | safe health/capability metadata (private sources hidden in work-safe) |
 
@@ -33,10 +41,99 @@ never silently edited outside the managed block.
 
 `assured` labeling requires a verified harness boundary resolving context
 before every material decision with measured 100% pre-decision use
-(FR-045/046). No surface is labeled assured in v1; hook mechanics are
-version-sensitive and were not verified against installed harnesses during
-this build session. Before calling any surface supported, verify against the
-currently installed harness version.
+(FR-045/046). No surface is labeled assured in v1.
+
+### Verification levels (installed harnesses, 2026-09-15)
+
+Four levels are tracked separately; a higher level is never inferred from a
+lower one.
+
+| Harness (installed) | MCP protocol | Config lifecycle | Harness connection | Pre-decision use |
+|---|---|---|---|---|
+| Claude Code 2.1.271 | verified | verified | verified | not verified |
+| Codex 0.154.0 | verified | verified | not verified | not verified |
+| Hermes | verified | documented contract only | not run | not verified |
+| Cursor (not installed) | verified | documented contract only | not run | not verified |
+
+- **MCP protocol** — a real MCP client (official Go SDK) drives the real
+  stdio server (`TestMCPClientEndToEnd`). Harness-independent, so it holds
+  for every row.
+- **Config lifecycle** — the installed harness CLI registers, parses, lists,
+  and removes the beme server in an isolated config home
+  (`TestClaudeCodeHarnessIntegration`, `TestCodexHarnessIntegration`), and
+  `beme adapter install|remove` is byte-exact on the harness instruction file
+  (`TestAdapterInstallRemoveByteExact`).
+- **Harness connection** — the harness itself spawns beme and completes the
+  MCP handshake. Claude Code: `claude mcp get beme` reports Connected. Codex
+  has no MCP health check without a model session (`codex doctor` validates
+  config only; `codex exec` would spend model usage), so it stays
+  unverified.
+- **Pre-decision use** — whether the agent resolves context before each
+  material decision. Measuring it needs live model sessions (owner-run), so
+  it is unverified for every harness and no surface is `assured`.
+
+Run the installed-harness tests locally (they skip in CI; no model calls,
+real harness configs untouched):
+
+```sh
+BEME_HARNESS_INTEGRATION=1 go test ./cmd/beme -run HarnessIntegration -v
+```
+
+### Owner-run procedure for the unverified levels (H3–H5)
+
+Pre-decision use cannot be measured without live model sessions, which spend
+the owner's model usage. The procedure below is prepared and runnable; it has
+NOT been run. It uses a synthetic deployment only — no private corpus, no
+canonical personal knowledge.
+
+```sh
+# 1. Isolated deployment with synthetic sources (nothing of yours is read)
+export BEME_HOME="$(mktemp -d)"
+export BEME_CONFIG_HOME="$BEME_HOME/cfg" BEME_DATA_HOME="$BEME_HOME/data" BEME_CACHE_HOME="$BEME_HOME/cache"
+mkdir -p "$BEME_CONFIG_HOME/sources"
+# write one synthetic source descriptor (shape: docs/OPERATIONS.md) pointing at
+# entry files you author for this run — never at personal knowledge
+go install ./cmd/beme && beme build --profile personal
+
+# 2. Register the server in an ISOLATED harness config home
+export CLAUDE_CONFIG_DIR="$BEME_HOME/claude"          # Codex: CODEX_HOME
+claude mcp add beme -- "$(go env GOPATH)/bin/beme" serve   --projection personal --capability cap_predecision
+claude mcp get beme                                    # expect: Connected
+
+# 3. One live session per task, with the managed bootstrap block installed
+beme adapter install claude-code
+#    run three tasks that each require a material decision the synthetic
+#    corpus has an opinion about, plus one negative-control task the corpus
+#    says nothing about
+
+# 4. Evidence to keep (outside the repository)
+#    - the session transcript showing beme.resolve_context calls
+#    - for each material decision: whether the call precedes it (H4)
+#    - whether the decision uses the retrieved item, and whether the
+#      negative control produced an invented preference (H5)
+```
+
+Acceptance: H3 needs one transcript with a real `beme.resolve_context` call;
+H4 needs the call to precede each material decision; H5 needs the retrieved
+item used and zero invented preferences on the negative control. Report the
+counts, not the transcript text, in `docs/ACCEPTANCE.md`.
+
+### Owner-run procedure for the evaluation gates (E5, E6)
+
+```sh
+# Retrieval measurement on the private corpus (ADR-023; owner-gated, local)
+export BEME_PRIVATE_EVAL_DIR=/path/to/private/corpus     # never in the repo
+export BEME_EVAL_GIT_COMMIT="$(git rev-parse HEAD)"      # worktrees stamp the main checkout
+make validate-private                                     # schema check first
+go run ./cmd/beme-eval --corpus "$BEME_PRIVATE_EVAL_DIR" --arms B4   --out "$BEME_HOME/evidence" --provider mock             # retrieval metrics need no model
+
+# Blind paired behavioral run (E6) — SPENDS MODEL USAGE, owner decision
+go run ./cmd/beme-eval --corpus "$BEME_PRIVATE_EVAL_DIR" --arms B0,B4   --provider command --provider-cmd "<your harness CLI>"   --out "$BEME_HOME/evidence"
+```
+
+Evidence bundles stay outside the repository (ADR-023). Only `blinded/` is
+grader-visible; manifests record the observed model settings, prompt hashes
+and corpus revisions.
 
 ## Rifja (ADR-019)
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,9 @@ func TestMCPClientEndToEnd(t *testing.T) {
 	}
 	// build the real binary
 	bin := filepath.Join(t.TempDir(), "beme-e2e")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = mustRepoRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -100,6 +104,56 @@ func TestMCPClientEndToEnd(t *testing.T) {
 	res, _ := pack["resolution"].(map[string]any)
 	if res == nil || res["profile"] != "work-safe" {
 		t.Fatalf("pack must resolve under work-safe capability; got %v", res)
+	}
+
+	// 2b. pack-bound expansion (ADR-029): a record selected into the issued
+	// pack expands with its pack_id; without the pack or for an unselected ID
+	// the answer is the same refusal.
+	packID, _ := pack["pack_id"].(string)
+	selected := ""
+	for _, section := range []string{"constraints", "guidance", "precedents"} {
+		items, _ := pack[section].([]any)
+		for _, it := range items {
+			if m, ok := it.(map[string]any); ok && selected == "" {
+				selected, _ = m["record_id"].(string)
+			}
+		}
+	}
+	if packID == "" || selected == "" {
+		t.Fatalf("resolved pack must carry a pack_id and a selected record; got pack_id=%q record=%q", packID, selected)
+	}
+	var item map[string]any
+	if err := json.Unmarshal([]byte(resolveText(t, ctx, session, "beme.get_context_item", map[string]any{
+		"pack_id": packID, "record_id": selected,
+	})), &item); err != nil {
+		t.Fatalf("get_context_item returned non-JSON: %v", err)
+	}
+	if item["record_id"] != selected {
+		t.Fatalf("expansion returned the wrong record: %v", item)
+	}
+	if _, leaked := item["source_id"]; leaked {
+		t.Fatal("work-safe expansion must omit source identity")
+	}
+	refusals := map[string]string{}
+	for name, args := range map[string]map[string]any{
+		"unknown pack":      {"pack_id": "ctx_000000000000000000000000", "record_id": selected},
+		"unselected record": {"pack_id": packID, "record_id": "rec_not-selected"},
+	} {
+		res, err := callTool(t, ctx, session, "beme.get_context_item", args)
+		if err != nil || res == nil || !res.IsError {
+			t.Fatalf("%s must be refused in-band; got res=%v err=%v", name, res, err)
+		}
+		for _, c := range res.Content {
+			if tc, ok := c.(*mcp.TextContent); ok {
+				refusals[name] = tc.Text
+			}
+		}
+	}
+	if refusals["unknown pack"] != refusals["unselected record"] {
+		t.Fatalf("refusals must be indistinguishable: %v", refusals)
+	}
+	if res, err := callTool(t, ctx, session, "beme.get_context_item", map[string]any{"record_id": selected}); err == nil && res != nil && !res.IsError {
+		t.Fatal("expansion without pack_id must be rejected")
 	}
 
 	// 3. status hides private sources in work-safe mode

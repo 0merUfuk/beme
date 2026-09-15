@@ -3,19 +3,21 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
-	"github.com/0merUfuk/beme/internal/learning"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// runMCPServer starts the narrow agent-facing surface (ADR-009): exactly
-// four tools. stdio only (ADR-014). The capability is process-bound; there
-// is no tool or argument that can widen it (FR-011, threat case 1).
+// runMCPServer starts the narrow agent-facing surface (ADR-009): exactly the
+// tools in contracts.MCPTools. stdio only (ADR-014). The capability is
+// process-bound; there is no tool or argument that can widen it (FR-011,
+// threat case 1). Every projection read goes through the app read surfaces,
+// which apply the durable tombstone ledger and fail closed (ADR-027).
 
 // toolText builds a successful text result.
 func toolText(s string) *mcp.CallToolResult {
@@ -27,25 +29,27 @@ func toolError(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}, IsError: true}
 }
 
+const policyBlockedMsg = "policy_blocked: projection unavailable (tombstone ledger unusable)"
+
 func runMCPServer(configDir, profile, capability, experimentalLearnedStr string) {
 	profileVal := contracts.Profile(profile)
 	if profileVal != contracts.ProfilePersonal && profileVal != contracts.ProfileWorkSafe {
-		fmt.Fprintf(os.Stderr, "error: invalid --projection %q (personal|work-safe)\\n", profile)
+		fmt.Fprintf(os.Stderr, "error: invalid --projection %q (personal|work-safe)\n", profile)
 		os.Exit(2)
 	}
 	capID := capability
 	if capID == "" {
-		fmt.Fprintf(os.Stderr, "error: --capability NAME required (serving is capability-bound; never default)\\n")
+		fmt.Fprintf(os.Stderr, "error: --capability NAME required (serving is capability-bound; never default)\n")
 		os.Exit(2)
 	}
 	rt, err := app.Load(configDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	sess, err := rt.Serve(profileVal, capID, experimentalLearnedStr == "true")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	defer sess.Store.Close()
@@ -60,7 +64,7 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		BudgetHint    int      `json:"budget_hint_tokens,omitempty" jsonschema:"token budget hint; may only narrow"`
 	}
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "beme.resolve_context",
+		Name:        contracts.ToolResolveContext,
 		Description: "Resolve a scoped ContextPack for the current task. The serving capability is process-bound; request fields are retrieval hints only and can never widen scope or authority.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args resolveArgs) (*mcp.CallToolResult, any, error) {
 		if strings.TrimSpace(args.Task) == "" {
@@ -79,6 +83,9 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		}
 		pack, _, err := sess.Resolve(r)
 		if err != nil {
+			if errors.Is(err, app.ErrLedgerUnusable) {
+				return toolError(policyBlockedMsg), nil, nil
+			}
 			return toolError(fmt.Sprintf("resolution failed: %v", err)), nil, nil
 		}
 		out, _ := json.Marshal(pack)
@@ -87,9 +94,13 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 
 	type statusArgs struct{}
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "beme.status",
+		Name:        contracts.ToolStatus,
 		Description: "Safe health and capability metadata. In work-safe mode, private source titles and paths are never returned.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args statusArgs) (*mcp.CallToolResult, any, error) {
+		count, err := sess.VisibleCount()
+		if err != nil {
+			return toolError(policyBlockedMsg), nil, nil
+		}
 		st := map[string]any{
 			"status":                  "ok",
 			"capability":              sess.Capability.Profile,
@@ -98,7 +109,7 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 			"os_isolation":            "none",
 			"downstream_use_control":  "not_enforced",
 			"index_revision":          sess.View.IndexRevision(),
-			"record_count":            sess.Store.Count(),
+			"record_count":            count,
 		}
 		if profileVal == contracts.ProfileWorkSafe {
 			st["sources"] = "hidden (work-safe safe view)"
@@ -119,7 +130,7 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		Task string `json:"task,omitempty" jsonschema:"task context for the observation"`
 	}
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "beme.report_feedback",
+		Name:        contracts.ToolReportFeedback,
 		Description: "Write a quarantined observation/correction candidate. Never mutates canonical policy or knowledge. Observations are non-normative and excluded from packs unless explicitly enabled.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args feedbackArgs) (*mcp.CallToolResult, any, error) {
 		if args.Kind != "observation" && args.Kind != "correction" {
@@ -132,7 +143,10 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		// evidence-family dedup (correlated repetitions are one family, not
 		// independent confirmations), and rejected-proposal tombstones
 		// (FR-052/053). Never canonical; promotion is user-owned.
-		ls, err := learning.Open(sess.Runtime.Config.DataDir)
+		ls, err := sess.Runtime.OpenLearning()
+		if errors.Is(err, app.ErrLedgerUnusable) {
+			return toolError(policyBlockedMsg), nil, nil
+		}
 		if err != nil {
 			// Learning-write failure is separate from context reads (§13.7):
 			// reads remain unaffected; report the degradation honestly.
@@ -150,30 +164,27 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 	})
 
 	type getItemArgs struct {
-		RecordID string `json:"record_id" jsonschema:"record ID from a current pack"`
+		PackID   string `json:"pack_id" jsonschema:"pack_id of a ContextPack this server issued in this session"`
+		RecordID string `json:"record_id" jsonschema:"record_id of an item selected into that pack"`
 	}
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "beme.get_context_item",
-		Description: "Expand one record already authorized in a current pack. Denied records are indistinguishable from nonexistent ones.",
+		Name:        contracts.ToolGetContextItem,
+		Description: "Expand one record selected into a ContextPack this server issued in this session (pack_id + record_id). Unknown, expired, unselected, denied, revoked, and nonexistent items are indistinguishable.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args getItemArgs) (*mcp.CallToolResult, any, error) {
-		for _, rec := range sess.View.Records() {
-			if rec.RecordID == args.RecordID {
-				// authorization recheck: the record must still pass Stage-A
-				// policy under the bound capability.
-				pack, _, err := sess.Resolve(contracts.ResolutionRequest{Task: "expand " + args.RecordID})
-				if err != nil || pack.PackID == "" {
-					break
-				}
-				out, _ := json.Marshal(rec)
-				return toolText(string(out)), nil, nil
-			}
+		item, err := sess.ExpandItem(args.PackID, args.RecordID)
+		switch {
+		case err == nil:
+			out, _ := json.Marshal(item)
+			return toolText(string(out)), nil, nil
+		case errors.Is(err, app.ErrItemUnavailable):
+			return toolError("context item not available"), nil, nil
+		default:
+			return toolError(policyBlockedMsg), nil, nil
 		}
-		// Not found and denied look identical (threat case 6/26).
-		return toolError(fmt.Sprintf("record not available: %s", args.RecordID)), nil, nil
 	})
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		fmt.Fprintf(os.Stderr, "mcp server exited: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "mcp server exited: %v\n", err)
 		os.Exit(1)
 	}
 }
