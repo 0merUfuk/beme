@@ -35,7 +35,10 @@
 - [x] No implementation performed during planning.
 - [x] Live local state validated by the implementation agent (WP0 complete,
       2026-09-14; report in the private evidence directory).
-- [ ] Seed golden decisions approved (RED — user).
+- [x] Seed golden decisions approved — under ADR-022 delegation
+      (explicit standing instruction, 2026-09-14): 34 real decisions,
+      provenance recorded as delegated, never silent. Delegation is
+      reopenable by any subsequent user instruction.
 - [x] Exact dependencies verified (ADR-004: go-sdk v1.7.0, modernc sqlite
       FTS5, go 1.25.6 — compiled verification).
 
