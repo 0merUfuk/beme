@@ -30,22 +30,22 @@ func toolError(s string) *mcp.CallToolResult {
 func runMCPServer(configDir, profile, capability, experimentalLearnedStr string) {
 	profileVal := contracts.Profile(profile)
 	if profileVal != contracts.ProfilePersonal && profileVal != contracts.ProfileWorkSafe {
-		fmt.Fprintf(os.Stderr, "error: invalid --projection %q (personal|work-safe)\\n", profile)
+		fmt.Fprintf(os.Stderr, "error: invalid --projection %q (personal|work-safe)\n", profile)
 		os.Exit(2)
 	}
 	capID := capability
 	if capID == "" {
-		fmt.Fprintf(os.Stderr, "error: --capability NAME required (serving is capability-bound; never default)\\n")
+		fmt.Fprintf(os.Stderr, "error: --capability NAME required (serving is capability-bound; never default)\n")
 		os.Exit(2)
 	}
 	rt, err := app.Load(configDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	sess, err := rt.Serve(profileVal, capID, experimentalLearnedStr == "true")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	defer sess.Store.Close()
@@ -173,7 +173,7 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 	})
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		fmt.Fprintf(os.Stderr, "mcp server exited: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "mcp server exited: %v\n", err)
 		os.Exit(1)
 	}
 }

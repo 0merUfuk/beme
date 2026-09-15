@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/contracts"
@@ -37,25 +38,41 @@ type Runtime struct {
 	Sources  []contracts.SourceDescriptor
 }
 
-// Dirs resolves platform-appropriate directories (macOS first, NFR-007).
+// DefaultDirs resolves platform-appropriate directories (NFR-007, FR-062):
+//   - macOS: ~/Library/Application Support/beme (config+data), ~/Library/Caches/beme
+//   - Windows: %AppData%\beme (config+data), %LocalAppData%\beme (cache)
+//   - Linux/other: XDG — $XDG_CONFIG_HOME/beme, $XDG_DATA_HOME/beme,
+//     $XDG_CACHE_HOME/beme (defaults ~/.config, ~/.local/share, ~/.cache)
+//
 // All overridable via env: BEME_CONFIG_HOME, BEME_DATA_HOME, BEME_CACHE_HOME.
 func DefaultDirs() (configHome, dataHome, cacheHome string, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", "", err
 	}
-	configHome = os.Getenv("BEME_CONFIG_HOME")
-	if configHome == "" {
+	envOr := func(key, fallback string) string {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+		return fallback
+	}
+	switch runtime.GOOS {
+	case "darwin":
 		configHome = filepath.Join(home, "Library", "Application Support", "beme")
-	}
-	dataHome = os.Getenv("BEME_DATA_HOME")
-	if dataHome == "" {
-		dataHome = filepath.Join(home, "Library", "Application Support", "beme")
-	}
-	cacheHome = os.Getenv("BEME_CACHE_HOME")
-	if cacheHome == "" {
+		dataHome = configHome
 		cacheHome = filepath.Join(home, "Library", "Caches", "beme")
+	case "windows":
+		configHome = filepath.Join(envOr("APPDATA", filepath.Join(home, "AppData", "Roaming")), "beme")
+		dataHome = configHome
+		cacheHome = filepath.Join(envOr("LOCALAPPDATA", filepath.Join(home, "AppData", "Local")), "beme")
+	default:
+		configHome = filepath.Join(envOr("XDG_CONFIG_HOME", filepath.Join(home, ".config")), "beme")
+		dataHome = filepath.Join(envOr("XDG_DATA_HOME", filepath.Join(home, ".local", "share")), "beme")
+		cacheHome = filepath.Join(envOr("XDG_CACHE_HOME", filepath.Join(home, ".cache")), "beme")
 	}
+	configHome = envOr("BEME_CONFIG_HOME", configHome)
+	dataHome = envOr("BEME_DATA_HOME", dataHome)
+	cacheHome = envOr("BEME_CACHE_HOME", cacheHome)
 	return configHome, dataHome, cacheHome, nil
 }
 
@@ -177,6 +194,14 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 		}
 	}
 
+	// Durable tombstones (ADR-027): purged content is never re-ingested,
+	// whatever the source, sync, or backup state. Unreadable ledger → fail
+	// closed.
+	ledger, err := rt.LoadLedger()
+	if err != nil {
+		return nil, err
+	}
+
 	store, err := storage.Open(storePath)
 	if err != nil {
 		return nil, err
@@ -229,6 +254,10 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 			if !ok {
 				continue
 			}
+			if ledger.Purged(rec, f.Hash) {
+				report.PurgeBlocked++
+				continue
+			}
 			prov := contracts.Provenance{
 				ProvenanceID:     "prov_" + rec.RecordID[len("rec_"):],
 				SourceID:         sd.SourceID,
@@ -262,6 +291,9 @@ type BuildReport struct {
 	SourcesIngested []string `json:"sources_ingested"`
 	Skipped         []string `json:"skipped,omitempty"`
 	SecretRejected  []string `json:"secret_rejected,omitempty"`
+	// PurgeBlocked counts entries refused because they match a physical-purge
+	// tombstone (anti-resurrection, ADR-027).
+	PurgeBlocked int `json:"purge_blocked,omitempty"`
 }
 
 // Serve opens a projection store read-only and binds one immutable
@@ -280,6 +312,12 @@ func (rt *Runtime) Serve(profile contracts.Profile, capabilityID string, experim
 	// Freshness honesty: an unbuilt (empty) projection must not resolve as
 	// if it were a complete index (§13.7): resolution works but carries an
 	// explicit degradation notice.
+	if _, restored, err := rt.EffectiveRevoked(profile, store); err == nil && restored {
+		sess.degradations = append(sess.degradations, resolver.DegradationInput{
+			Kind:   "stale_projection",
+			Detail: "projection holds physically purged content (restored or stale store); it is filtered from resolution — run `beme build --profile " + string(profile) + "`",
+		})
+	}
 	if store.Count() == 0 {
 		sess.degradations = append(sess.degradations, resolver.DegradationInput{
 			Kind:   "stale_projection",
@@ -320,9 +358,15 @@ func (s *Session) Resolve(req contracts.ResolutionRequest) (resolver.Pack, []res
 	if req.RiskHint == "low" || req.RiskHint == "medium" || req.RiskHint == "high" {
 		tc.Risk = req.RiskHint
 	}
+	// Store tombstones + durable ledger (ADR-027); an unreadable ledger
+	// fails closed for personalization.
+	revoked, _, err := s.Runtime.EffectiveRevoked(s.Capability.Profile, s.Store)
+	if err != nil {
+		return resolver.Pack{}, nil, err
+	}
 	opts := resolver.Options{
 		Policy:       policy.NewEngine(timeNowUTC()),
-		Revoked:      s.Store.RevokedSet(),
+		Revoked:      revoked,
 		Now:          timeNowUTC(),
 		Degradations: s.degradations,
 	}

@@ -1,17 +1,21 @@
 package privacycorpus_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
 	"github.com/0merUfuk/beme/internal/learning"
 	"github.com/0merUfuk/beme/internal/privacycorpus"
 	"github.com/0merUfuk/beme/internal/resolver"
+	"github.com/0merUfuk/beme/internal/storage"
 )
 
 // buildSuite constructs the deterministic threat-case suite against a fresh
@@ -435,18 +439,39 @@ func buildSuite(t *testing.T) (map[string]privacycorpus.CaseFn, func(caseID stri
 		return nil
 	}
 
-	// 18: backup/restore reactivates revoked data (P7.5). Deterministic:
-	// tombstones live in the store; a restore of a PRE-tombstone snapshot
-	// must not be silently accepted — engine behavior: tombstone is in the
-	// store file itself, so restoring an old file resurrects it. The
-	// documented guard: revoke + rebuild. We pin the semantics honestly.
+	// 18: backup/restore reactivates revoked data (P7.5). A forget is also
+	// recorded in the durable ledger (ADR-027), so restoring a pre-forget
+	// store file cannot reactivate the record.
 	group["18"] = "P7.5"
 	suite["18"] = func() error {
-		// documented honest boundary: store-file restore can resurrect
-		// tombstones; the operator flow is revoke → rebuild, and physical
-		// purge requires source removal. Pinned in
-		// TestRebuildDoesNotResurrectForgotten. Not a silent pass here.
-		return privacycorpus.NotRun("requires a backup/restore implementation; v1 documents the operator flow (revoke → rebuild) — engine-level semantics pinned in internal/app recovery tests")
+		d18, err := privacycorpus.NewThreatDeployment(filepath.Join(base, "d18"))
+		if err != nil {
+			return err
+		}
+		if err := d18.Build(); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d18); err != nil || !ok {
+			return errf("precondition: personal canary must resolve before forget (err=%v)", err)
+		}
+		storePath := d18.Runtime.ProjectionPath(contracts.ProfilePersonal)
+		backup := filepath.Join(base, "d18-backup")
+		if err := copyStoreFiles(storePath, backup); err != nil {
+			return err
+		}
+		if err := d18.Runtime.Forget(contracts.ProfilePersonal, "rec_priv-001", "threat case 18"); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d18); err != nil || ok {
+			return errf("forgotten record still resolves (err=%v)", err)
+		}
+		if err := restoreStoreFiles(backup, storePath); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d18); err != nil || ok {
+			return errf("pre-forget backup restore reactivated revoked data (err=%v)", err)
+		}
+		return nil
 	}
 
 	// 19: a real personal eval fixture reaches public CI output (P12).
@@ -741,12 +766,82 @@ func buildSuite(t *testing.T) (map[string]privacycorpus.CaseFn, func(caseID stri
 	}
 
 	// 30: backup/rollback/rebuild/sync resurrects physically purged content
-	// despite its tombstone (P7.5) — physical purge is RED/owner-gated; the
-	// deterministic part (tombstone + rebuild semantics) is pinned in app
-	// tests; the physical workflow is owner-gated by design.
+	// despite its tombstone (P7.5). Exercised against this synthetic,
+	// disposable deployment only — purging real data stays an owner action.
 	group["30"] = "P7.5"
 	suite["30"] = func() error {
-		return privacycorpus.NotRun("physical purge is a RED owner action on real data; the synthetic purge workflow is exercised in the physical-purge e2e test (internal/app)")
+		d30, err := privacycorpus.NewThreatDeployment(filepath.Join(base, "d30"))
+		if err != nil {
+			return err
+		}
+		if err := d30.Build(); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d30); err != nil || !ok {
+			return errf("precondition: personal canary must resolve before purge (err=%v)", err)
+		}
+		rt := d30.Runtime
+		storePath := rt.ProjectionPath(contracts.ProfilePersonal)
+		backup := filepath.Join(base, "d30-backup")
+		if err := copyStoreFiles(storePath, backup); err != nil {
+			return err
+		}
+		src := filepath.Join(d30.Home, "personal", "entries", "PRIV-001.md")
+		original, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		rep, err := rt.PhysicalPurge(app.PurgeRequest{Key: "rec_priv-001", Confirm: "rec_priv-001", RemoveCanonical: true})
+		if err != nil {
+			return err
+		}
+		if rep.Records != 1 {
+			return errf("purge report: want 1 record, got %d", rep.Records)
+		}
+		if hits := filesContaining(rt.Config.DataDir, privacycorpus.PersonalText); len(hits) > 0 {
+			return errf("purged content remains on disk after purge: %d file(s)", len(hits))
+		}
+		// sync restores the canonical file; rebuild must refuse it
+		if err := os.WriteFile(src, original, 0o644); err != nil {
+			return err
+		}
+		if err := d30.Build(); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d30); err != nil || ok {
+			return errf("rebuild after sync resurrected purged content (err=%v)", err)
+		}
+		if hits := filesContaining(rt.Config.DataDir, privacycorpus.PersonalText); len(hits) > 0 {
+			return errf("rebuild re-ingested purged content: %d file(s)", len(hits))
+		}
+		// backup restore of the pre-purge store
+		if err := restoreStoreFiles(backup, storePath); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d30); err != nil || ok {
+			return errf("backup restore resurrected purged content (err=%v)", err)
+		}
+		// migration rollback, re-migrate, rebuild
+		st, err := storage.Open(storePath)
+		if err != nil {
+			return err
+		}
+		if err := st.Rollback(); err != nil {
+			st.Close()
+			return err
+		}
+		if err := st.Migrate(); err != nil {
+			st.Close()
+			return err
+		}
+		st.Close()
+		if err := d30.Build(); err != nil {
+			return err
+		}
+		if ok, err := personalResolves(d30); err != nil || ok {
+			return errf("rollback + rebuild resurrected purged content (err=%v)", err)
+		}
+		return nil
 	}
 
 	return suite, func(caseID string) string { return group[caseID] }
@@ -818,4 +913,65 @@ func repoRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return filepath.Clean(filepath.Join(wd, "..", ".."))
+}
+
+// personalResolves reports whether the personal canary reaches a personal pack.
+func personalResolves(d *privacycorpus.ThreatDeployment) (bool, error) {
+	sess, err := d.Serve(contracts.ProfilePersonal)
+	if err != nil {
+		return false, err
+	}
+	defer sess.Store.Close()
+	pack, err := sess.ResolveOnly("owner working sessions preference", "")
+	if err != nil {
+		return false, err
+	}
+	return containsPersonalText(pack), nil
+}
+
+// copyStoreFiles snapshots a closed store (db + WAL side files) into dir.
+func copyStoreFiles(storePath, dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		data, err := os.ReadFile(storePath + suffix)
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dir, "store.db"+suffix), data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restoreStoreFiles replaces a store with a snapshot taken by copyStoreFiles.
+func restoreStoreFiles(dir, storePath string) error {
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		os.Remove(storePath + suffix)
+		data, err := os.ReadFile(filepath.Join(dir, "store.db"+suffix))
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(storePath+suffix, data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// filesContaining lists files under root whose raw bytes contain needle.
+func filesContaining(root, needle string) []string {
+	hits := []string{}
+	filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() {
+			return nil
+		}
+		if data, err := os.ReadFile(path); err == nil && bytes.Contains(data, []byte(needle)) {
+			hits = append(hits, path)
+		}
+		return nil
+	})
+	return hits
 }

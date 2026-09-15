@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,9 @@ func TestMCPClientEndToEnd(t *testing.T) {
 	}
 	// build the real binary
 	bin := filepath.Join(t.TempDir(), "beme-e2e")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = mustRepoRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {

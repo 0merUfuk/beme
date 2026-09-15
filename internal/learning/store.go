@@ -337,3 +337,17 @@ func sortedEntries(entries []os.DirEntry) []os.DirEntry {
 	}
 	return out
 }
+
+// Remove deletes one observation file. It exists only for the RED physical
+// purge workflow (§7.8 derived purge of pending observations); ordinary
+// review never deletes observations.
+func (s *Store) Remove(id string) error {
+	if id == "" || strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("invalid observation id %q", id)
+	}
+	err := os.Remove(filepath.Join(s.dir, id+".json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}

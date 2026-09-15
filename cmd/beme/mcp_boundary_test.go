@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"testing"
 )
 
@@ -73,6 +74,9 @@ func TestElevationNotRepresentable(t *testing.T) {
 // TestStdioOnlyTransport: ADR-014 — network transports rejected in v1.
 func TestStdioOnlyTransport(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "beme-bin")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir, _ = os.Getwd()
 	if out, err := build.CombinedOutput(); err != nil {

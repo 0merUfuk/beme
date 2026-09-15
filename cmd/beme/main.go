@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
-	"github.com/0merUfuk/beme/internal/storage"
 )
 
 const version = "0.1.0-alpha.1"
@@ -42,6 +42,9 @@ func main() {
 		transport           string
 		experimentalLearned bool
 		exportOut           string
+		confirm             string
+		removeCanonical     bool
+		dryRun              bool
 	)
 	switch cmd {
 	case "status", "doctor", "serve", "mcp":
@@ -76,6 +79,12 @@ func main() {
 		fs.BoolVar(&jsonOut, "json", false, "JSON output")
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "profile", "personal", "profile")
+	case "purge":
+		fs.BoolVar(&jsonOut, "json", false, "JSON output")
+		fs.StringVar(&configDir, "config", "", "config directory override")
+		fs.StringVar(&confirm, "confirm", "", "repeat the exact key to confirm this irreversible purge")
+		fs.BoolVar(&removeCanonical, "remove-canonical", false, "also delete the canonical source file(s)")
+		fs.BoolVar(&dryRun, "dry-run", false, "report what would be purged without changing anything")
 	case "adapter", "candidate":
 		// handled directly below (need raw positional args)
 	default:
@@ -92,7 +101,7 @@ func main() {
 	case "status":
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		emitStatus(rt, jsonOut)
@@ -101,7 +110,7 @@ func main() {
 	case "build":
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		profiles := []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe}
@@ -112,7 +121,7 @@ func main() {
 		for _, p := range profiles {
 			rep, err := rt.BuildProfile(p)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error building %s: %v\\n", p, err)
+				fmt.Fprintf(os.Stderr, "error building %s: %v\n", p, err)
 				os.Exit(1)
 			}
 			reports = append(reports, *rep)
@@ -121,12 +130,12 @@ func main() {
 			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "reports": reports})
 		} else {
 			for _, r := range reports {
-				fmt.Printf("built %s: %d records from %d sources\\n", r.Profile, r.RecordsIngested, len(r.SourcesIngested))
+				fmt.Printf("built %s: %d records from %d sources\n", r.Profile, r.RecordsIngested, len(r.SourcesIngested))
 				for _, s := range r.Skipped {
-					fmt.Printf("  skipped: %s\\n", s)
+					fmt.Printf("  skipped: %s\n", s)
 				}
 				for _, s := range r.SecretRejected {
-					fmt.Printf("  secret-rejected: %s\\n", s)
+					fmt.Printf("  secret-rejected: %s\n", s)
 				}
 			}
 		}
@@ -137,7 +146,7 @@ func main() {
 		}
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		capID := capability
@@ -146,7 +155,7 @@ func main() {
 		}
 		sess, err := rt.Serve(contracts.Profile(profile), capID, false)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		defer sess.Store.Close()
@@ -168,7 +177,7 @@ func main() {
 			_ = trace
 		} else {
 			renderPackHuman(pack)
-			fmt.Printf("\\ntrace steps: %d (use explain --json for full trace)\\n", len(trace))
+			fmt.Printf("\ntrace steps: %d (use explain --json for full trace)\n", len(trace))
 		}
 	case "forget":
 		// forget --profile X <record_id|source:source_id> [reason]
@@ -184,20 +193,14 @@ func main() {
 		}
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		store, err := storage.Open(rt.ProjectionPath(contracts.Profile(profile)))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+		if err := rt.Forget(contracts.Profile(profile), key, reason); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		defer store.Close()
-		if err := store.Tombstone(key, reason); err != recErrNone(err) {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("tombstoned %s (logical forget; derived purge happens on next rebuild)\\n", key)
+		fmt.Printf("forgotten %s (tombstoned in the projection and the durable ledger; content stays on disk until `beme purge`)\n", key)
 	case "adapter":
 		adapterCmd(args[1:])
 	case "explain":
@@ -225,9 +228,48 @@ func main() {
 			os.Exit(1)
 		}
 		candidateCmd(rtC, args[1:])
+	case "purge":
+		// purge --confirm KEY [--remove-canonical] [--dry-run] [--json] KEY
+		rest := fs.Args()
+		if len(rest) != 1 {
+			fmt.Fprintln(os.Stderr, "usage: beme purge --confirm <key> [--remove-canonical] [--dry-run] [--json] <record-id|source:source-id>")
+			os.Exit(2)
+		}
+		rt, err := app.Load(configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		rep, err := rt.PhysicalPurge(app.PurgeRequest{Key: rest[0], Confirm: confirm, RemoveCanonical: removeCanonical, DryRun: dryRun})
+		switch {
+		case errors.Is(err, app.ErrPurgeNotConfirmed):
+			fmt.Fprintf(os.Stderr, "policy blocked: %v\n", err)
+			os.Exit(3)
+		case errors.Is(err, app.ErrPurgeNotFound):
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(4)
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if jsonOut {
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "report": rep})
+			return
+		}
+		mode := "purged"
+		if rep.DryRun {
+			mode = "dry run — would purge"
+		}
+		fmt.Printf("%s %d record(s) for %s\n", mode, rep.Records, rep.Key)
+		for _, st := range rep.Steps {
+			fmt.Printf("  %-36s %-8s %d\n", st.Step, st.Outcome, st.Count)
+		}
+		for _, r := range rep.Residuals {
+			fmt.Printf("  residual: %s\n", r)
+		}
 	case "serve", "mcp":
 		if transport != "stdio" {
-			fmt.Fprintf(os.Stderr, "error: only stdio transport is supported in v1 (ADR-014)\\n")
+			fmt.Fprintf(os.Stderr, "error: only stdio transport is supported in v1 (ADR-014)\n")
 			os.Exit(3)
 		}
 		runMCPServer(configDir, profile, capability, strconv.FormatBool(experimentalLearned))
@@ -236,8 +278,6 @@ func main() {
 		os.Exit(2)
 	}
 }
-
-func recErrNone(err error) error { return err }
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `beme %s — personal execution-context runtime
@@ -249,6 +289,9 @@ Usage:
   beme preview --task TEXT [--workspace PATH] [--projection P] [--json]
   beme resolve  (alias of preview)
   beme forget [--profile P] <record-id|source:source-id> [reason]
+  beme purge --confirm KEY [--remove-canonical] [--dry-run] [--json] KEY
+        physical purge (RED, irreversible): erase from projections, traces,
+        observations; leave a non-content anti-resurrection tombstone
   beme serve --projection P --capability NAME --transport stdio
   beme mcp      (alias of serve)
 
@@ -277,12 +320,12 @@ func emitStatus(rt *app.Runtime, jsonOut bool) {
 		})
 		return
 	}
-	fmt.Printf("beme %s\\n", version)
-	fmt.Printf("registered sources: %d\\n", len(srcs))
+	fmt.Printf("beme %s\n", version)
+	fmt.Printf("registered sources: %d\n", len(srcs))
 	for _, s := range srcs {
-		fmt.Printf("  %-24s trust=%-14s profiles=%-12s sensitivity=%s\\n", s.SourceID, s.Trust, s.Profiles, s.Sensitivity)
+		fmt.Printf("  %-24s trust=%-14s profiles=%-12s sensitivity=%s\n", s.SourceID, s.Trust, s.Profiles, s.Sensitivity)
 	}
-	fmt.Printf("registered workspaces: %d\\n", len(rt.Registry.Workspaces))
+	fmt.Printf("registered workspaces: %d\n", len(rt.Registry.Workspaces))
 }
 
 func doctor(configDir string, jsonOut bool) {
@@ -313,9 +356,9 @@ func doctor(configDir string, jsonOut bool) {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{"status": status, "findings": findings, "checked_at": time.Now().UTC().Format(time.RFC3339)})
 		return
 	}
-	fmt.Printf("doctor: %s\\n", status)
+	fmt.Printf("doctor: %s\n", status)
 	for _, f := range findings {
-		fmt.Printf("  - %s\\n", f)
+		fmt.Printf("  - %s\n", f)
 	}
 }
 
@@ -346,26 +389,26 @@ func renderPackHuman(pack any) {
 		} `json:"conflicts"`
 	}
 	json.Unmarshal(b, &p)
-	fmt.Printf("pack %s (profile=%s completeness=%s)\\n", p.PackID, p.Resolution.Profile, p.Resolution.Completeness)
-	fmt.Printf("constraints: %d\\n", len(p.Constraints))
+	fmt.Printf("pack %s (profile=%s completeness=%s)\n", p.PackID, p.Resolution.Profile, p.Resolution.Completeness)
+	fmt.Printf("constraints: %d\n", len(p.Constraints))
 	for i, c := range p.Constraints {
-		fmt.Printf("  %d. MUST: %s\\n", i+1, c.Text)
+		fmt.Printf("  %d. MUST: %s\n", i+1, c.Text)
 	}
-	fmt.Printf("guidance: %d\\n", len(p.Guidance))
+	fmt.Printf("guidance: %d\n", len(p.Guidance))
 	for i, g := range p.Guidance {
-		fmt.Printf("  %d. %s\\n", i+1, g.Text)
+		fmt.Printf("  %d. %s\n", i+1, g.Text)
 	}
-	fmt.Printf("precedents: %d\\n", len(p.Precedents))
+	fmt.Printf("precedents: %d\n", len(p.Precedents))
 	for i, pr := range p.Precedents {
-		fmt.Printf("  %d. %s\\n", i+1, pr.Text)
+		fmt.Printf("  %d. %s\n", i+1, pr.Text)
 	}
-	fmt.Printf("unknowns: %d\\n", len(p.Unknowns))
+	fmt.Printf("unknowns: %d\n", len(p.Unknowns))
 	for _, u := range p.Unknowns {
-		fmt.Printf("  ? %s\\n", u.Question)
+		fmt.Printf("  ? %s\n", u.Question)
 	}
-	fmt.Printf("conflicts: %d\\n", len(p.Conflicts))
+	fmt.Printf("conflicts: %d\n", len(p.Conflicts))
 	for _, c := range p.Conflicts {
-		fmt.Printf("  ! %s\\n", c.Description)
+		fmt.Printf("  ! %s\n", c.Description)
 	}
 	_ = strconv.Itoa
 }
