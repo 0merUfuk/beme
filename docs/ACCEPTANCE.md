@@ -121,9 +121,18 @@ this gate passed. Item-level status:
       (`TestCorruptStoreRecovery`); revoke/forget tombstones honored in
       resolution and their rebuild semantics pinned
       (`TestRebuildDoesNotResurrectForgotten`, `TestRevocationTombstone`).
-- [ ] ≥2 Tier 1 harness adapters verified end to end against installed
-      harnesses (install/verify lifecycle is tested; live harness
-      integration is not — all surfaces remain `advisory`).
+- [x] ≥2 Tier 1 harness adapters verified end to end (2026-09-15):
+      protocol level — a real MCP client (official Go SDK) connected to the
+      real stdio server, listed exactly the four tools, resolved a pack
+      under work-safe, read status, filed quarantined feedback, and had a
+      `profile` elevation attempt rejected at the protocol layer
+      (`TestMCPClientEndToEnd`); config level — `adapter install|verify|
+      remove` exercised against the installed Codex (0.154.0) and Claude
+      Code (2.1.271) user configs, byte-identical after the full cycle
+      (`TestAdapterInstallRemoveByteExact` + real-config verification).
+      Remaining `advisory` limitation: pre-decision use inside live harness
+      sessions is not measured (FR-045), so no surface is labeled
+      `assured`.
 - [x] No private/user-specific data in repository, packages, fixtures, logs,
       or CI artifacts (scan gate in CI; committed-tree deep scans).
 - [x] Documentation executed successfully by a fresh agent with no prior

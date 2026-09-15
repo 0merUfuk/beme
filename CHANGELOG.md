@@ -2,6 +2,29 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
+## [Unreleased] — end-to-end verification hardening
+
+### Added
+- `TestMCPClientEndToEnd`: a real MCP client (official Go SDK) drives the
+  real stdio server — initialize, tools/list (exactly four tools),
+  resolve_context under work-safe, status (private sources hidden),
+  quarantined feedback persisted, and a `profile` elevation attempt
+  rejected at the protocol layer (threat case 1, strongest position).
+- `TestCorruptStoreRecovery` + rebuild-recovery in `BuildProfile`: an
+  unusable (corrupt) projection store is deleted and rebuilt from
+  registered sources; canonical sources verified byte-identical (FR-065).
+- `TestRebuildDoesNotResurrectForgotten`: forget/rebuild semantics pinned.
+- `TestAdapterInstallRemoveByteExact` + real-config verification: the
+  adapter install→remove cycle is now byte-exact on real harness configs
+  (found and fixed a separator-newline residue bug in the process).
+
+### Fixed
+- Adapter install/remove byte-exactness (FR-043): install previously left
+  separator newlines behind after removal; the managed-region design now
+  makes removal the exact inverse of installation.
+- Corrupt projection stores no longer brick `beme build`: the build path
+  recreates them (derived data only; canonical sources untouched).
+
 ## [Unreleased] — documentation reconciliation (ADR-024)
 
 ### Fixed

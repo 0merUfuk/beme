@@ -76,3 +76,27 @@ func TestAdapterUnsupportedHarness(t *testing.T) {
 		t.Fatal("unsupported harness must error (v1: codex, claude-code)")
 	}
 }
+
+// TestAdapterInstallRemoveByteExact (FR-043): a clean install→remove cycle
+// must restore the target file to its ORIGINAL BYTES — no newline
+// normalization, no whitespace drift. Found by the real-config e2e: the
+// previous trim-based remove left whitespace differences on real files.
+func TestAdapterInstallRemoveByteExact(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "AGENTS.md")
+
+	// original with tricky whitespace: no trailing newline, CRLF-ish mix, tabs
+	original := "# Config\n\nBody text.\n\n\tindented line with trailing spaces   \nLAST LINE NO NEWLINE"
+	os.WriteFile(target, []byte(original), 0o644)
+
+	if err := installBlock(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeBlock(target); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(target)
+	if string(after) != original {
+		t.Fatalf("install→remove must be byte-exact:\noriginal: %q\nafter:    %q", original, string(after))
+	}
+}
