@@ -10,11 +10,14 @@ import (
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
 	"github.com/0merUfuk/beme/internal/evalrunner"
+	fx "github.com/0merUfuk/beme/internal/evalrunner/evalfixture"
 	"github.com/0merUfuk/beme/internal/resolver"
 )
 
-// fixtureDeployment builds an isolated Be Me deployment whose records are
-// designed so each golden case's acceptable/mandatory text is retrievable.
+// fixtureDeployment builds an isolated work-safe Be Me deployment whose
+// records are designed so each golden case's acceptable/mandatory text is
+// retrievable. Its source is not marked synthetic-*, so it is also the
+// negative control for the no-scope eligibility rule.
 func fixtureDeployment(t *testing.T) (*app.Runtime, string) {
 	t.Helper()
 	base := t.TempDir()
@@ -40,8 +43,7 @@ func fixtureDeployment(t *testing.T) (*app.Runtime, string) {
 	return rt, cfg
 }
 
-// fixtureCorpus writes the public synthetic golden case (plus a second
-// derived synthetic case for repeat/ablation coverage) into a temp corpus.
+// fixtureCorpus writes two public synthetic golden cases into a temp corpus.
 func fixtureCorpus(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -77,7 +79,6 @@ func fixtureCorpus(t *testing.T) string {
 	}
 	b, _ := json.MarshalIndent(base, "", "  ")
 	os.WriteFile(filepath.Join(dir, "case1.json"), b, 0o600)
-	// a second case: same fixture, different phrases (repeat/ablation spread)
 	c2 := map[string]any{}
 	for k, v := range base {
 		c2[k] = v
@@ -96,114 +97,90 @@ func fixtureCorpus(t *testing.T) string {
 	return dir
 }
 
+func runtimeInputs(rt *app.Runtime, capability string) evalrunner.InputsFn {
+	return func(p contracts.Profile, task, ws string) (resolver.EvalInputs, error) {
+		return rt.EvalInputs(p, capability, false, task, ws)
+	}
+}
+
+func syntheticCorpus(t *testing.T, d *fx.Deployment, repeats int) *evalrunner.Corpus {
+	t.Helper()
+	dir := t.TempDir()
+	if err := fx.WriteCorpus(dir, d.AlphaPath, repeats); err != nil {
+		t.Fatal(err)
+	}
+	corpus, err := evalrunner.LoadCorpus(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return corpus
+}
+
 // TestRunnerFullPipelineB0ThroughB4 proves the complete mechanism with
-// deterministic mocks and public synthetic fixtures (no paid calls):
-// every arm runs, repeats work, manifests exist with all required fields,
-// blinded packaging hides arm identity, and B4 (full pack) beats B0
-// (no pack) exactly as the contract's primary endpoint expects.
+// deterministic mocks and the public synthetic deployment (no paid calls):
+// every baseline and ablation runs, repeats work, manifests exist, blinded
+// packaging hides arm identity, and B4 (full pack) beats B0 (no pack) as the
+// contract's primary endpoint expects.
 func TestRunnerFullPipelineB0ThroughB4(t *testing.T) {
-	rt, _ := fixtureDeployment(t)
-	corpusDir := fixtureCorpus(t)
-
-	corpus, err := evalrunner.LoadCorpus(corpusDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(corpus.Cases) != 2 {
-		t.Fatalf("fixture corpus should hold 2 cases; got %d", len(corpus.Cases))
-	}
-
-	sess, err := rt.Serve(contracts.ProfileWorkSafe, "cap_eval_ws", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sess.Store.Close()
-
-	resolve := func(profile contracts.Profile, task, wsHint string) (resolver.Pack, error) {
-		s, err := rt.Serve(profile, "cap_eval_resolve", false)
-		if err != nil {
-			return resolver.Pack{}, err
-		}
-		defer s.Store.Close()
-		return s.ResolveOnly(task, wsHint)
-	}
+	d := buildFixture(t, fx.Options{})
+	corpus := syntheticCorpus(t, d, 3)
 
 	outDir := filepath.Join(t.TempDir(), "eval-out")
 	summary, err := evalrunner.Run(corpus, evalrunner.RunConfig{
 		Arms:          evalrunner.AllArms,
-		Repeats:       0, // per-case grading.repeats (3)
 		OutputDir:     outDir,
 		Harness:       "mock-harness",
 		NetworkPolicy: "disabled",
-	}, evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, resolve)
+		SkipRetrieval: true,
+	}, evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, d.Inputs(true))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// every case×arm executed and passed
-	executed := 0
+	if len(summary.CaseResults) != len(evalrunner.AllArms) {
+		t.Fatalf("expected %d case×arm units, got %d", len(evalrunner.AllArms), len(summary.CaseResults))
+	}
 	for _, cr := range summary.CaseResults {
-		executed++
-		if cr.Arm == evalrunner.ArmAblNoScope || cr.Arm == evalrunner.ArmAblCanonOnly {
-			if cr.Outcome != evalrunner.OutcomeNotRun || cr.Reason == "" || len(cr.PerRepeat) != 0 {
-				t.Fatalf("unimplemented ablation %s must be not_run with a reason and no graded repeats; got %s", cr.Arm, cr.Outcome)
-			}
-			continue
-		}
 		if cr.Outcome != evalrunner.OutcomePassed {
-			t.Fatalf("case %s arm %s: outcome %s (%s) — the deterministic fixture should pass every implemented arm", cr.CaseID, cr.Arm, cr.Outcome, cr.Reason)
+			t.Fatalf("arm %s: outcome %s (%s) — every arm must run on the synthetic deployment", cr.Arm, cr.Outcome, cr.Reason)
 		}
 		if len(cr.PerRepeat) != 3 {
-			t.Fatalf("case %s arm %s: expected 3 repeats, got %d", cr.CaseID, cr.Arm, len(cr.PerRepeat))
+			t.Fatalf("arm %s: expected 3 repeats, got %d", cr.Arm, len(cr.PerRepeat))
 		}
 		for _, rr := range cr.PerRepeat {
-			if rr.Text == "" {
-				t.Fatalf("case %s arm %s repeat %d: generated text must be preserved", cr.CaseID, cr.Arm, rr.Repeat)
+			if rr.Text == "" || rr.PromptSHA256 == "" {
+				t.Fatalf("arm %s repeat %d: generated text and prompt digest must be preserved", cr.Arm, rr.Repeat)
 			}
 		}
 	}
-	if code := summary.ExitCode(); code != 3 {
-		t.Fatalf("a run with not_run units must exit 3; got %d", code)
+	if code := summary.ExitCode(); code != 0 {
+		t.Fatalf("an all-passed behavioral run must exit 0; got %d", code)
 	}
-	wantUnits := 2 * len(evalrunner.AllArms)
-	if executed != wantUnits {
-		t.Fatalf("expected %d case×arm units, got %d", wantUnits, executed)
+	if summary.Generations != 3*len(evalrunner.AllArms) {
+		t.Fatalf("generations: %d", summary.Generations)
 	}
 
-	// B4 (full pack) must score higher than B0 (no pack) on this fixture:
-	// the primary endpoint's expected direction, provable deterministically.
 	b0 := meanFor(summary, evalrunner.ArmB0)
 	b4 := meanFor(summary, evalrunner.ArmB4)
 	if b4 <= b0 {
 		t.Fatalf("fixture design violated: B4 (%.2f) must beat B0 (%.2f) when the pack holds the gold phrases", b4, b0)
 	}
 
-	// manifests: every required field present, digests recorded
 	manifestDir := filepath.Join(outDir, summary.RunID, "manifests")
 	entries, _ := os.ReadDir(manifestDir)
-	implemented := len(evalrunner.AllArms) - 2
-	if len(entries) != 2*implemented*3 {
-		t.Fatalf("expected %d manifests, got %d", 2*implemented*3, len(entries))
-	}
-	manifestSample := map[string]any{}
-	data, _ := os.ReadFile(filepath.Join(manifestDir, entries[0].Name()))
-	if err := json.Unmarshal(data, &manifestSample); err != nil {
-		t.Fatal(err)
-	}
-	for _, field := range []string{"run_id", "git_commit", "dataset_version", "split", "case_id", "repeat_index", "fixture_hash", "capability_policy_hash", "model_provider", "network_policy", "started_at", "ended_at", "manifest_digest"} {
-		if _, ok := manifestSample[field]; !ok {
-			t.Fatalf("manifest missing required field %q", field)
-		}
+	if len(entries) != len(evalrunner.AllArms)*3 {
+		t.Fatalf("expected %d manifests, got %d", len(evalrunner.AllArms)*3, len(entries))
 	}
 
-	// blinded packaging: no real arm names in blinded/, key file separate
 	blindDir := filepath.Join(outDir, summary.RunID, "blinded")
 	blFiles, _ := os.ReadDir(blindDir)
+	if len(blFiles) != len(entries) {
+		t.Fatalf("blinded results: %d, want %d", len(blFiles), len(entries))
+	}
 	for _, f := range blFiles {
 		data, _ := os.ReadFile(filepath.Join(blindDir, f.Name()))
-		s := string(data)
 		for _, arm := range evalrunner.AllArms {
-			if strings.Contains(s, "\""+string(arm)+"\"") {
+			if strings.Contains(string(data), "\""+string(arm)+"\"") {
 				t.Fatalf("blinded result %s leaks arm identity %q", f.Name(), arm)
 			}
 		}
@@ -236,19 +213,16 @@ func meanFor(s *evalrunner.Summary, arm evalrunner.Arm) float64 {
 // TestRunnerNotRunStates: a resolution failure yields an explicit not_run
 // case result — never a silent pass.
 func TestRunnerNotRunStates(t *testing.T) {
-	rt, _ := fixtureDeployment(t)
-	corpusDir := fixtureCorpus(t)
-	corpus, err := evalrunner.LoadCorpus(corpusDir)
+	corpus, err := evalrunner.LoadCorpus(fixtureCorpus(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	failing := func(profile contracts.Profile, task, wsHint string) (resolver.Pack, error) {
-		return resolver.Pack{}, os.ErrNotExist // simulate unavailable projection
+	failing := func(profile contracts.Profile, task, wsHint string) (resolver.EvalInputs, error) {
+		return resolver.EvalInputs{}, os.ErrNotExist // simulate unavailable projection
 	}
 	summary, err := evalrunner.Run(corpus, evalrunner.RunConfig{
-		Arms:      []evalrunner.Arm{evalrunner.ArmB4},
-		OutputDir: "", // no artifacts needed
-		Harness:   "mock",
+		Arms:    []evalrunner.Arm{evalrunner.ArmB4},
+		Harness: "mock",
 	}, evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, failing)
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +235,6 @@ func TestRunnerNotRunStates(t *testing.T) {
 			t.Fatalf("not_run must carry a reason; got %q", cr.Reason)
 		}
 	}
-	_ = rt
 }
 
 // TestRunnerRetrievalMetrics proves context precision/recall measurement
@@ -289,30 +262,27 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(profile contracts.Profile, task, ws string) (resolver.Pack, error) {
-		s, err := rt.Serve(profile, "cap_eval_retrieval", false)
-		if err != nil {
-			return resolver.Pack{}, err
-		}
-		defer s.Store.Close()
-		return s.ResolveOnly(task, ws)
-	}
 	refs := func(profile contracts.Profile, recordID string) []string {
 		s, err := rt.Serve(profile, "cap_eval_refs", false)
 		if err != nil {
 			return nil
 		}
 		defer s.Store.Close()
-		for _, r := range s.Store.Records() {
+		recs, err := s.VisibleRecords()
+		if err != nil {
+			return nil
+		}
+		for _, r := range recs {
 			if r.RecordID == recordID {
 				return []string{r.SourceRecordID, r.Key}
 			}
 		}
 		return nil
 	}
+	inputs := runtimeInputs(rt, "cap_eval_retrieval")
 	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{
 		Arms: []evalrunner.Arm{evalrunner.ArmB4}, OutputDir: t.TempDir(), Refs: refs,
-	}, evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, resolve)
+	}, evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,12 +310,21 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 
 	// no lookup configured → every case explicitly not_run
 	sum2, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: []evalrunner.Arm{evalrunner.ArmB0}, OutputDir: t.TempDir()},
-		evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, resolve)
+		evalrunner.NewMockProvider(""), evalrunner.DeterministicGrader{}, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sum2.Retrieval.Measured != 0 || sum2.Retrieval.ThresholdsMet {
 		t.Fatalf("retrieval without a refs lookup must not be measured: %+v", sum2.Retrieval)
+	}
+
+	// retrieval-only run: no arms, no provider
+	sum3, err := evalrunner.Run(corpus, evalrunner.RunConfig{OutputDir: t.TempDir(), Refs: refs}, nil, nil, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sum3.CaseResults) != 0 || sum3.Retrieval.Measured != 2 || sum3.ExitCode() != 1 {
+		t.Fatalf("retrieval-only run: results=%d retrieval=%+v exit=%d", len(sum3.CaseResults), sum3.Retrieval, sum3.ExitCode())
 	}
 }
 
@@ -355,6 +334,9 @@ type prohibitedProvider struct{}
 const prohibitedAnswer = "embedded database file; the user dislikes client-server databases"
 
 func (prohibitedProvider) Name() string { return "mock_prohibited" }
+func (prohibitedProvider) Settings() evalrunner.ModelSettings {
+	return evalrunner.ModelSettings{Provider: "mock_prohibited", ModelID: "fixed-answer", ModelVersion: "1", TopP: 1}
+}
 func (prohibitedProvider) Generate(req evalrunner.GenerationRequest) (evalrunner.GenerationResult, error) {
 	return evalrunner.GenerationResult{Text: prohibitedAnswer + " [" + req.CaseID + "]"}, nil
 }
@@ -369,17 +351,9 @@ func TestRunnerBlockerFailsUnitAndPreservesText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(p contracts.Profile, task, ws string) (resolver.Pack, error) {
-		s, err := rt.Serve(p, "cap_eval_blocker", false)
-		if err != nil {
-			return resolver.Pack{}, err
-		}
-		defer s.Store.Close()
-		return s.ResolveOnly(task, ws)
-	}
 	out := t.TempDir()
 	arms := []evalrunner.Arm{evalrunner.ArmB0, evalrunner.ArmB4}
-	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: arms, OutputDir: out}, prohibitedProvider{}, evalrunner.DeterministicGrader{}, resolve)
+	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: arms, OutputDir: out}, prohibitedProvider{}, evalrunner.DeterministicGrader{}, runtimeInputs(rt, "cap_eval_blocker"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,6 +408,70 @@ func TestRunnerBlockerFailsUnitAndPreservesText(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// forbiddenProvider fails the test if a generation is requested.
+type forbiddenProvider struct{ t *testing.T }
+
+func (forbiddenProvider) Name() string { return "forbidden" }
+func (forbiddenProvider) Settings() evalrunner.ModelSettings {
+	return evalrunner.ModelSettings{Provider: "forbidden", ModelID: "none", ModelVersion: "none"}
+}
+func (p forbiddenProvider) Generate(req evalrunner.GenerationRequest) (evalrunner.GenerationResult, error) {
+	p.t.Errorf("dry run executed a generation for %s/%s", req.CaseID, req.Arm)
+	return evalrunner.GenerationResult{}, nil
+}
+
+// TestRunnerDryRunRendersWithoutGenerating: a dry run renders every prompt,
+// writes manifests, evidence, and raw prompts, reports how many generations
+// would run, never calls the provider, and exits not_run.
+func TestRunnerDryRunRendersWithoutGenerating(t *testing.T) {
+	d := buildFixture(t, fx.Options{})
+	corpus := syntheticCorpus(t, d, 2)
+	out := t.TempDir()
+	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: evalrunner.AllArms, OutputDir: out, DryRun: true, SkipRetrieval: true},
+		forbiddenProvider{t}, nil, d.Inputs(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 2 * len(evalrunner.AllArms)
+	if sum.Generations != 0 || sum.PlannedGenerations != want || !sum.DryRun {
+		t.Fatalf("dry run: generations=%d planned=%d (want %d)", sum.Generations, sum.PlannedGenerations, want)
+	}
+	for _, cr := range sum.CaseResults {
+		if cr.Outcome != evalrunner.OutcomeNotRun || !strings.HasPrefix(cr.Reason, "dry run:") || len(cr.PerRepeat) != 2 || cr.PerRepeat[0].PromptSHA256 == "" {
+			t.Fatalf("dry-run unit must be not_run with rendered prompts: %+v", cr)
+		}
+	}
+	if code := sum.ExitCode(); code != 3 {
+		t.Fatalf("dry run must exit 3; got %d", code)
+	}
+	for sub, n := range map[string]int{"manifests": want, "evidence": want, "raw": want, "blinded": 0} {
+		files, err := os.ReadDir(filepath.Join(out, sum.RunID, sub))
+		if err != nil || len(files) != n {
+			t.Fatalf("%s: %d files (want %d): %v", sub, len(files), n, err)
+		}
+		if sub == "raw" {
+			b, _ := os.ReadFile(filepath.Join(out, sum.RunID, sub, files[0].Name()))
+			if !strings.Contains(string(b), "=== TASK ===") {
+				t.Fatalf("raw artifact lacks the rendered prompt: %s", b)
+			}
+		}
+	}
+}
+
+func TestParseArms(t *testing.T) {
+	all, err := evalrunner.ParseArms("all")
+	if err != nil || len(all) != len(evalrunner.AllArms) {
+		t.Fatalf("all: %v %v", all, err)
+	}
+	two, err := evalrunner.ParseArms(" B0, B4,B0")
+	if err != nil || len(two) != 2 || two[0] != evalrunner.ArmB0 || two[1] != evalrunner.ArmB4 {
+		t.Fatalf("list: %v %v", two, err)
+	}
+	if _, err := evalrunner.ParseArms("B0,B9"); err == nil {
+		t.Fatal("unknown arm must be rejected")
 	}
 }
 

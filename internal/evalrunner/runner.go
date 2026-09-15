@@ -2,19 +2,26 @@
 // by evals/EVALUATION_CONTRACT.md (WP: evaluation infrastructure).
 //
 // Scope: the MECHANISM is fully implemented and proven with deterministic
-// mock providers and public synthetic fixtures. Executing it against paid
-// live models or the private corpus is owner-gated — the runner reports
-// not_run for any condition it cannot honestly execute (never silent).
+// mock providers and public synthetic fixtures. Executing it against live
+// models or the private corpus is owner-gated (cmd/beme-eval) — the runner
+// reports not_run for any condition it cannot honestly execute (never
+// silent).
 //
 // Supported:
-//   - Baselines B0–B4 and the ablations whose pack transform exists
-//     (no-provenance, no-unknowns, learned-only) — every baseline shares the
-//     same hard capability boundary (§18.6). no-scope and canonical-only have
-//     no transform yet and are reported not_run, never graded as the full
-//     pack under an ablation label.
-//   - Repeat runs (1..5) with per-case mean/variance/worst.
-//   - Immutable manifests per §18.7 (36 required fields) written per run,
-//     content-hashed.
+//   - Baselines B0–B4 and every ablation (no-scope, no-provenance,
+//     no-unknowns, canonical-only, learned-only). Each arm is built from one
+//     serving session's resolver.EvalInputs, so all share the same hard
+//     capability boundary (§18.6); arms.go documents each construction. An
+//     arm that cannot honestly run is not_run with a reason — never graded
+//     as the full pack under another label.
+//   - A deterministic rendered prompt per generation (prompt.go), given to
+//     the provider in GenerationRequest.Prompt.
+//   - Repeat runs (1..5); each repeat gets a freshly built, deep-copied arm
+//     context, so no arm or repeat can mutate another's input.
+//   - Per-generation manifests carrying exactly the run-manifest schema's
+//     fields from observed values, plus owner-side evidence (prompt, context
+//     and bootstrap digests, arm construction, corpus file hashes,
+//     deployment revision, provider-reported model settings).
 //   - Blinded result packaging: condition labels are replaced by opaque
 //     arm IDs + a separate key file, so a human grader can grade without
 //     knowing which arm is Be Me.
@@ -59,31 +66,29 @@ const (
 // AllArms is the complete registry.
 var AllArms = []Arm{ArmB0, ArmB1, ArmB2, ArmB3, ArmB4, ArmAblNoScope, ArmAblNoProv, ArmAblNoUnknowns, ArmAblCanonOnly, ArmAblLearnedOnly}
 
-// Provider is a model backend. A deterministic mock implements the same
-// interface as a live provider, so the runner is proven without paid calls.
-type Provider interface {
-	// Name identifies the provider for manifests (mock_* for mocks).
-	Name() string
-	// Generate produces the agent's answer for one case under one arm.
-	Generate(req GenerationRequest) (GenerationResult, error)
-}
-
-// GenerationRequest is what a provider sees for one case run.
-type GenerationRequest struct {
-	RunID     string
-	CaseID    string
-	Arm       Arm
-	Repeat    int
-	Pack      resolver.Pack // resolved context (empty for B0)
-	Bootstrap string        // bootstrap text (B1+)
-	Task      string        // case task text
-}
-
-// GenerationResult is the raw model output for grading.
-type GenerationResult struct {
-	Text       string            `json:"text"`
-	TokensUsed int               `json:"tokens_used"`
-	Meta       map[string]string `json:"meta,omitempty"`
+// ParseArms parses a comma-separated arm list ("all" selects AllArms).
+func ParseArms(s string) ([]Arm, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "all" {
+		return append([]Arm{}, AllArms...), nil
+	}
+	known := map[Arm]bool{}
+	for _, a := range AllArms {
+		known[a] = true
+	}
+	out := []Arm{}
+	seen := map[Arm]bool{}
+	for _, part := range strings.Split(s, ",") {
+		a := Arm(strings.TrimSpace(part))
+		if !known[a] {
+			return nil, fmt.Errorf("unknown arm %q", a)
+		}
+		if !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 // Case is a golden case loaded from a corpus (schema-conformant).
@@ -118,15 +123,19 @@ type Case struct {
 type Corpus struct {
 	Dir   string
 	Cases []Case
+	// Files maps every *.json corpus file name to "sha256:<hex>" of its
+	// bytes as loaded.
+	Files    map[string]string
+	caseFile map[string]string // case ID -> file name
 }
 
-// LoadCorpus reads every *.json case in dir.
+// LoadCorpus reads every *.json case in dir and hashes each file.
 func LoadCorpus(dir string) (*Corpus, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	c := &Corpus{Dir: dir}
+	c := &Corpus{Dir: dir, Files: map[string]string{}, caseFile: map[string]string{}}
 	for _, e := range sortedNames(entries) {
 		if !strings.HasSuffix(e, ".json") {
 			continue
@@ -142,9 +151,15 @@ func LoadCorpus(dir string) (*Corpus, error) {
 		if cs.ID == "" {
 			return nil, fmt.Errorf("%s: case has no id", e)
 		}
+		if prev, dup := c.caseFile[cs.ID]; dup {
+			return nil, fmt.Errorf("%s: case id %q already defined in %s", e, cs.ID, prev)
+		}
 		if cs.Grading.Repeats <= 0 {
 			cs.Grading.Repeats = 1
 		}
+		h := sha256.Sum256(data)
+		c.Files[e] = "sha256:" + hex.EncodeToString(h[:])
+		c.caseFile[cs.ID] = e
 		c.Cases = append(c.Cases, cs)
 	}
 	if len(c.Cases) == 0 {
@@ -153,23 +168,55 @@ func LoadCorpus(dir string) (*Corpus, error) {
 	return c, nil
 }
 
+// Version is the dataset version: a digest over every corpus file name and
+// content hash, so adding, removing, renaming, or editing a case changes it.
+func (c *Corpus) Version() string {
+	names := make([]string, 0, len(c.Files))
+	for n := range c.Files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		b.WriteString(n + "\x00" + c.Files[n] + "\n")
+	}
+	return sha256Hex(b.String())
+}
+
+// FixtureHash is the content hash of the file defining caseID ("" when
+// unknown).
+func (c *Corpus) FixtureHash(caseID string) string {
+	return c.Files[c.caseFile[caseID]]
+}
+
 // RunConfig controls a run set.
 type RunConfig struct {
-	Arms          []Arm
-	Repeats       int // override per-case repeats when >0
-	OutputDir     string
-	Harness       string
-	NetworkPolicy string // disabled | integration_only
-	// Only arms listed are executed; others are reported not_run.
+	Arms           []Arm
+	Repeats        int // override per-case repeats when >0 (max 5)
+	OutputDir      string
+	Harness        string // default "none"
+	HarnessVersion string // default "unspecified"
+	NetworkPolicy  string // disabled (default) | integration_only
+	Split          string // calibration (default) | development | locked_holdout | privacy_red_team
 
 	// Refs maps a selected record to the identifiers gold
 	// required_evidence_refs may use (key, source record ID). When nil,
 	// retrieval metrics are reported not_run.
 	Refs RefsFn
+	// SkipRetrieval omits retrieval measurement entirely (behavioral-only
+	// runs), instead of reporting it not_run.
+	SkipRetrieval bool
+	// DryRun renders every prompt and writes manifests and evidence without
+	// calling the provider; every unit is not_run.
+	DryRun bool
 }
 
 // RefsFn returns the identifiers a record answers to under a profile.
 type RefsFn func(profile contracts.Profile, recordID string) []string
+
+// InputsFn computes one case's evaluation inputs from one serving session
+// under the case's profile (app.Runtime.EvalInputs).
+type InputsFn func(profile contracts.Profile, task, workspaceHint string) (resolver.EvalInputs, error)
 
 // Retrieval thresholds (ACCEPTANCE §5; locked at blueprint design targets).
 const (
@@ -223,32 +270,41 @@ type CaseResult struct {
 }
 
 type RepeatResult struct {
-	Repeat int     `json:"repeat"`
-	Score  float64 `json:"score"`
-	Text   string  `json:"text,omitempty"`
+	Repeat       int     `json:"repeat"`
+	Score        float64 `json:"score"`
+	Text         string  `json:"text,omitempty"`
+	PromptSHA256 string  `json:"prompt_sha256,omitempty"`
 }
 
 // Summary aggregates a run set.
 type Summary struct {
-	RunID         string           `json:"run_id"`
-	StartedAt     string           `json:"started_at"`
-	EndedAt       string           `json:"ended_at"`
-	Corpus        string           `json:"corpus"`
-	Arms          []Arm            `json:"arms"`
-	NetworkPolicy string           `json:"network_policy"`
-	CaseResults   []CaseResult     `json:"case_results"`
-	Blockers      []string         `json:"blockers"`
-	ManifestPaths []string         `json:"manifest_paths"`
-	Retrieval     RetrievalSummary `json:"retrieval"`
-}
+	RunID              string           `json:"run_id"`
+	StartedAt          string           `json:"started_at"`
+	EndedAt            string           `json:"ended_at"`
+	Corpus             string           `json:"corpus"`
+	Arms               []Arm            `json:"arms"`
+	NetworkPolicy      string           `json:"network_policy"`
+	DryRun             bool             `json:"dry_run"`
+	Generations        int              `json:"generations"`
+	PlannedGenerations int              `json:"planned_generations"`
+	CaseResults        []CaseResult     `json:"case_results"`
+	Blockers           []string         `json:"blockers"`
+	ManifestPaths      []string         `json:"manifest_paths"`
+	Retrieval          RetrievalSummary `json:"retrieval"`
 
-// ResolverFn resolves a pack for a case under a capability; injected so the
-// runner works with any Session implementation.
-type ResolverFn func(capability contracts.Profile, task, workspaceHint string) (resolver.Pack, error)
+	units []unitRecord // per-generation inputs, for artifacts
+}
 
 // Grader scores a generation against gold, 0–4 (§18.7.1).
 type Grader interface {
 	Grade(cs Case, gen GenerationResult) (float64, string, error)
+}
+
+// Identified is implemented by graders that report an evaluator identity
+// for manifests.
+type Identified interface {
+	ID() string
+	Version() string
 }
 
 // DeterministicGrader implements the 0–4 rubric mechanically for mock
@@ -257,6 +313,9 @@ type Grader interface {
 // Live grading is human/blind per the contract; this grader exists so the
 // runner is fully testable end-to-end without paid models.
 type DeterministicGrader struct{}
+
+func (DeterministicGrader) ID() string      { return "deterministic-keyword-grader" }
+func (DeterministicGrader) Version() string { return "1" }
 
 func (DeterministicGrader) Grade(cs Case, gen GenerationResult) (float64, string, error) {
 	t := strings.ToLower(gen.Text)
@@ -306,115 +365,162 @@ func (DeterministicGrader) Grade(cs Case, gen GenerationResult) (float64, string
 }
 
 // Run executes the requested arms against the corpus with the provider.
-func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, resolve ResolverFn) (*Summary, error) {
-	if provider == nil {
+// Each case's inputs are computed once and every arm is built from them, so
+// all arms of a case see the same capability, revocation state, and pack.
+func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, inputs InputsFn) (*Summary, error) {
+	if corpus == nil {
+		return nil, fmt.Errorf("corpus is required")
+	}
+	if inputs == nil {
+		return nil, fmt.Errorf("inputs function is required")
+	}
+	if len(cfg.Arms) > 0 && provider == nil {
 		return nil, fmt.Errorf("provider is required (use MockProvider for deterministic runs)")
 	}
-	runID := "run_" + hexTimeID()
-	started := time.Now().UTC()
-
+	if grader == nil {
+		grader = DeterministicGrader{}
+	}
 	if cfg.NetworkPolicy == "" {
 		cfg.NetworkPolicy = "disabled"
 	}
-	requested := map[Arm]bool{}
-	for _, a := range cfg.Arms {
-		requested[a] = true
+	if cfg.NetworkPolicy != "disabled" && cfg.NetworkPolicy != "integration_only" {
+		return nil, fmt.Errorf("network policy %q is not disabled|integration_only", cfg.NetworkPolicy)
+	}
+	if cfg.Split == "" {
+		cfg.Split = "calibration"
+	}
+	switch cfg.Split {
+	case "calibration", "development", "locked_holdout", "privacy_red_team":
+	default:
+		return nil, fmt.Errorf("split %q is not calibration|development|locked_holdout|privacy_red_team", cfg.Split)
+	}
+	if cfg.Harness == "" {
+		cfg.Harness = "none"
+	}
+	if cfg.HarnessVersion == "" {
+		cfg.HarnessVersion = "unspecified"
 	}
 
+	runID := "run_" + hexTimeID()
 	summary := &Summary{
 		RunID:         runID,
-		StartedAt:     started.Format(time.RFC3339),
+		StartedAt:     time.Now().UTC().Format(time.RFC3339),
 		Corpus:        corpus.Dir,
 		Arms:          cfg.Arms,
 		NetworkPolicy: cfg.NetworkPolicy,
+		DryRun:        cfg.DryRun,
+		Retrieval:     RetrievalSummary{RecallThreshold: RecallThreshold, PrecisionThreshold: PrecisionThreshold},
 	}
 
-	summary.Retrieval = RetrievalSummary{RecallThreshold: RecallThreshold, PrecisionThreshold: PrecisionThreshold}
 	for _, cs := range corpus.Cases {
-		summary.Retrieval.Cases = append(summary.Retrieval.Cases, measureRetrieval(cs, cfg.Refs, resolve))
+		in, inErr := inputs(armProfile(cs), cs.Scenario.Task, cs.Scenario.Workspace)
+		if !cfg.SkipRetrieval {
+			summary.Retrieval.Cases = append(summary.Retrieval.Cases, measureRetrieval(cs, cfg.Refs, in, inErr))
+		}
 		for _, arm := range cfg.Arms {
-			// §18.6: the no-scope ablation runs ONLY on synthetic data in an
-			// isolated, no-network environment. Corpus dirs are synthetic in
-			// the public path; the private corpus is owner-run.
-			repeats := cs.Grading.Repeats
-			if cfg.Repeats > 0 {
-				repeats = cfg.Repeats
-			}
-			if repeats > 5 {
-				repeats = 5
-			}
-			res := CaseResult{CaseID: cs.ID, Arm: arm}
-			if reason := unimplementedArm(arm); reason != "" {
-				res.Outcome = OutcomeNotRun
-				res.Reason = reason
-				summary.CaseResults = append(summary.CaseResults, res)
-				continue
-			}
-			// resolve the pack per arm semantics
-			pack, packErr := resolve(armProfile(cs), cs.Scenario.Task, cs.Scenario.Workspace)
-			if packErr != nil {
-				res.Outcome = OutcomeNotRun
-				res.Reason = "resolution failed: " + packErr.Error()
-				summary.CaseResults = append(summary.CaseResults, res)
-				continue
-			}
-			scores := []float64{}
-			worst := math.Inf(1)
-			for rep := 1; rep <= repeats; rep++ {
-				req := GenerationRequest{
-					RunID:     runID,
-					CaseID:    cs.ID,
-					Arm:       arm,
-					Repeat:    rep,
-					Pack:      packForArm(pack, arm),
-					Bootstrap: bootstrapForArm(arm),
-					Task:      cs.Scenario.Task,
-				}
-				gen, err := provider.Generate(req)
-				if err != nil {
-					res.Outcome = OutcomeFailed
-					res.Reason = "generation error: " + err.Error()
-					break
-				}
-				score, why, gerr := grader.Grade(cs, gen)
-				if gerr != nil {
-					res.Outcome = OutcomeFailed
-					res.Reason = "grading error: " + gerr.Error()
-					break
-				}
-				res.PerRepeat = append(res.PerRepeat, RepeatResult{Repeat: rep, Score: score, Text: gen.Text})
-				if score == 0 {
-					// prohibited/unsafe → binary blocker: the unit fails and
-					// is never averaged (§18.7.1)
-					summary.Blockers = append(summary.Blockers, fmt.Sprintf("%s/%s rep%d: %s", cs.ID, arm, rep, why))
-					res.Outcome = OutcomeFailed
-					res.Reason = "blocker: " + why
-					res.Score = 0
-					break
-				}
-				scores = append(scores, score)
-				worst = math.Min(worst, score)
-			}
-			if res.Outcome == "" && len(scores) > 0 {
-				mean := 0.0
-				for _, s := range scores {
-					mean += s
-				}
-				mean /= float64(len(scores))
-				res.Score = math.Round(mean*100) / 100
-				res.Outcome = OutcomePassed
-			}
-			summary.CaseResults = append(summary.CaseResults, res)
+			summary.CaseResults = append(summary.CaseResults, runUnit(summary, cfg, cs, arm, in, inErr, provider, grader))
 		}
 	}
 	summary.Retrieval.aggregate()
 	summary.EndedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// manifests + blinded packaging
-	if err := writeArtifacts(summary, cfg, provider, corpus); err != nil {
+	if err := writeArtifacts(summary, cfg, provider, grader, corpus); err != nil {
 		return nil, err
 	}
 	return summary, nil
+}
+
+// runUnit executes one case×arm unit across its repeats.
+func runUnit(summary *Summary, cfg RunConfig, cs Case, arm Arm, in resolver.EvalInputs, inErr error, provider Provider, grader Grader) CaseResult {
+	res := CaseResult{CaseID: cs.ID, Arm: arm}
+	if inErr != nil {
+		res.Outcome, res.Reason = OutcomeNotRun, "resolution failed: "+inErr.Error()
+		return res
+	}
+	repeats := cs.Grading.Repeats
+	if cfg.Repeats > 0 {
+		repeats = cfg.Repeats
+	}
+	repeats = min(max(repeats, 1), 5)
+
+	probe, err := buildArm(in, arm, cfg.NetworkPolicy)
+	if err != nil {
+		res.Outcome, res.Reason = OutcomeFailed, "arm construction error: "+err.Error()
+		return res
+	}
+	if probe.NotRun != "" {
+		res.Outcome, res.Reason = OutcomeNotRun, probe.NotRun
+		return res
+	}
+
+	scores := []float64{}
+	for rep := 1; rep <= repeats; rep++ {
+		// A fresh deep-copied build per repeat: nothing a provider does to
+		// its request can reach another repeat or arm.
+		b, err := buildArm(in, arm, cfg.NetworkPolicy)
+		if err != nil {
+			res.Outcome, res.Reason = OutcomeFailed, "arm construction error: "+err.Error()
+			break
+		}
+		view, err := RenderContext(b.Context)
+		if err != nil {
+			res.Outcome, res.Reason = OutcomeFailed, "prompt rendering error: "+err.Error()
+			break
+		}
+		prompt, _ := RenderPrompt(cs.Scenario.Task, b.Bootstrap, b.Context)
+		u := unitRecord{
+			CaseID: cs.ID, Arm: arm, Repeat: rep,
+			Prompt: prompt, PromptSHA: sha256Hex(prompt),
+			BootstrapSHA: sha256Hex(b.Bootstrap), ContextSHA: sha256Hex(view),
+			Construction: b.Construction, Deployment: factsFrom(in),
+		}
+		summary.units = append(summary.units, u)
+		rr := RepeatResult{Repeat: rep, PromptSHA256: u.PromptSHA}
+		if cfg.DryRun {
+			summary.PlannedGenerations++
+			res.PerRepeat = append(res.PerRepeat, rr)
+			continue
+		}
+		gen, err := provider.Generate(GenerationRequest{
+			RunID: summary.RunID, CaseID: cs.ID, Arm: arm, Repeat: rep,
+			Task: cs.Scenario.Task, Bootstrap: b.Bootstrap, Context: b.Context, Prompt: prompt,
+		})
+		summary.Generations++
+		if err != nil {
+			res.Outcome, res.Reason = OutcomeFailed, "generation error: "+err.Error()
+			break
+		}
+		score, why, gerr := grader.Grade(cs, gen)
+		if gerr != nil {
+			res.Outcome, res.Reason = OutcomeFailed, "grading error: "+gerr.Error()
+			break
+		}
+		rr.Score, rr.Text = score, gen.Text
+		res.PerRepeat = append(res.PerRepeat, rr)
+		if score == 0 {
+			// prohibited/unsafe → binary blocker: the unit fails and is
+			// never averaged (§18.7.1)
+			summary.Blockers = append(summary.Blockers, fmt.Sprintf("%s/%s rep%d: %s", cs.ID, arm, rep, why))
+			res.Outcome, res.Reason, res.Score = OutcomeFailed, "blocker: "+why, 0
+			break
+		}
+		scores = append(scores, score)
+	}
+	switch {
+	case cfg.DryRun && res.Outcome == "":
+		res.Outcome = OutcomeNotRun
+		res.Reason = fmt.Sprintf("dry run: %d generation(s) rendered, not executed", len(res.PerRepeat))
+	case res.Outcome == "" && len(scores) > 0:
+		mean := 0.0
+		for _, s := range scores {
+			mean += s
+		}
+		mean /= float64(len(scores))
+		res.Score = math.Round(mean*100) / 100
+		res.Outcome = OutcomePassed
+	}
+	return res
 }
 
 // armProfile maps case capability to the serving profile (same hard
@@ -424,60 +530,6 @@ func armProfile(cs Case) contracts.Profile {
 		return contracts.ProfileWorkSafe
 	}
 	return contracts.ProfilePersonal
-}
-
-// packForArm applies arm semantics to the resolved pack.
-func packForArm(p resolver.Pack, arm Arm) resolver.Pack {
-	out := p
-	switch arm {
-	case ArmB0:
-		// plain agent: NO pack content at all
-		out.Constraints, out.Guidance, out.Precedents, out.Knowledge, out.Unknowns, out.Conflicts = nil, nil, nil, nil, nil, nil
-		out.LearnedExperimental = nil
-	case ArmB1:
-		// bootstrap only: pack text present but no guidance content? B1 is
-		// the managed bootstrap text with an EMPTY pack (§18.6: bootstrap
-		// only). Keep sections empty.
-		out.Constraints, out.Guidance, out.Precedents, out.Knowledge, out.Unknowns, out.Conflicts = nil, nil, nil, nil, nil, nil
-		out.LearnedExperimental = nil
-	case ArmB2:
-		// raw full-profile dump: everything eligible under the capability is
-		// already IN the pack (resolver returns eligible content); keep all
-		// sections as-is.
-	case ArmB3:
-		// retrieval without precedence: flatten all sections into guidance,
-		// losing precedence structure + provenance visibility.
-		all := append([]resolver.ContextItem{}, out.Constraints...)
-		all = append(all, out.Guidance...)
-		all = append(all, out.Precedents...)
-		out.Guidance = all
-		out.Constraints, out.Precedents = nil, nil
-		for i := range out.Guidance {
-			out.Guidance[i].ProvenanceRefs = nil // no provenance in B3
-		}
-	case ArmAblNoProv:
-		for i := range out.Guidance {
-			out.Guidance[i].ProvenanceRefs = nil
-		}
-		for i := range out.Constraints {
-			out.Constraints[i].ProvenanceRefs = nil
-		}
-		for i := range out.Precedents {
-			out.Precedents[i].ProvenanceRefs = nil
-		}
-	case ArmAblNoUnknowns:
-		out.Unknowns = nil
-	case ArmAblLearnedOnly:
-		out.Constraints, out.Guidance, out.Precedents = nil, nil, nil
-	}
-	return out
-}
-
-func bootstrapForArm(arm Arm) string {
-	if arm == ArmB0 {
-		return ""
-	}
-	return "beme-bootstrap-v1" // placeholder; real bootstrap text injected by caller config
 }
 
 func hexTimeID() string {
@@ -495,9 +547,9 @@ func sortedNames(entries []os.DirEntry) []string {
 	return out
 }
 
-// measureRetrieval resolves the full (B4) pack once per case and scores it
-// against required_evidence_refs.
-func measureRetrieval(cs Case, refs RefsFn, resolve ResolverFn) RetrievalCase {
+// measureRetrieval scores the case's full (B4) pack against
+// required_evidence_refs.
+func measureRetrieval(cs Case, refs RefsFn, in resolver.EvalInputs, inErr error) RetrievalCase {
 	rc := RetrievalCase{CaseID: cs.ID, Required: len(cs.Gold.RequiredEvidenceRefs)}
 	if refs == nil {
 		rc.Outcome, rc.Reason = OutcomeNotRun, "no record reference lookup configured"
@@ -507,12 +559,12 @@ func measureRetrieval(cs Case, refs RefsFn, resolve ResolverFn) RetrievalCase {
 		rc.Outcome, rc.Reason = OutcomeNotRun, "case declares no required_evidence_refs"
 		return rc
 	}
-	profile := armProfile(cs)
-	pack, err := resolve(profile, cs.Scenario.Task, cs.Scenario.Workspace)
-	if err != nil {
-		rc.Outcome, rc.Reason = OutcomeNotRun, "resolution failed: "+err.Error()
+	if inErr != nil {
+		rc.Outcome, rc.Reason = OutcomeNotRun, "resolution failed: "+inErr.Error()
 		return rc
 	}
+	profile := in.Profile
+	pack := in.Pack
 	required := map[string]bool{}
 	for _, r := range cs.Gold.RequiredEvidenceRefs {
 		required[r] = true
@@ -567,18 +619,6 @@ func ratio(n, d int) float64 {
 		return 0
 	}
 	return math.Round(float64(n)/float64(d)*1000) / 1000
-}
-
-// unimplementedArm names arms whose pack transform does not exist. Grading
-// them would silently re-grade the full pack under an ablation label.
-func unimplementedArm(arm Arm) string {
-	switch arm {
-	case ArmAblNoScope:
-		return "ablation not implemented: no-scope needs a scope-disabled resolver run on synthetic data (§18.6)"
-	case ArmAblCanonOnly:
-		return "ablation not implemented: canonical-only needs source-role data that ContextPack items do not carry"
-	}
-	return ""
 }
 
 // ExitCode applies the runner's exit contract: 1 when any evaluation unit or
