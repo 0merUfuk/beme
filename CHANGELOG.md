@@ -5,6 +5,19 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 ## [Unreleased]
 
 ### Added
+- Verified enforcement state (ADR-030): `ledger/purge.key` and
+  `ledger/tombstones.json` carry a key ID and a generation and prove each
+  other. A missing, mismatched, rolled-back, or malformed file fails every
+  surface closed with an error naming both files; an interrupted first write
+  recovers; legacy bare-hex keys and schema-2 ledgers migrate in place.
+- Observation anti-resurrection: a purge tombstones the observation IDs it
+  erases, so copies restored from a data-dir backup stay hidden on list,
+  inspect, review, family counts, feedback dedup, and the rejection
+  tombstone index. `beme build` erases them; `beme doctor` reports how many
+  without naming them.
+- `internal/durable`: durability, erasure (zeroize → flush → unlink →
+  directory flush), and an exclusive inter-process maintenance lock that
+  serializes forget, purge, build, and learning writes.
 - Positive controls for every threat case; supplementary case S4 (restored
   backup across every read surface, fail-closed without the key).
 - `TestReadSurfacesUseLedgerFilter`, durable-write primitives,
@@ -75,6 +88,20 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
   inherited sensitivity (FR-054).
 
 ### Fixed
+- Purge durability: traces, observations, and canonical files are erased
+  through zeroize → flush → unlink → directory flush, and a retry completes
+  flushes an interrupted attempt could not; projections are compacted with
+  `synchronous=FULL` and flushed — all before the purge journal is removed.
+  A canonical file with other hard links is reported as a residual instead
+  of being zeroized.
+- Concurrent `forget`, `purge`, and `build` no longer lose each other's
+  ledger updates.
+- `beme doctor` keeps the most severe health state instead of letting a
+  later, milder finding downgrade `policy_blocked`.
+- `beme explain` maps failures to their classes: unavailable trace exits 4,
+  unusable ledger exits 3 (policy blocked), everything else exits 1.
+- `beme candidate --config DIR` no longer ignores the override and fall back
+  to the operator's real deployment.
 - Purge planning ignored observation-store read failures and could finish
   while matching observations remained; unreadable trace directories,
   canonical paths, and projections were likewise reported done. Each now

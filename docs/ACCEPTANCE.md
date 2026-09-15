@@ -173,59 +173,79 @@ test or command that exercises the real boundary), **implemented-unverified**,
 **out-of-scope**. Nothing moves to verified without recorded evidence, and no
 threshold is lowered here.
 
-Baseline for this revision: PR head `6c5b7d7` (CI run 35019956360 green).
-Every not-implemented safety item below was reproduced against that head.
+Baseline for this revision: every open item below was first reproduced against
+PR head `6c5b7d7`, then fixed and re-verified at the current head. Each
+"verified" row names the test or command that exercises the real boundary;
+every new assertion was additionally proved by reintroducing the defect in a
+scratch copy (mutation evidence in PR #1).
 
 ### Readiness (reported independently)
 
 | Category | State | Evidence / blocker |
 |---|---|---|
-| Engineering ready for merge | no | safety items S1–S5, evaluation items E1–E3, benchmark item B1, diagnostics item D1 open |
-| Release verification complete | no | installed-binary smoke tests and fresh-checkout test not run at the current head; release notes not prepared |
-| Personal effectiveness demonstrated | blocked | live-model evaluation and private-corpus measurement need owner approval |
+| Engineering ready for merge | pending final CI | S1–S7, E1–E4, B1–B2 and D1 are verified at the current head with mutation evidence; the row flips to yes when the three-platform CI run on the final head is green |
+| Release verification complete | no | P2 (installed-binary smoke on Linux/Windows), P3 (fresh-checkout test) and P4 (release notes) are in progress at the current head |
+| Personal effectiveness demonstrated | blocked | live-model evaluation (E6), private-corpus retrieval measurement (E5) and live-session pre-decision use (H3–H5) need owner approval; runnable procedures are prepared |
 
 ### Safety and data-integrity invariants
 
 | ID | Requirement / invariant | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
 |---|---|---|---|---|---|
-| S1 | Ledger fails closed on detectable partial, unreadable, or malformed state, without bricking an interrupted first-time initialization | fails closed on unreadable/corrupt JSON and missing key | missing `tombstones.json` with `purge.key` present was accepted as empty; `hmac-sha256:broken` accepted (both reproduced) | not-implemented | tests for each detectable state on every read, learning, and rebuild surface; recoverable interrupted init; documented undetectable cases |
-| S2 | Purge deletions reach the documented durability boundary before the journal is finalized, including on retry | ledger and journal writes durable | trace, observation, and canonical unlinks not directory-flushed; retries skip flushes for already-absent files | not-implemented | flush-failure injection per deletion class; retry completes outstanding flushes; platform limits stated from vendor docs |
-| S3 | Conflicting purge/forget/build operations cannot lose updates or resurrect content | none | 24 concurrent forgets kept 1 revocation (reproduced) | not-implemented | concurrency tests (incl. `-race`) for forget/purge/build/learning writes |
-| S4 | Observations in a completed purge stay hidden after a data-dir backup restore | observations deleted at purge | restored observations listed, inspected, reviewable (reproduced) | not-implemented | restored-backup test across candidate list/inspect/review, dedup, MCP feedback, CLI |
-| S5 | Every projection read surface applies the ledger and fails closed | resolve, export, explain, doctor, MCP status/expansion filtered; `TestRestoredBackupHiddenOnEveryReadSurface`, `TestRestoredBackupCannotResurrectOnAnySurface` | extend to learning surfaces (S4) and new ledger states (S1) | implemented-unverified | same tests extended to S1/S4 states |
-| S6 | Context-item expansion is pack-bound with one refusal | ADR-029; `TestExpandItemIsPackBound`, MCP e2e | re-check after S1/S3 changes | verified | tests pass at final head |
-| S7 | Physical purge keeps minimal non-content tombstones, confirmation, dry run, partial reports, resumability | ADR-027; purge test suites; mutation evidence in PR #1 | preserve through S1–S4 changes | verified | suites pass at final head |
+| S1 | Ledger fails closed on detectable partial, unreadable, or malformed state, without bricking an interrupted first-time initialization | schema-3 ledger and key prove each other (key ID + generation + committed flag, ADR-030); missing, mismatched, rolled-back, malformed-entry, and pending-journal-without-ledger states fail closed on all twelve surfaces; interrupted first write recovers; legacy formats migrate | none | verified | `TestLedgerIntegrityFailsClosedOnEverySurface` (8 states × 12 surfaces, positive controls), `TestInterruptedFirstLedgerWriteRecovers`, `TestCrashBeforeKeyCommitKeepsEnforcement`, `TestLegacyLedgerMigratesAndRollbackIsDetected`, `TestLedgerRemovedTogetherIsUndetectable` (documented boundary); mutations M1–M6, M15 |
+| S2 | Purge deletions reach the documented durability boundary before the journal is finalized, including on retry | every deletion is zeroized, flushed, unlinked and its directory flushed; projections compacted with `synchronous=FULL` and flushed; retries complete outstanding flushes; hard-linked canonical files reported as residuals | none | verified | `TestPurgeFlushesEveryDeletionBeforeFinalize`, `TestPurgeRetryCompletesOutstandingFlushes` (per deletion class), `TestPurgeRefusesToEraseHardLinkedCanonicalFile`, `TestEraseZeroizesBeforeUnlink`, `TestFlushFailuresAreReported`; platform limits from vendor docs in ADR-030; mutations M7–M9, M16–M17 |
+| S3 | Conflicting purge/forget/build operations cannot lose updates or resurrect content | exclusive inter-process maintenance lock (`ledger/.lock`) taken by forget, purge, build and learning writes | none | verified | `TestMaintenanceOperationsDoNotLoseUpdates` (16 concurrent forgets + purge + build, also under `-race`), `TestMaintenanceLockTimesOut`, `TestLockSerializesHolders`; mutation M12 |
+| S4 | Observations in a completed purge stay hidden after a data-dir backup restore | purge tombstones observation identities; list, list-all, inspect, review, family counts, feedback dedup and the rejection tombstone index hide them; build erases them; doctor counts them without IDs | none | verified | `TestRestoredObservationBackupStaysHidden`, `TestRestoredObservationHiddenOnCLI` (real binary, CLI + doctor + build), `TestLearningSurfacesRequireVerifiedLedger`; mutations M10, M11, M14 |
+| S5 | Every projection read surface applies the ledger and fails closed | resolve, export, explain, doctor, MCP status/expansion and the learning surfaces filtered; guard test fails the build on direct reads and on traversal errors | none | verified | `TestRestoredBackupHiddenOnEveryReadSurface`, `TestRestoredBackupCannotResurrectOnAnySurface`, `TestUnusableLedgerFailsClosedOnEveryReadSurface`, `TestLedgerIntegrityFailsClosedOnEverySurface`, `TestReadSurfacesUseLedgerFilter`, `TestReadSurfaceGuardFailsOnTraversalErrors` |
+| S6 | Context-item expansion is pack-bound with one refusal | ADR-029; `TestExpandItemIsPackBound`, MCP e2e | none | verified | suites pass at the current head |
+| S7 | Physical purge keeps minimal non-content tombstones, confirmation, dry run, partial reports, resumability | ADR-027/ADR-030; purge suites; threat cases 30 and S1–S4 | none | verified | suites pass at the current head |
 
 ### Evaluation
 
 | ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
 |---|---|---|---|---|---|
-| E1 | Arms B0–B4 follow the contract (B1 real bootstrap; B2 all eligible, no selection/precedence/truncation; B3 pre-precedence retrieval without provenance) | B2 reused the B4 pack; B3 flattened a post-precedence pack; placeholder bootstrap | implement arm construction from resolver primitives | not-implemented | fixtures where arms must differ; per-arm input assertions; mutation evidence |
-| E2 | Ablations no-scope, no-provenance, no-unknowns, canonical-only, learned-only | no-scope and canonical-only `not_run`; no-provenance leaves provenance manifest | implement all; no-scope synthetic-only guard | not-implemented | same |
-| E3 | Manifests identify real model settings, prompts, corpus revisions, arm construction | placeholder hashes and hardcoded settings | record real values | not-implemented | manifest assertions |
-| E4 | Blockers fail units; generated text reaches raw and blinded artifacts | `TestRunnerBlockerFailsUnitAndPreservesText` | keep through E1–E3 | verified | suite passes at final head |
-| E5 | Retrieval recall ≥90% / precision ≥80% on the locked corpus (core alpha) | mechanism proven on synthetic fixtures | owner-authorized local run on the private corpus; runnable command | blocked-approval | evidence bundle kept outside the repository |
-| E6 | Blind paired B4-vs-B0 and the trusted-beta behavioral gates | runner proven with deterministic mocks | paid live-model runs | blocked-approval | §6 thresholds unchanged |
+| E1 | Arms B0–B4 follow the contract (B1 real bootstrap; B2 all eligible, no selection/precedence/truncation; B3 pre-precedence retrieval without provenance) | every arm built from one session's `Session.EvalInputs` behind the same Stage-A gate; B1 uses the real managed bootstrap text (`internal/bootstrap`) | none | verified | `TestArmsReceiveExactlyTheirConstruction` (10 subtests), `TestSyntheticArmFixturePositiveControls`, `TestArmsCannotMutateEachOthersInput`, `TestBootstrapMatchesCanonicalAdapterText`; mutations M1–M2, M5, M7 of the evaluation set |
+| E2 | Ablations no-scope, no-provenance, no-unknowns, canonical-only, learned-only | all five implemented; no-scope refuses outside a synthetic, network-disabled deployment (`Runtime.NoScopeRefusal`); canonical-only is role-based and `not_run` on an unknown role | none | verified | `TestNoScopeRefusedOutsideSyntheticDeployments`, ablation assertions in `TestArmsReceiveExactlyTheirConstruction`; mutations M3–M4 of the evaluation set |
+| E3 | Manifests identify real model settings, prompts, corpus revisions, arm construction | observed provider settings, prompt and fixture hashes, corpus revisions and arm construction recorded; build-info versions reported honestly as `unknown` in test binaries | `BEME_EVAL_GIT_COMMIT` must be set for owner runs in a worktree (Go stamps the main checkout HEAD) | verified | `TestManifestsRecordObservedValues`; mutation M6 of the evaluation set |
+| E4 | Blockers fail units; generated text reaches raw and blinded artifacts | `TestRunnerBlockerFailsUnitAndPreservesText` | none | verified | suite passes at the current head |
+| E5 | Retrieval recall ≥90% / precision ≥80% on the locked corpus (core alpha) | mechanism proven on synthetic fixtures; `cmd/beme-eval` runs it without a model | owner-authorized local run on the private corpus | blocked-approval | procedure in [INTEGRATIONS.md](INTEGRATIONS.md) "Owner-run procedure for the evaluation gates"; evidence bundle kept outside the repository |
+| E6 | Blind paired B4-vs-B0 and the trusted-beta behavioral gates | runner proven with deterministic mocks; command provider ready for an external harness CLI | paid live-model runs | blocked-approval | same procedure; §6 thresholds unchanged |
 
 ### Benchmark, integration, platform, and documentation
 
 | ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
 |---|---|---|---|---|---|
-| B1 | Benchmark seed identifiers cannot escape owned dirs or inject metadata; explicit seed; accurate failure reporting | work-dir guard and marker ownership | seed ID traversal/injection; repo-relative default seed; cleanup error swallowed | not-implemented | traversal, separator, drive, control-char, collision, symlink tests |
-| B2 | NFR-008 measurement with environment conditions | `evals/benchmarks/seed-baseline.json` | re-measure after B1 | verified | report regenerated at final head |
-| D1 | Diagnostics: doctor never downgrades `policy_blocked`; error labels and exit codes match failure classes; guard tests fail on traversal errors | doctor downgraded `policy_blocked` to `degraded` (reproduced); explain labels all errors "policy blocked"; guard test swallows walk errors | fix and test | not-implemented | CLI-level tests |
+| B1 | Benchmark seed identifiers cannot escape owned dirs or inject metadata; explicit seed; accurate failure reporting | whole seed validated before anything is written (ID allowlist, Windows device names, enum and control-character checks, round-trip through the real parser, case-insensitive collisions); `--seed` required; cleanup and output-write failures surface in the exit code | Windows-specific ID cases verified on macOS only; three-platform CI covers the rest | verified | `internal/benchmark/seed_safety_test.go`, `cmd/beme-bench/{seed_flag,cleanup}_test.go`; 11 mutations caught |
+| B2 | NFR-008 measurement with environment conditions | `evals/benchmarks/seed-baseline.json` regenerated at the current head (darwin/arm64, go1.25.6, 14 cpus): warm resolve p95 0.30 / 5.65 / 27.20 ms at 1×, 20×, 200× against the 1 s target | re-measure per release commit | verified | `make bench` output recorded in the baseline file |
+| D1 | Diagnostics: doctor never downgrades `policy_blocked`; error labels and exit codes match failure classes; guard tests fail on traversal errors | severity-preserving `raise()`; explain maps trace→4, unusable ledger→3, other→1; guard propagates walk/read errors; `beme candidate --config` no longer falls back to the real deployment | none | verified | `TestDoctorKeepsMostSevereStatus`, `TestExplainErrorClasses`, `TestReadSurfaceGuardFailsOnTraversalErrors`, `TestRestoredObservationHiddenOnCLI`; mutations M13–M14 |
 | H1 | Harness configuration lifecycle (Claude Code, Codex) | opt-in installed-CLI tests in isolated homes (2026-09-15) | re-run at final head | verified | `BEME_HARNESS_INTEGRATION=1` tests pass |
 | H2 | MCP protocol connection | `TestMCPClientEndToEnd`; Claude Code `mcp get` Connected | re-run | verified | e2e passes |
-| H3 | A real agent session retrieves context | not run | live session with synthetic data | blocked-approval | session transcript shows `beme.resolve_context` call |
-| H4 | Retrieval happens before a material decision | not run | same session | blocked-approval | tool call precedes the decision in the transcript |
-| H5 | Relevant context used; no invented preferences | not run | same session with negative-control prompt | blocked-approval | graded transcript |
+| H3 | A real agent session retrieves context | not run | live session with synthetic data | blocked-approval | runnable procedure in [INTEGRATIONS.md](INTEGRATIONS.md) (H3–H5); session transcript shows `beme.resolve_context` |
+| H4 | Retrieval happens before a material decision | not run | same session | blocked-approval | same procedure; tool call precedes the decision in the transcript |
+| H5 | Relevant context used; no invented preferences | not run | same session with negative-control prompt | blocked-approval | same procedure; graded transcript, counts reported here |
 | H6 | `assured` surfaces with 100% pre-decision use | no surface claimed (FR-045) | none in v1 | out-of-scope | — |
-| P1 | Full test suite on macOS, Linux, Windows | CI 35019956360 | re-run at final head | verified | final-head CI |
-| P2 | Installed-binary smoke tests per OS at the release candidate | alpha.1 binaries verified; current head not | CI smoke job or recorded runs | not-implemented | `go install` + CLI smoke on each OS |
-| P3 | Fresh-checkout documentation test at the current head | passed at `8896df9` (stale) | re-run with public docs only | not-implemented | recorded run with zero improvisation |
-| P4 | Release notes and release-verification procedure | CHANGELOG Unreleased | draft notes + procedure (no publish) | not-implemented | reviewed draft |
-| P5 | No private data in public artifacts | scan clean at `6c5b7d7` | re-scan at final head | verified | scan output |
+| P1 | Full test suite on macOS, Linux, Windows | CI 35019956360 at `6c5b7d7`; locally at the current head: build, vet (darwin/linux/windows), full suite, `-race` on app/durable/learning/storage/evalrunner, threat corpus 34/34, docs 15/15 | three-platform CI on the final head | implemented-unverified | final-head CI run linked in PR #1 |
+| P2 | Installed-binary smoke tests per OS at the release candidate | `installed-binary-smoke` CI job added: `go install` then doctor/build/status/preview/candidate/forget/purge --dry-run plus the bench and threat-corpus binaries, run from outside the repository in an isolated deployment, on macOS, Linux and Windows | job must run green on the final head | implemented-unverified | CI job result on the final head |
+| P3 | Fresh-checkout documentation test at the current head | run in progress at the current head (clone, isolated HOME, public docs only) | record improvisations and fix the docs they expose | implemented-unverified | recorded run with zero improvisation |
+| P4 | Release notes and release-verification procedure | [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md): preconditions, verification run, rollback guidance, and draft notes (unpublished) | owner review; publishing stays an owner action | verified | document reviewed in PR #1; nothing tagged or published |
+| P5 | No private data in public artifacts | `scripts/scan_private_data.py` clean at the current head with the local extra-terms list | re-scan on the final head in CI | verified | scan output ("private-data scan: clean") |
 | P6 | Non-alpha release approval | — | owner decision | blocked-approval | — |
+
+### Consolidated approval request (owner decisions)
+
+Everything below is blocked only on an explicit owner decision; nothing here
+has been attempted. Each row states exactly what would run and what it costs.
+
+| # | Decision | What runs | Cost / risk | Unblocks |
+|---|---|---|---|---|
+| 1 | Merge PR #1 into `main` | the reviewed branch only; no tag, no publish | none beyond the merge itself | the release-verification track (P1–P4 on a `main` commit) |
+| 2 | Live harness sessions on a synthetic deployment | the H3–H5 procedure in [INTEGRATIONS.md](INTEGRATIONS.md): 3 task sessions + 1 negative control in an isolated harness config home | spends your model usage; no private data is read | H3, H4, H5 and any future `assured` claim |
+| 3 | Private-corpus retrieval measurement | `make validate-private` + `beme-eval --provider mock` against `BEME_PRIVATE_EVAL_DIR`, local only | no model spend; private data never leaves the machine and never enters the repo | E5 |
+| 4 | Blind paired B4-vs-B0 behavioral run | `beme-eval --arms B0,B4 --provider command` against your harness CLI | paid model runs; volume is yours to set | E6 and the trusted-beta gates |
+| 5 | Publish a release (tag + notes) | the procedure in [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md) | public artifact; irreversible tag | P6 |
+
+Not requested, and not needed for any acceptance row: running a physical
+purge on real personal data. Destructive behavior is demonstrated on
+disposable synthetic fixtures only (S2, S4, S7, threat cases 30 and S1–S4).
 
 ## 8. Evidence bundles
 

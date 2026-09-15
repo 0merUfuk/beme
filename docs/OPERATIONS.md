@@ -14,20 +14,50 @@ rebuilding derived data cannot resurrect forgotten or purged records:
 
 | File | Contents | Handling |
 |---|---|---|
-| `tombstones.json` | logical-forget keys; keyed purge fingerprints (no content) | back up with the canonical root |
-| `purge.key` | HMAC key for purge fingerprints (0600) | back up with the ledger; never share or commit (git-ignored) |
+| `tombstones.json` | logical-forget keys; keyed purge fingerprints of record and observation identities (no content) | back up with the canonical root |
+| `purge.key` | HMAC key, its key ID, and the generation of the last committed ledger write (0600) | back up with the ledger, from the same moment; never share or commit (git-ignored) |
 | `pending/*.json` | journal of an interrupted purge (identifiers only) | transient; removed when the purge completes (git-ignored) |
+| `.lock` | exclusive maintenance lock (forget, purge, build, learning writes) | transient (git-ignored) |
 
-Missing `purge.key` and `pending/` rules are added to an existing
+Missing `purge.key`, `pending/`, and `.lock` rules are added to an existing
 `ledger/.gitignore` without touching other rules.
 
-Durability (ADR-027): the ledger, key, and journal are replaced by writing a
-temp file, flushing it, renaming it, and flushing the parent directory on
-macOS and Linux; on Windows the rename uses `MoveFileExW` with
-`MOVEFILE_WRITE_THROUGH`. A purge erases nothing until both the ledger and the
-journal have been flushed, and any flush error aborts it. Storage that
-acknowledges flushes without performing them (volatile drive caches, some
-network or virtualized filesystems) is outside this guarantee.
+**Back up and restore both ledger files together** (ADR-030). They prove each
+other: the key records the generation of the last committed ledger write, and
+the ledger records which key it belongs to. Restoring one without the other,
+restoring an older ledger over a newer key, or pairing a ledger with a
+different key blocks every surface with an error naming both files — including
+`beme build`, so a deployment stays unusable until they match. Removing both
+files and every pending journal *together* is indistinguishable from a fresh
+deployment: Be Me cannot detect that locally, which is why the canonical root
+belongs in your backup set. An interrupted first purge (key created, ledger
+not yet written) is recognized and recovers on its own.
+
+Key custody: the key is per-deployment and only meaningful with its ledger.
+Keep both out of shared checkouts (they are git-ignored). Losing the key while
+purges exist blocks resolution, rebuild, and purge until it is restored, by
+design — a purge that cannot be recognized cannot be enforced.
+
+Durability (ADR-027 §5, ADR-030 §5): files are replaced by writing a temp
+file, flushing it, renaming it, and flushing the parent directory on macOS and
+Linux; on Windows the rename uses `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`,
+which is the documented equivalent (Windows exposes no user-mode directory
+flush, so an unlinked name can reappear after power loss — the file's content
+is zeroized and flushed before the unlink, so what can reappear is an empty
+file). A purge erases nothing until the ledger and the journal have been
+flushed; every deletion is zeroized, flushed, and its directory flushed, and
+the projection stores are compacted with `synchronous=FULL` and flushed,
+before the journal is removed. A retried purge completes flushes an
+interrupted attempt could not. Any flush error aborts the purge, which stays
+resumable. Storage that acknowledges flushes without performing them (volatile
+drive caches, some network or virtualized filesystems) is outside this
+guarantee, as are copies outside Be Me (backups, snapshots, filesystem
+history), which the purge report lists as residuals.
+
+Concurrency: `forget`, `purge`, `build`, and learning writes take the
+exclusive `.lock`; a second one waits up to two minutes and then reports
+"another Be Me maintenance operation is running". Read surfaces are never
+blocked.
 
 Deployment layout (`<config>`, `<data>`, and `<cache>` are the directories in
 the table above; each already ends in `beme`):
@@ -37,7 +67,7 @@ the table above; each already ends in `beme`):
 ├── config.yaml          # canonical_root, data_dir, cache_dir (optional)
 ├── sources/             # source descriptors (registration = the trust act)
 ├── policies/            # workspace identity registry
-└── ledger/              # durable tombstone ledger, purge key, pending purges
+└── ledger/              # durable tombstone ledger, purge key, pending purges, lock
 <data>/projections/personal/store.db     # separate files per profile
 <data>/projections/work-safe/store.db
 <data>/observations/                     # quarantined feedback

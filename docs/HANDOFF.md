@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 13 — 2026-09-15
+**Revision:** 14 — 2026-09-16
 **Position:** `v0.1.0-alpha.1` published. Continuation work is on branch
 `feat/eval-runner-and-privacy-corpus`, PR
 [#1](https://github.com/0merUfuk/beme/pull/1). Every safely implementable
@@ -30,6 +30,29 @@ revised); the privacy corpus is one shared registry
 (`privacycorpus.NewSuite`) executed by both `TestPrivacyCorpusDeterministic`
 and the runner `cmd/beme-threat-corpus`, with supplementary cases S1–S3;
 docs checks D10–D12 and a CI runner step guard these.
+
+**Rev 14 — end-to-end completion pass (owner mandate; PR #1 still not to be
+merged, nothing tagged or published):** every open finding was first
+reproduced at `6c5b7d7`, then fixed and proved by reintroducing the defect
+(17 mutations, all caught). Enforcement state is integrity-verified —
+`ledger/tombstones.json` and `ledger/purge.key` carry a key ID and a
+generation and prove each other, an interrupted first write recovers, legacy
+formats migrate, and removing both files together is documented as locally
+undetectable (ADR-030). Purged observations survive no backup restore: they
+are tombstoned by identity and hidden on every learning surface, erased by
+build, counted by doctor. Every purge deletion is zeroized, flushed and
+directory-flushed before the journal is finalized, retries complete
+outstanding flushes, and hard-linked canonical files are reported instead of
+zeroized. Forget, purge, build and learning writes are serialized by a
+maintenance lock (`-race` clean). Evaluation arms B0–B4 are built from real
+primitives with all five ablations implemented and observed-value manifests
+(`cmd/beme-eval`). The benchmark validates its seed before writing and
+requires `--seed`. Diagnostics keep the most severe doctor state, map error
+classes to exit codes, and `beme candidate --config` no longer falls back to
+the operator's real deployment. Added: `installed-binary-smoke` CI job on
+three OSes and [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md)
+(procedure, rollback, draft notes — unpublished). Owner-gated work and the
+consolidated approval request are in [ACCEPTANCE.md](ACCEPTANCE.md) §7a.
 
 **Rev 13 — release-blocking correctness and privacy gaps (owner review; PR
 #1 still not to be merged):** every issue was first reproduced against
@@ -287,7 +310,7 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 | Ledger minimality (`TestPurgeLedgerIsKeyedAndContentFree`, `TestMissingPurgeKeyFailsClosed`) | no IDs, content digests, or timestamps; foreign key matches nothing; missing key fails closed |
 | Threat corpus runner (`go run ./cmd/beme-threat-corpus --repo .`, CI step on all three OSes) | every case passed; exit 3 without a checkout (case 19 `not_run`) |
 | Purge inspection failures (`TestPurgePlanningFailsOnCorruptObservation`, `TestPurgeResumeWithObservationStorageFailures`, `TestPurgeFailsOnUnreadableTracesAndCanonicalPaths`) | planning and resume abort over uninspectable storage; no step reported done; purge completes once storage is readable |
-| Durability boundary (`TestPurgeErasesNothingBeforeDurabilityBoundary`, `TestDurableWritesReportDirectoryFlushFailure`) | injected ledger or journal flush failure → nothing erased; completes after flushes succeed |
+| Durability boundary (`TestPurgeErasesNothingBeforeDurabilityBoundary`, `TestFlushFailuresAreReported`) | injected ledger or journal flush failure → nothing erased; completes after flushes succeed |
 | Read surfaces after a restored backup (`TestRestoredBackupHiddenOnEveryReadSurface`, `TestRestoredBackupCannotResurrectOnAnySurface`, `TestUnusableLedgerFailsClosedOnEveryReadSurface`) | resolve, export, explain, doctor, MCP status/resolve/expansion hide purged and revoked records; missing key or corrupt ledger fails each closed |
 | Pack-bound expansion (`TestExpandItemIsPackBound`) | eligible-but-unselected, unknown, replayed, expired, rebuilt, revoked, nonexistent → one refusal |
 | Evaluation runner (`TestRunnerBlockerFailsUnitAndPreservesText`, `TestSummaryExitCodeContract`) | blocker fails unit and exit; text in results, raw and blinded artifacts |

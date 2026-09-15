@@ -79,6 +79,62 @@ real harness configs untouched):
 BEME_HARNESS_INTEGRATION=1 go test ./cmd/beme -run HarnessIntegration -v
 ```
 
+### Owner-run procedure for the unverified levels (H3–H5)
+
+Pre-decision use cannot be measured without live model sessions, which spend
+the owner's model usage. The procedure below is prepared and runnable; it has
+NOT been run. It uses a synthetic deployment only — no private corpus, no
+canonical personal knowledge.
+
+```sh
+# 1. Isolated deployment with synthetic sources (nothing of yours is read)
+export BEME_HOME="$(mktemp -d)"
+export BEME_CONFIG_HOME="$BEME_HOME/cfg" BEME_DATA_HOME="$BEME_HOME/data" BEME_CACHE_HOME="$BEME_HOME/cache"
+mkdir -p "$BEME_CONFIG_HOME/sources"
+# write one synthetic source descriptor (shape: docs/OPERATIONS.md) pointing at
+# entry files you author for this run — never at personal knowledge
+go install ./cmd/beme && beme build --profile personal
+
+# 2. Register the server in an ISOLATED harness config home
+export CLAUDE_CONFIG_DIR="$BEME_HOME/claude"          # Codex: CODEX_HOME
+claude mcp add beme -- "$(go env GOPATH)/bin/beme" serve   --projection personal --capability cap_predecision
+claude mcp get beme                                    # expect: Connected
+
+# 3. One live session per task, with the managed bootstrap block installed
+beme adapter install claude-code
+#    run three tasks that each require a material decision the synthetic
+#    corpus has an opinion about, plus one negative-control task the corpus
+#    says nothing about
+
+# 4. Evidence to keep (outside the repository)
+#    - the session transcript showing beme.resolve_context calls
+#    - for each material decision: whether the call precedes it (H4)
+#    - whether the decision uses the retrieved item, and whether the
+#      negative control produced an invented preference (H5)
+```
+
+Acceptance: H3 needs one transcript with a real `beme.resolve_context` call;
+H4 needs the call to precede each material decision; H5 needs the retrieved
+item used and zero invented preferences on the negative control. Report the
+counts, not the transcript text, in `docs/ACCEPTANCE.md`.
+
+### Owner-run procedure for the evaluation gates (E5, E6)
+
+```sh
+# Retrieval measurement on the private corpus (ADR-023; owner-gated, local)
+export BEME_PRIVATE_EVAL_DIR=/path/to/private/corpus     # never in the repo
+export BEME_EVAL_GIT_COMMIT="$(git rev-parse HEAD)"      # worktrees stamp the main checkout
+make validate-private                                     # schema check first
+go run ./cmd/beme-eval --corpus "$BEME_PRIVATE_EVAL_DIR" --arms B4   --out "$BEME_HOME/evidence" --provider mock             # retrieval metrics need no model
+
+# Blind paired behavioral run (E6) — SPENDS MODEL USAGE, owner decision
+go run ./cmd/beme-eval --corpus "$BEME_PRIVATE_EVAL_DIR" --arms B0,B4   --provider command --provider-cmd "<your harness CLI>"   --out "$BEME_HOME/evidence"
+```
+
+Evidence bundles stay outside the repository (ADR-023). Only `blinded/` is
+grader-visible; manifests record the observed model settings, prompt hashes
+and corpus revisions.
+
 ## Rifja (ADR-019)
 
 Episodic evidence enters through Rifja's existing bounded surfaces (MCP

@@ -564,7 +564,7 @@ threat cases 18, 30, S1–S4 in `TestPrivacyCorpusDeterministic` and
 `TestPurgeResumeWithObservationStorageFailures`,
 `TestPurgeFailsOnUnreadableTracesAndCanonicalPaths`,
 `TestPurgeErasesNothingBeforeDurabilityBoundary`,
-`TestDurableWritesReportDirectoryFlushFailure`,
+`TestFlushFailuresAreReported`,
 `TestRestoredBackupHiddenOnEveryReadSurface`,
 `TestUnusableLedgerFailsClosedOnEveryReadSurface`,
 `TestRestoredBackupCannotResurrectOnAnySurface`,
@@ -595,15 +595,25 @@ ownership boundary, §5).
 - A restored pre-purge store still holds bytes until the next `beme build`;
   every read surface filters them, packs carry a generic "out of date"
   notice, and `beme doctor` reports that a rebuild is required.
-- Observations restored from a backup of the data dir cannot be recognized:
-  the ledger holds no content to match them against. The operator reviews
-  them with `beme candidate list` after such a restore.
+- Observations restored from a backup of the data dir are recognized by
+  identity since ADR-030; observations that merely paraphrase purged content
+  under a new ID are not, because the ledger holds no content to match them
+  against.
 - Refusal paths are not timing-equalized.
 **Rollback:** delete `internal/app/purge.go`/`ledger.go` and the ledger merge
 in `Session.Resolve`; existing ledgers become inert files.
 **Reopen:** a resurrection path the identity fingerprint does not cover, a
 key-custody requirement (e.g. OS keychain), or a requirement for Be
 Me-managed Git history rewriting.
+**Amended by ADR-030** (2026-09-16): §2's "unreadable key fails closed" is
+extended to full state verification (key ID, generation, entry shape,
+missing-file asymmetry); §4's `secure_delete`/`VACUUM` compaction gains
+`synchronous=FULL` plus explicit file, WAL, and directory flushes; §5's
+durability boundary is extended from the ledger and journal to every
+deletion; §7's read-surface table gains the learning surfaces; §8's ignore
+rules gain `.lock`. `beme doctor` is the documented exception to the exit-code
+table: it is a diagnostic that reports the most severe state it finds in its
+output and exits 0, so a monitoring script reads `status`, not the exit code.
 
 ## ADR-028 — Platform directories per OS; Windows runtime verification in CI
 
@@ -671,6 +681,122 @@ timing-equalized. Clients that sent only `record_id` must add `pack_id`
 (pre-release contract).
 **Rollback:** restore record-only lookup in `mcp.go` (reintroduces the leak).
 **Reopen:** a need for expansion across sessions or restarts.
+
+## ADR-030 — Verified enforcement state: ledger generations, observation tombstones, durable erasure, maintenance lock
+
+**Date:** 2026-09-16
+**Status:** accepted
+**Context:** owner review of `6c5b7d7` found four gaps in ADR-027's
+mechanism, each reproduced against that head before it was fixed:
+(a) a missing `ledger/tombstones.json` with `ledger/purge.key` still present
+loaded as an empty ledger, so deleting one file silently disabled every
+purge tombstone, and a `hmac-sha256:` prefix with any tail was accepted as a
+fingerprint; (b) only the ledger, key, and journal writes were flushed —
+traces, observations, and canonical files were unlinked without flushing the
+directory entry, and a retried purge skipped files an earlier attempt had
+already unlinked, so an outstanding flush was never completed;
+(c) observations deleted by a purge returned in full (list, inspect, review,
+dedup) after a data-dir backup restore, because nothing recorded that they
+had been purged; (d) concurrent `forget`, `purge`, and `build` runs each
+loaded, modified, and saved the ledger, so 24 concurrent forgets kept one
+revocation.
+**Decision:**
+1. **Enforcement state is two files that prove each other.** `purge.key`
+   (schema 3) holds the key, a `key_id` derived from it, the `generation` of
+   the last committed ledger write, and `committed`; `tombstones.json`
+   (schema 3) holds the same `key_id` and its own `generation`. Loading
+   fails closed when: the ledger is missing while the key is committed (or
+   is a legacy key, which only ever existed alongside a ledger); the key is
+   missing or malformed while the ledger needs it; `key_id` differs; the
+   ledger's generation is below the generation the key records (partial
+   rollback or restore); a pending journal exists without a ledger; or an
+   entry is not exactly `hmac-sha256:` plus 64 lowercase hex characters.
+2. **Write protocol.** Create the key uncommitted → write the ledger at the
+   next generation with the key ID → rewrite the key as committed at that
+   generation. A crash after step 1 (key uncommitted, no ledger) is
+   recognizable, loads as clean, and reuses the key, so an interrupted first
+   initialization does not brick the deployment. A crash after step 2 leaves
+   a ledger newer than the key, which loads and enforces normally.
+3. **Legacy compatibility.** A bare-hex key with a schema-2 ledger keeps
+   enforcing and migrates on the next ledger write with the same key bytes,
+   so existing fingerprints keep matching. After migration, restoring the
+   pre-migration ledger over the committed key fails closed.
+4. **Observation tombstones.** A purge records `hmac-sha256` fingerprints of
+   the observation IDs it erases. Deployment surfaces open the store through
+   `Runtime.OpenLearning`, which fails closed on an unverifiable ledger and
+   hides purged IDs from list, list-all, inspect, review, family counts,
+   feedback dedup, and the rejection-tombstone index — so a restored backup
+   reveals neither the content nor that a rejection once existed. `beme
+   build` erases restored copies and `beme doctor` reports their count
+   without IDs. Zero-length observation files (what a crash between zeroize
+   and unlink can leave) are treated as erased remnants.
+5. **Durable erasure.** Every file a purge removes is zeroized, flushed,
+   unlinked, and its parent directory flushed (`internal/durable`), and an
+   already-absent file still flushes its directory, so a retry completes the
+   flush an earlier attempt could not. Projections are compacted with
+   `synchronous=FULL` and their file, WAL, and directory flushed. All of
+   this precedes journal removal, so a finalized purge means every deletion
+   crossed the boundary. A canonical file with other hard links is reported
+   as a residual instead of being zeroized, because its content is shared
+   with names the purge was not asked to remove.
+6. **Maintenance lock.** `forget`, `purge`, `build`, and learning writes take
+   an exclusive inter-process lock at `<canonical_root>/ledger/.lock`
+   (`flock` / `LockFileEx`, two-minute bounded wait, git-ignored), so
+   concurrent operations cannot lose each other's ledger updates and a build
+   cannot re-ingest what a purge is erasing.
+**Evidence:** `TestLedgerIntegrityFailsClosedOnEverySurface` (eight partial
+states × twelve surfaces, each with a positive control),
+`TestInterruptedFirstLedgerWriteRecovers`,
+`TestCrashBeforeKeyCommitKeepsEnforcement`,
+`TestLedgerRemovedTogetherIsUndetectable`,
+`TestLegacyLedgerMigratesAndRollbackIsDetected`,
+`TestLearningSurfacesRequireVerifiedLedger`,
+`TestRestoredObservationBackupStaysHidden`,
+`TestRestoredObservationHiddenOnCLI` (real binary),
+`TestPurgeFlushesEveryDeletionBeforeFinalize`,
+`TestPurgeRetryCompletesOutstandingFlushes` (per deletion class),
+`TestPurgeRefusesToEraseHardLinkedCanonicalFile`,
+`TestMaintenanceOperationsDoNotLoseUpdates` (also under `-race`),
+`TestMaintenanceLockTimesOut`, `TestEraseZeroizesBeforeUnlink`,
+`TestEraseRefusesSymlinksAndHardLinks`, `TestFlushFailuresAreReported`,
+`TestLockSerializesHolders`, threat cases S3 and S4. Every assertion was
+proved by reintroducing the defect in a scratch copy (mutation log in PR #1).
+**Alternatives rejected:** a single file holding both key and ledger (a
+leaked or committed copy would carry its own key); a monotonic counter in a
+third file (the same asymmetry problem with one more file to lose);
+detecting rollback by timestamps (restores preserve or reset them);
+content-derived observation fingerprints (an offline dictionary oracle, the
+defect ADR-027 revision 2 removed); an advisory in-process mutex instead of
+a file lock (does not serialize separate CLI and MCP processes); refusing to
+start when the lock is held (a long build would make the MCP feedback tool
+fail rather than wait).
+**Consequences:**
+- Removing the ledger, the key, and every pending journal *together* is
+  indistinguishable from a fresh deployment and stays undetectable locally
+  (pinned by `TestLedgerRemovedTogetherIsUndetectable`). Detecting it needs
+  state Be Me does not own — for example a backup or an external attestation.
+- Restoring one file without the other now blocks every surface until both
+  come from the same backup; the error names both files.
+- The key file is rewritten on every ledger write (same key bytes, new
+  generation), so key backups older than the current generation fail closed
+  until the ledger is restored with them.
+- A held lock makes a concurrent maintenance command wait and then fail with
+  a clear "another Be Me maintenance operation is running"; reads are never
+  blocked.
+- `beme build` and learning writes now require a writable canonical root
+  (the lock and the ledger directory live there).
+- Observation tombstones reveal the number of purged observations, like
+  record fingerprints do.
+- Erasure is file-level: copy-on-write filesystems, SSD wear levelling,
+  snapshots, and backups outside Be Me keep their own copies (reported as
+  residuals).
+**Rollback:** revert to ADR-027 behavior by loading the ledger without the
+key-state checks and removing the lock; existing schema-3 files still load
+(the extra fields are ignored by a schema-2 reader only after the version
+field is lowered, so a rollback needs a ledger rewrite).
+**Reopen:** a durability boundary a platform documents differently, a
+requirement to detect wholesale removal of enforcement state, or key custody
+moving to an OS keychain.
 
 ## Open decisions (tracked, none blocking contracts work)
 
