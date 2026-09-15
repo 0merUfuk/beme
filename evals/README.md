@@ -21,8 +21,11 @@ The runners live in Go packages so they share the production runtime path:
   recall/precision, explicit `passed`/`failed`/`not_run`. Proven end to end
   with deterministic mock providers on public synthetic fixtures
   (`TestRunnerFullPipelineB0ThroughB4`, `TestRunnerRetrievalMetrics`).
-- `internal/privacycorpus` — every §19 threat case as a deterministic suite
-  (`TestPrivacyCorpusDeterministic`).
+- `internal/privacycorpus` + `cmd/beme-threat-corpus` — the shared threat-case
+  registry (`NewSuite`): every §19 case plus supplementary purge-reliability
+  cases S1–S3, executed by `TestPrivacyCorpusDeterministic` and by the runner
+  (`go run ./cmd/beme-threat-corpus --repo .`; exit 0 all passed, 1 failed,
+  3 not_run).
 - `internal/benchmark` + `cmd/beme-bench` — the reproducible performance
   harness.
 

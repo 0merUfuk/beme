@@ -250,15 +250,25 @@ func main() {
 			os.Exit(4)
 		case err != nil:
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			if rt.PendingPurges() > 0 {
+				fmt.Fprintln(os.Stderr, "the purge is resumable: re-run the same command to finish the remaining cleanup")
+			}
 			os.Exit(1)
 		}
 		if jsonOut {
 			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "report": rep})
 			return
 		}
+		if rep.AlreadyPurged {
+			fmt.Printf("already purged: %s (nothing left to erase)\n", rep.Key)
+			return
+		}
 		mode := "purged"
 		if rep.DryRun {
 			mode = "dry run — would purge"
+		}
+		if rep.Resumed {
+			mode += " (resumed an interrupted purge)"
 		}
 		fmt.Printf("%s %d record(s) for %s\n", mode, rep.Records, rep.Key)
 		for _, st := range rep.Steps {
@@ -350,6 +360,10 @@ func doctor(configDir string, jsonOut bool) {
 			if _, err := os.Stat(rt.ProjectionPath(contracts.Profile(p))); err != nil {
 				findings = append(findings, fmt.Sprintf("projection %s not built yet (run: beme build --profile %s)", p, p))
 			}
+		}
+		if n := rt.PendingPurges(); n > 0 {
+			status = "degraded"
+			findings = append(findings, fmt.Sprintf("%d interrupted physical purge(s) pending: re-run the same `beme purge --confirm <key> <key>` command to finish the cleanup", n))
 		}
 	}
 	if jsonOut {

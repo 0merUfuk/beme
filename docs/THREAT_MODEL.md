@@ -77,6 +77,17 @@ intentionally irreversible, non-content anti-resurrection tombstone only, no
 reactivation path). Restore/rollback never reactivates revoked/purged data
 without deliberate reauthorization (FR-055, P7.5).
 
+Implementation (ADR-027): the durable ledger lives under the canonical root,
+outside derived data. Purge tombstones are keyed HMAC fingerprints of record
+identity only, so a leaked ledger cannot confirm guessed private content or
+IDs without the separately stored key. A purge that fails part-way leaves a
+content-free journal; re-running it completes every remaining deletion, and
+completed purges are idempotent. Provenance is removed through the record's
+actual refs, never an ID convention. Misuse and failure cases covered: an
+interrupted purge stranding derived copies, resurrection through
+multi-provenance records, and offline dictionary tests against the ledger
+(corpus cases S1–S3).
+
 ## 7. Non-goals (explicitly not claimed)
 
 - No protection against a compromised OS or a deliberate same-user process

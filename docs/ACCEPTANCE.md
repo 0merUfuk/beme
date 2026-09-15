@@ -111,9 +111,10 @@ bundle. The privacy item is deterministic and checked on its own evidence.
 - [ ] Avoidable-question rate improves over baseline.
 - [ ] Non-ambiguous cross-run decision stability: ≥85%.
 - [ ] Pre-decision context-use rate: 100% on every `assured` surface.
-- [x] All privacy adversarial cases pass — every §19 threat case executes
-      and passes in `TestPrivacyCorpusDeterministic`, none `not_run`
-      (backup restore and physical-purge resurrection included, ADR-027).
+- [x] All privacy adversarial cases pass — every §19 threat case and the
+      supplementary purge-reliability cases S1–S3 execute and pass from the
+      shared registry, none `not_run` (`TestPrivacyCorpusDeterministic`;
+      runner `cmd/beme-threat-corpus`, `TestThreatCorpusRunner`; ADR-027).
 
 ## 7. Gate: public release candidate (WP11) — alpha published; gate items partially evidenced
 

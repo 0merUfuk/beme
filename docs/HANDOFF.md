@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 11 — 2026-09-15
+**Revision:** 12 — 2026-09-15
 **Position:** `v0.1.0-alpha.1` published. Continuation work is on branch
 `feat/eval-runner-and-privacy-corpus`, PR
 [#1](https://github.com/0merUfuk/beme/pull/1). Every safely implementable
@@ -19,6 +19,17 @@ behavioral evaluation (paid API runs); private-corpus retrieval measurement
 (owner-run, ADR-023); pre-decision-use measurement in live harness sessions
 before any `assured` label; running a physical purge on real data (RED);
 non-alpha release approval.
+
+**Rev 12 — purge reliability (owner review blockers, PR #1 not to be
+merged until the owner says so):** projection purge now removes provenance
+through the record's actual refs (never a convention-derived ID); purge is
+idempotent and resumable after a failure at any stage (content-free journal,
+failure injection at every stage); the ledger keeps only keyed HMAC
+fingerprints of record identity — no content or text digests (ADR-027
+revised); the privacy corpus is one shared registry
+(`privacycorpus.NewSuite`) executed by both `TestPrivacyCorpusDeterministic`
+and the runner `cmd/beme-threat-corpus`, with supplementary cases S1–S3;
+docs checks D10–D12 and a CI runner step guard these.
 
 ## 1. Status
 
@@ -128,9 +139,15 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 - **Privacy threat corpus** (`internal/privacycorpus`): all 30 §19 cases run
   on isolated synthetic deployments, all passing (`TestPrivacyCorpusDeterministic`).
 - **Forget + physical purge** (`internal/app/purge.go`, `ledger.go`,
-  `beme purge`): ADR-027. Verified at raw-byte level on synthetic data;
-  no resurrection through sync, re-keyed content, backup restore, migration
-  rollback, or corrupt-store recovery.
+  `internal/storage/purge.go`, `beme purge`): ADR-027. Provenance removed via
+  actual refs; idempotent and resumable (journal under `ledger/pending/`,
+  `beme doctor` reports pending purges); keyed content-free ledger with the
+  key in `ledger/purge.key`. Verified at raw-byte level on synthetic data,
+  with failure injection at every stage; no resurrection through sync,
+  backup restore, migration rollback, or corrupt-store recovery.
+- **Threat corpus registry** (`internal/privacycorpus/cases.go`,
+  `cmd/beme-threat-corpus`): one registry for the Go test and the runner;
+  §19 cases plus S1–S3; runner exit 0/1/3 (`TestThreatCorpusRunner`).
 - **Benchmark** (`internal/benchmark`, `cmd/beme-bench`, `make bench`):
   `evals/benchmarks/seed-baseline.json` — on the development machine
   (darwin/arm64) warm resolution p95 is well under a millisecond at 1× seed
@@ -160,6 +177,9 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
   were not run (Cursor is not installed).
 - **Physical purge on real data:** the mechanism is done; executing it is a
   RED owner action. Git history rewriting stays out of scope (ADR-027).
+- **Purge key custody:** `ledger/purge.key` sits beside the ledger (git-ignored,
+  0600); OS-keychain storage is deferred. Losing it while purges exist fails
+  resolution closed until restored.
 - **Windows released-binary use inside harnesses:** the test suite runs on
   Windows CI; a Windows harness session has not been exercised.
 - **Release:** nothing from PR #1 is released; a non-alpha release needs
@@ -179,6 +199,9 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
   re-run the scan first).
 - Do not move tombstones back into projection stores only — the durable
   ledger is what makes forget/purge survive restore and rebuild (ADR-027).
+- Do not put content or text digests, plain IDs, or timestamps into purge
+  ledger entries, and do not derive provenance IDs by convention (ADR-027
+  revision; D12 and the purge tests guard both).
 - Do not reintroduce OS-separated ingestion paths; globs and locators are
   slash-separated everywhere (ADR-028).
 
@@ -239,7 +262,11 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 | Retrieval metrics (`TestRunnerRetrievalMetrics`) | per-case + aggregate recall/precision; `not_run` without refs |
 | Installed harnesses (`BEME_HARNESS_INTEGRATION=1`) | Claude Code: config lifecycle + connection verified; Codex: config lifecycle verified |
 | Windows (`test-windows` CI job) | build, vet, full test suite |
-| Documentation consistency (D1–D9) | `python3 scripts/test_docs_consistency.py` → all checks pass |
+| Purge provenance (`TestPurgeRecordsUsesPayloadProvenanceRefs`, `TestPhysicalPurgeRemovesEveryProvenanceRef`) | refs with nonconventional IDs and mismatched source record IDs removed; convention-looking ID owned by another record kept |
+| Purge resumability (`TestPhysicalPurgeResumesAfterFailureAtEveryStage`, `TestPhysicalPurgeIsIdempotent`) | failure injected at every stage (mid-stage for traces/observations); second run completes all cleanup; third run `already_purged` |
+| Ledger minimality (`TestPurgeLedgerIsKeyedAndContentFree`, `TestMissingPurgeKeyFailsClosed`) | no IDs, content digests, or timestamps; foreign key matches nothing; missing key fails closed |
+| Threat corpus runner (`go run ./cmd/beme-threat-corpus --repo .`, CI step on all three OSes) | every case passed; exit 3 without a checkout (case 19 `not_run`) |
+| Documentation consistency (D1–D12) | `python3 scripts/test_docs_consistency.py` → all checks pass |
 
 
 ## 10. Reply/ownership venue

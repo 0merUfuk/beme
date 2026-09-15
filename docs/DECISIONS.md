@@ -460,49 +460,96 @@ again.
 
 ## ADR-027 — Physical purge workflow and durable tombstone ledger
 
-**Date:** 2026-09-15
+**Date:** 2026-09-15 (revised the same day after owner review)
 **Status:** accepted (mechanism implemented; executing it on real data stays RED/owner-owned)
 **Context:** §7.8 and FR-055 require a physical purge distinct from logical
-forget, leaving only a non-content anti-resurrection tombstone. Two gaps
-existed: no purge workflow at all (threat case 30 was `not_run`), and
-tombstones lived only inside projection stores — which are derived and get
-wiped, recovered from corruption (file deleted), rolled back (tables
-dropped), or restored from backup. Any of those silently reactivated
+forget, leaving only a non-content anti-resurrection tombstone. Before this
+ADR there was no purge workflow (threat case 30 was `not_run`), and
+tombstones lived only inside projection stores, which get wiped, recovered
+from corruption, rolled back, or restored from backup, silently reactivating
 forgotten records (threat case 18 was `not_run`).
+Owner review of the first implementation found three defects, fixed in this
+revision: (a) projection purge deleted provenance by a convention-derived ID
+(`prov_` + record suffix), missing records with several or nonconventional
+provenance refs; (b) a purge that failed after its first deletion could not
+be re-run — the second run found no records and reported not-found,
+stranding traces, observations, and canonical files; (c) the ledger held
+unkeyed SHA-256 digests of the source content and of the normalized
+statement text, an offline dictionary oracle for low-entropy private data
+(a guessed sentence or a short file could be confirmed from the ledger
+alone).
 **Decision:**
-1. A durable ledger at `<canonical_root>/ledger/tombstones.json`
+1. **Durable ledger** at `<canonical_root>/ledger/tombstones.json`
    (operator-owned configuration, never inside the data dir). `forget`
-   writes the store tombstone and a ledger revocation; resolution merges
-   both. An unreadable ledger fails closed for resolution and rebuild.
-2. `beme purge --confirm <key> <key>` (`app.PhysicalPurge`): typed
-   confirmation (exit 3 without it), dry run, and in order — ledger purge
-   entry first (crash-safe), then erasure from both projection stores
-   (`secure_delete`, FTS `optimize`, `VACUUM`, WAL truncate), persisted
-   traces naming the record, and pending observations restating it;
-   `--remove-canonical` deletes the source file (root-contained). Purge
-   entries hold only SHA-256 fingerprints: record ID, source content hash,
-   and normalized statement text — so re-keyed or re-synced copies are
-   refused at rebuild and filtered at resolution.
-3. Git history and external backups are out of reach; the report lists them
-   as explicit residuals with the remediation instead of claiming erasure.
-**Evidence:** `TestPhysicalPurgeErasesAndBlocksResurrection` (raw bytes
-absent from data/cache/canonical root; no resurrection via sync, re-keyed
-content, backup restore, or migration rollback),
-`TestForgetSurvivesRestoreAndCorruptRecovery`, `TestCorruptLedgerFailsClosed`,
-threat cases 18 and 30 executed in `TestPrivacyCorpusDeterministic`.
-**Alternatives rejected:** ledger inside the data dir (restored with the
-store — defeats the purpose); storing plain record text in the ledger
-(violates non-content tombstone); Be Me rewriting Git history (destructive
-to user-owned repositories; out of ownership boundary, §5).
-**Consequences:** a restored pre-purge store still holds the bytes until the
-next `beme build`; resolution filters them and `Serve` reports a
-degradation. A normalized-text fingerprint could block a later, deliberately
-re-authored identical statement; re-authorization means removing the ledger
-entry (explicit operator act).
+   writes the store tombstone and a ledger revocation; resolution and
+   rebuild merge both. An unreadable ledger fails closed.
+2. **Ledger minimality.** Purge entries are `hmac-sha256` fingerprints under
+   a random 32-byte per-deployment key, over record identity
+   (source ID + record ID) and over the purge key — nothing else. No content
+   or text digests, no plain IDs, no timestamps or reasons; entries are
+   sorted so order reveals no chronology; plain revocations superseded by a
+   purge are removed. The key lives in a separate file,
+   `ledger/purge.key` (0600), and `ledger/.gitignore` excludes the key and
+   pending journals so a Git-tracked canonical root never commits them.
+   Purge entries without a readable key fail resolution, rebuild, and purge
+   closed (`ErrPurgeKeyMissing`).
+3. **Provenance.** Projection purge removes the union of the record
+   payload's `ProvenanceRefs`, the refs recorded in the purge plan, and every
+   provenance row with the record's `(source_id, source_record_id)`. No ID is
+   derived by convention. Canonical removal follows every locator of every
+   ref.
+4. **Idempotent, resumable execution.** Order: ledger fingerprints → journal
+   → per-store purge + compact (`secure_delete`, FTS `optimize`, `VACUUM`,
+   WAL truncate) → persisted traces → restating observations → canonical
+   files (`--remove-canonical`, root-contained) → journal removal. The
+   journal (`ledger/pending/`) holds identifiers only — record/source IDs,
+   provenance refs, relative locators, trace file names, observation IDs —
+   never record text. Every step skips work already done, so re-running the
+   same `beme purge` resumes from the journal; a completed key reports
+   `already_purged` (exit 0). `beme doctor` reports pending purges.
+   `PurgeRequest.FailAt` is a verification hook (never set by the CLI or
+   MCP) that injects failures at every stage in tests.
+5. Git history and external backups are out of reach; the report lists them
+   as residuals with the remediation instead of claiming erasure.
+**Evidence:** `TestPurgeRecordsUsesPayloadProvenanceRefs`,
+`TestPhysicalPurgeRemovesEveryProvenanceRef`,
+`TestPhysicalPurgeResumesAfterFailureAtEveryStage`,
+`TestPhysicalPurgeIsIdempotent`, `TestPurgeLedgerIsKeyedAndContentFree`,
+`TestPurgeLedgerMatchesIdentityNotContent`, `TestMissingPurgeKeyFailsClosed`,
+`TestPhysicalPurgeErasesAndBlocksResurrection`,
+`TestForgetSurvivesRestoreAndCorruptRecovery`, `TestCorruptLedgerFailsClosed`;
+threat cases 18, 30, S1–S3 in `TestPrivacyCorpusDeterministic` and
+`TestThreatCorpusRunner`. Each of the three review defects was reintroduced
+in a scratch copy and the tests failed.
+**Alternatives rejected:** unkeyed or salted fast content hashes (a
+per-entry salt still allows a cheap dictionary test per entry); slow-KDF
+content hashes (rebuild cost grows with records × purges); keeping content
+matching to block re-keyed copies (defends against deliberate re-authoring at
+the price of an offline oracle — accidental resurrection via sync, restore,
+rollback, or rebuild preserves record identity); the key inside the ledger
+file; OS keychain storage (platform-specific; deferred); a ledger inside the
+data dir (restored with the store); Be Me rewriting Git history (outside the
+ownership boundary, §5).
+**Consequences:**
+- Re-authoring the same words under a new record ID is not blocked — a
+  deliberate operator act (pinned by `TestPurgeLedgerMatchesIdentityNotContent`).
+- Whoever holds both the ledger and the key can test guesses of record
+  identities (not content); keep the key out of shared or committed copies.
+- Losing the key while purges exist blocks resolution and rebuild until it
+  is restored, or until the operator deliberately removes the ledger entries
+  (re-authorization).
+- A source-level purge also blocks records later added under that source ID.
+- A pending journal exposes identifiers until its purge completes.
+- The number of entries reveals how many records and purge keys were purged.
+- The pre-release v1 ledger format (content-derived purge entries) is
+  rejected with an explicit error; it was never released.
+- A restored pre-purge store still holds bytes until the next `beme build`;
+  resolution filters them and `Serve` reports a degradation.
 **Rollback:** delete `internal/app/purge.go`/`ledger.go` and the ledger merge
 in `Session.Resolve`; existing ledgers become inert files.
-**Reopen:** a resurrection path not covered by the ledger, or a requirement
-for Be Me-managed Git history rewriting.
+**Reopen:** a resurrection path the identity fingerprint does not cover, a
+key-custody requirement (e.g. OS keychain), or a requirement for Be
+Me-managed Git history rewriting.
 
 ## ADR-028 — Platform directories per OS; Windows runtime verification in CI
 
@@ -539,4 +586,4 @@ is still not exercised.
 | Exact harness hook mechanics per harness | Installed Claude Code 2.1.271 and Codex 0.154.0 verified at config-lifecycle level (both) and harness-connection level (Claude Code); pre-decision use needs live model sessions | No safe pre-decision path exists on a claimed supported surface |
 | Performance budget | Measured on the public seed corpus (`evals/benchmarks/seed-baseline.json`); warm p95 far below the 1 s NFR-008 target up to 200× scale | Meeting a usable SLO requires architecture expansion |
 | Promotion UX | Batch CLI first (ADR-010 governance) | CLI friction makes the learning loop unusable in dogfood |
-| Physical purge workflow | Implemented and tested on synthetic data (ADR-027); running it on real data is an owner-run RED action | The user requests actual erasure |
+| Physical purge workflow | Implemented, resumable, idempotent, keyed content-free ledger; tested on synthetic data (ADR-027); running it on real data is an owner-run RED action | The user requests actual erasure |

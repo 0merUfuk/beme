@@ -3,18 +3,25 @@ package app
 // Forget and physical purge (blueprint §7.8, FR-026/FR-055, ADR-027).
 //
 //   - Forget: logical tombstone, recorded in the store AND the durable ledger.
-//   - PhysicalPurge: RED, irreversible. Removes the content from every
-//     projection store (with on-disk erasure), persisted traces, and pending
-//     observations; optionally deletes the canonical source file; leaves only
-//     a non-content fingerprint in the ledger so rebuild, sync, rollback, or a
-//     restored backup cannot resurrect it. Git history and external backups
-//     are outside Be Me's reach and are reported as explicit residuals.
+//   - PhysicalPurge: RED, irreversible, idempotent, resumable. It writes the
+//     keyed anti-resurrection fingerprints first, then a content-free journal
+//     of the planned deletions, then erases the record from every projection
+//     store (with on-disk erasure), persisted traces, pending observations,
+//     and (optionally) canonical source files. Every step tolerates work
+//     already done, so re-running the same purge after a partial failure
+//     completes the remaining cleanup; a completed purge reports
+//     already_purged. Git history and external backups are outside Be Me's
+//     reach and are reported as explicit residuals.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/contracts"
@@ -25,9 +32,29 @@ import (
 var (
 	// ErrPurgeNotConfirmed: the typed confirmation did not match the key.
 	ErrPurgeNotConfirmed = errors.New("physical purge is irreversible (RED): --confirm must repeat the exact key")
-	// ErrPurgeNotFound: no projection holds the key.
+	// ErrPurgeNotFound: no projection holds the key and it was never purged.
 	ErrPurgeNotFound = errors.New("nothing to purge: key not present in any projection")
 )
+
+// Purge stages, in execution order. Stages that act on several items
+// (projection/compact per profile store, trace, observation, canonical per
+// file) invoke PurgeRequest.FailAt once per item; projection and compact
+// stages are suffixed ":<profile>".
+const (
+	StageLedger      = "ledger"
+	StageJournal     = "journal"
+	StageProjection  = "projection"
+	StageCompact     = "compact"
+	StageTrace       = "trace"
+	StageObservation = "observation"
+	StageCanonical   = "canonical"
+	StageFinalize    = "finalize"
+)
+
+// PurgeStages lists every stage in execution order.
+var PurgeStages = []string{StageLedger, StageJournal, StageProjection, StageCompact, StageTrace, StageObservation, StageCanonical, StageFinalize}
+
+var allProfiles = []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe}
 
 // Forget tombstones a record or source for one profile, durably.
 func (rt *Runtime) Forget(profile contracts.Profile, key, reason string) error {
@@ -48,8 +75,9 @@ func (rt *Runtime) Forget(profile contracts.Profile, key, reason string) error {
 }
 
 // EffectiveRevoked merges store tombstones with the durable ledger and marks
-// any record matching a purge fingerprint. restoredPurged reports whether the
-// store still holds purged records (e.g. restored from a backup).
+// any record whose identity matches a purge fingerprint. restoredPurged
+// reports whether the store still holds purged records (e.g. restored from a
+// backup).
 func (rt *Runtime) EffectiveRevoked(profile contracts.Profile, store *storage.Store) (revoked map[string]bool, restoredPurged bool, err error) {
 	revoked = store.RevokedSet()
 	l, err := rt.LoadLedger()
@@ -63,7 +91,7 @@ func (rt *Runtime) EffectiveRevoked(profile contracts.Profile, store *storage.St
 	}
 	if len(l.Purges) > 0 {
 		for _, rec := range store.Records() {
-			if l.Purged(rec, contentHashOf(store, rec)) {
+			if l.Purged(rec) {
 				revoked[rec.RecordID] = true
 				restoredPurged = true
 			}
@@ -72,21 +100,17 @@ func (rt *Runtime) EffectiveRevoked(profile contracts.Profile, store *storage.St
 	return revoked, restoredPurged, nil
 }
 
-func contentHashOf(store *storage.Store, rec contracts.Record) string {
-	for _, ref := range rec.ProvenanceRefs {
-		if p, ok := store.Provenance(ref); ok {
-			return p.ContentHash
-		}
-	}
-	return ""
-}
-
 // PurgeRequest describes one physical purge.
 type PurgeRequest struct {
 	Key             string // record ID or "source:<source_id>"
 	Confirm         string // must equal Key
 	RemoveCanonical bool   // also delete the canonical source file(s)
 	DryRun          bool
+	// FailAt is a verification hook: when set, it is called before each
+	// deletion step (see the Stage constants) and a returned error aborts
+	// the purge at that point, leaving the resumable journal in place. The
+	// CLI and MCP surfaces never set it.
+	FailAt func(stage string) error
 }
 
 // PurgeStep is one reported step. Reports never carry content.
@@ -98,97 +122,170 @@ type PurgeStep struct {
 
 // PurgeReport is the result of a purge.
 type PurgeReport struct {
-	Key       string      `json:"key"`
-	DryRun    bool        `json:"dry_run"`
-	Records   int         `json:"records"`
-	Steps     []PurgeStep `json:"steps"`
-	Residuals []string    `json:"residuals"`
+	Key           string      `json:"key"`
+	DryRun        bool        `json:"dry_run"`
+	Resumed       bool        `json:"resumed"`
+	AlreadyPurged bool        `json:"already_purged"`
+	Records       int         `json:"records"`
+	Steps         []PurgeStep `json:"steps"`
+	Residuals     []string    `json:"residuals"`
 }
 
-type purgeTarget struct {
-	recordID    string
-	sourceID    string
-	locator     string
-	contentHash string
-	textFP      string
-	texts       []string
+// purgeJournal is the transient, resumable plan. It holds identifiers only —
+// record/source IDs, provenance refs, relative locators, trace file names,
+// observation IDs — never record text. It lives under
+// <canonical_root>/ledger/pending/ and is removed when the purge completes.
+type purgeJournal struct {
+	SchemaVersion   string          `json:"schema_version"`
+	RemoveCanonical bool            `json:"remove_canonical"`
+	Records         []journalRecord `json:"records"`
+	Traces          []string        `json:"traces"`
+	Observations    []string        `json:"observations"`
 }
 
-// PhysicalPurge executes the RED physical-purge workflow.
+type journalRecord struct {
+	RecordID       string   `json:"record_id"`
+	SourceID       string   `json:"source_id"`
+	SourceRecordID string   `json:"source_record_id"`
+	ProvenanceRefs []string `json:"provenance_refs"`
+	Locators       []string `json:"locators"`
+	Profiles       []string `json:"profiles"`
+}
+
+func (rt *Runtime) pendingDir() string { return filepath.Join(rt.ledgerDir(), "pending") }
+
+func (rt *Runtime) journalPath(key string) string {
+	sum := sha256.Sum256([]byte("beme-purge-journal\x00" + key))
+	return filepath.Join(rt.pendingDir(), hex.EncodeToString(sum[:12])+".json")
+}
+
+// PendingPurges counts interrupted purges awaiting a resuming run.
+func (rt *Runtime) PendingPurges() int {
+	entries, err := os.ReadDir(rt.pendingDir())
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			n++
+		}
+	}
+	return n
+}
+
+func (rt *Runtime) loadJournal(key string) (*purgeJournal, bool, error) {
+	data, err := os.ReadFile(rt.journalPath(key))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("pending purge journal unreadable: %w", err)
+	}
+	var j purgeJournal
+	if err := json.Unmarshal(data, &j); err != nil {
+		return nil, false, fmt.Errorf("pending purge journal corrupt (remove %s and re-run the purge): %w", rt.journalPath(key), err)
+	}
+	return &j, true, nil
+}
+
+func (rt *Runtime) saveJournal(key string, j *purgeJournal) error {
+	if err := rt.ensureLedgerDir(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(rt.pendingDir(), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(j, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(rt.journalPath(key), data, 0o600)
+}
+
+// PhysicalPurge executes (or resumes) the RED physical-purge workflow.
 func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	if req.Key == "" || req.Confirm != req.Key {
 		return nil, ErrPurgeNotConfirmed
 	}
-	profiles := []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe}
+	fail := req.FailAt
+	if fail == nil {
+		fail = func(string) error { return nil }
+	}
+	ledger, err := rt.LoadLedger()
+	if err != nil {
+		return nil, err
+	}
 
-	// 1. Locate every target across projections (read-only).
-	targets := map[string]*purgeTarget{}
-	for _, p := range profiles {
-		path := rt.ProjectionPath(p)
-		if _, err := os.Stat(path); err != nil {
-			continue
-		}
-		store, err := storage.Open(path)
-		if err != nil {
-			return nil, fmt.Errorf("open %s projection: %w", p, err)
-		}
-		for _, rec := range store.Records() {
-			match := rec.RecordID == req.Key
-			if src, ok := strings.CutPrefix(req.Key, "source:"); ok {
-				match = rec.SourceID == src
-			}
-			if !match || targets[rec.RecordID] != nil {
-				continue
-			}
-			t := &purgeTarget{recordID: rec.RecordID, sourceID: rec.SourceID, textFP: TextFingerprint(rec)}
-			for _, ref := range rec.ProvenanceRefs {
-				if prov, ok := store.Provenance(ref); ok {
-					t.locator, t.contentHash = prov.Locator, prov.ContentHash
-					break
-				}
-			}
-			for _, s := range []string{rec.Title, rec.Statement, rec.CompactText} {
-				if len(strings.TrimSpace(s)) >= 12 {
-					t.texts = append(t.texts, s)
-				}
-			}
-			targets[rec.RecordID] = t
-		}
-		store.Close()
+	plan, resumed, err := rt.loadJournal(req.Key)
+	if err != nil {
+		return nil, err
 	}
-	if len(targets) == 0 {
-		return nil, ErrPurgeNotFound
+	if !resumed {
+		if plan, err = rt.planPurge(req.Key); err != nil {
+			return nil, err
+		}
+		if len(plan.Records) == 0 {
+			if ledger.PurgedKey(req.Key) {
+				return &PurgeReport{Key: req.Key, DryRun: req.DryRun, AlreadyPurged: true, Steps: []PurgeStep{}, Residuals: []string{}}, nil
+			}
+			return nil, ErrPurgeNotFound
+		}
 	}
-	ids := make([]string, 0, len(targets))
-	for id := range targets {
-		ids = append(ids, id)
-	}
-	sortStrings(ids)
+	plan.RemoveCanonical = plan.RemoveCanonical || req.RemoveCanonical
 
-	rep := &PurgeReport{Key: req.Key, DryRun: req.DryRun, Records: len(ids)}
+	rep := &PurgeReport{Key: req.Key, DryRun: req.DryRun, Resumed: resumed, Records: len(plan.Records), Residuals: []string{}}
 	outcome := "done"
 	if req.DryRun {
 		outcome = "planned"
 	}
+	ids := make([]string, 0, len(plan.Records))
+	for _, r := range plan.Records {
+		ids = append(ids, r.RecordID)
+	}
 
-	// 2. Anti-resurrection tombstone first: a crash after this point can
-	// leave content on disk but never resolvable or re-ingestable.
+	// 1. Anti-resurrection fingerprints first: from here on the content can
+	// never resolve or be re-ingested, even if the process dies.
 	if !req.DryRun {
-		l, err := rt.LoadLedger()
-		if err != nil {
-			return nil, err
+		if err := fail(StageLedger); err != nil {
+			return rep, err
 		}
-		for _, id := range ids {
-			l.addPurge(id, targets[id].contentHash, targets[id].textFP)
+		if err := ledger.ensureKey(rt); err != nil {
+			return rep, err
 		}
-		if err := rt.saveLedger(l); err != nil {
-			return nil, fmt.Errorf("write tombstone ledger: %w", err)
+		superseded := map[string]bool{req.Key: true}
+		ledger.addPurge(ledger.keyFingerprint(req.Key))
+		for _, r := range plan.Records {
+			ledger.addPurge(ledger.recordFingerprint(r.SourceID, r.RecordID))
+			superseded[r.RecordID] = true
+		}
+		ledger.dropRevocations(superseded)
+		if err := rt.saveLedger(ledger); err != nil {
+			return rep, fmt.Errorf("write tombstone ledger: %w", err)
 		}
 	}
-	rep.Steps = append(rep.Steps, PurgeStep{Step: "anti_resurrection_tombstone", Outcome: outcome, Count: len(ids)})
+	rep.Steps = append(rep.Steps, PurgeStep{Step: "anti_resurrection_tombstone", Outcome: outcome, Count: len(plan.Records)})
 
-	// 3. Derived purge: projection stores, with on-disk erasure.
-	for _, p := range profiles {
+	// 2. Journal: a failure after this point resumes from the saved plan.
+	if !req.DryRun {
+		if err := fail(StageJournal); err != nil {
+			return rep, err
+		}
+		if err := rt.saveJournal(req.Key, plan); err != nil {
+			return rep, fmt.Errorf("write purge journal: %w", err)
+		}
+	}
+
+	// 3. Projection stores, with on-disk erasure.
+	targets := make([]storage.PurgeTarget, 0, len(plan.Records))
+	planProfiles := map[string]bool{}
+	for _, r := range plan.Records {
+		targets = append(targets, storage.PurgeTarget{RecordID: r.RecordID, SourceID: r.SourceID, SourceRecordID: r.SourceRecordID, ProvenanceRefs: r.ProvenanceRefs})
+		for _, p := range r.Profiles {
+			planProfiles[p] = true
+		}
+	}
+	for _, p := range allProfiles {
 		path := rt.ProjectionPath(p)
 		if _, err := os.Stat(path); err != nil {
 			continue
@@ -203,10 +300,22 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 				n++
 			}
 		}
-		if !req.DryRun && n > 0 {
-			if _, err := store.PurgeRecords(ids); err != nil {
+		if n == 0 && !planProfiles[string(p)] {
+			store.Close()
+			continue
+		}
+		if !req.DryRun {
+			if err := fail(StageProjection + ":" + string(p)); err != nil {
+				store.Close()
+				return rep, err
+			}
+			if _, err := store.PurgeRecords(targets); err != nil {
 				store.Close()
 				return rep, fmt.Errorf("purge %s projection: %w", p, err)
+			}
+			if err := fail(StageCompact + ":" + string(p)); err != nil {
+				store.Close()
+				return rep, err
 			}
 			if err := store.Compact(); err != nil {
 				store.Close()
@@ -217,82 +326,87 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 		rep.Steps = append(rep.Steps, PurgeStep{Step: "derived_purge_projection_" + string(p), Outcome: outcome, Count: n})
 	}
 
-	// 4. Derived purge: persisted resolver traces naming a purged record.
+	// 4. Persisted resolver traces: planned files plus any naming a target
+	// that appeared since planning.
 	traceDir := filepath.Join(rt.Config.CacheDir, "traces")
 	traces := 0
-	if entries, err := os.ReadDir(traceDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
+	for _, name := range unionSorted(plan.Traces, rt.tracesNaming(ids)) {
+		path := filepath.Join(traceDir, filepath.Base(name))
+		if _, err := os.Stat(path); err != nil {
+			continue // already removed
+		}
+		traces++
+		if !req.DryRun {
+			if err := fail(StageTrace); err != nil {
+				return rep, err
 			}
-			fp := filepath.Join(traceDir, e.Name())
-			data, err := os.ReadFile(fp)
-			if err != nil {
-				continue
-			}
-			for _, id := range ids {
-				if strings.Contains(string(data), `"`+id+`"`) {
-					traces++
-					if !req.DryRun {
-						if err := os.Remove(fp); err != nil {
-							return rep, fmt.Errorf("remove trace: %w", err)
-						}
-					}
-					break
-				}
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return rep, fmt.Errorf("remove trace: %w", err)
 			}
 		}
 	}
 	rep.Steps = append(rep.Steps, PurgeStep{Step: "derived_purge_traces", Outcome: outcome, Count: traces})
 
-	// 5. Derived purge: pending observations that restate purged content.
+	// 5. Pending observations that restate the content (matched at planning).
 	obsRemoved := 0
-	if obsStore, err := learning.Open(rt.Config.DataDir); err == nil {
-		for _, obs := range obsStore.List("") {
-			hay := strings.Join([]string{obs.Hypothesis, obs.SupportingEvidence, obs.Counterevidence, obs.Task}, "\n")
-			if !mentionsAny(hay, targets) {
-				continue
+	if len(plan.Observations) > 0 {
+		if _, err := os.Stat(filepath.Join(rt.Config.DataDir, "observations")); err == nil {
+			obsStore, err := learning.Open(rt.Config.DataDir)
+			if err != nil {
+				return rep, fmt.Errorf("open observations: %w", err)
 			}
-			obsRemoved++
-			if !req.DryRun {
-				if err := obsStore.Remove(obs.ObservationID); err != nil {
-					return rep, fmt.Errorf("remove observation: %w", err)
+			for _, id := range plan.Observations {
+				if _, err := obsStore.Get(id); err != nil {
+					continue // already removed
+				}
+				obsRemoved++
+				if !req.DryRun {
+					if err := fail(StageObservation); err != nil {
+						return rep, err
+					}
+					if err := obsStore.Remove(id); err != nil {
+						return rep, fmt.Errorf("remove observation: %w", err)
+					}
 				}
 			}
 		}
 	}
 	rep.Steps = append(rep.Steps, PurgeStep{Step: "derived_purge_observations", Outcome: outcome, Count: obsRemoved})
 
-	// 6. Canonical source files (only when explicitly requested).
+	// 6. Canonical source files (only when requested).
 	descriptors := map[string]contracts.SourceDescriptor{}
 	for _, sd := range rt.Sources {
 		descriptors[sd.SourceID] = sd
 	}
 	gitSources := map[string]bool{}
-	if req.RemoveCanonical {
+	if plan.RemoveCanonical {
 		removed := 0
-		for _, id := range ids {
-			t := targets[id]
-			sd, ok := descriptors[t.sourceID]
-			if !ok || t.locator == "" {
-				rep.Residuals = append(rep.Residuals, "canonical file for "+id+" not located (source no longer registered): remove it manually")
-				continue
-			}
-			path, err := containedPath(sd.Root, t.locator)
-			if err != nil {
-				rep.Residuals = append(rep.Residuals, "canonical file for "+id+" not removed: "+err.Error())
+		for _, r := range plan.Records {
+			sd, ok := descriptors[r.SourceID]
+			if !ok || len(r.Locators) == 0 {
+				rep.Residuals = append(rep.Residuals, "canonical file for "+r.RecordID+" not located (source no longer registered or no locator): remove it manually")
 				continue
 			}
 			if sd.Type == "git_repository" {
 				gitSources[sd.SourceID] = true
 			}
-			if _, err := os.Stat(path); err != nil {
-				continue // already gone
-			}
-			removed++
-			if !req.DryRun {
-				if err := os.Remove(path); err != nil {
-					return rep, fmt.Errorf("remove canonical file for %s: %w", id, err)
+			for _, loc := range r.Locators {
+				path, err := containedPath(sd.Root, loc)
+				if err != nil {
+					rep.Residuals = append(rep.Residuals, "canonical file for "+r.RecordID+" not removed: "+err.Error())
+					continue
+				}
+				if _, err := os.Stat(path); err != nil {
+					continue // already removed
+				}
+				removed++
+				if !req.DryRun {
+					if err := fail(StageCanonical); err != nil {
+						return rep, err
+					}
+					if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return rep, fmt.Errorf("remove canonical file for %s: %w", r.RecordID, err)
+					}
 				}
 			}
 		}
@@ -300,8 +414,8 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	} else {
 		rep.Steps = append(rep.Steps, PurgeStep{Step: "canonical_source_removed", Outcome: "skipped", Count: 0})
 		rep.Residuals = append(rep.Residuals, "canonical source files retained (run with --remove-canonical or delete them yourself); rebuilds will not re-ingest them")
-		for _, id := range ids {
-			if sd, ok := descriptors[targets[id].sourceID]; ok && sd.Type == "git_repository" {
+		for _, r := range plan.Records {
+			if sd, ok := descriptors[r.SourceID]; ok && sd.Type == "git_repository" {
 				gitSources[sd.SourceID] = true
 			}
 		}
@@ -310,36 +424,140 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	for id := range gitSources {
 		gitIDs = append(gitIDs, id)
 	}
-	sortStrings(gitIDs)
+	sort.Strings(gitIDs)
 	for _, id := range gitIDs {
 		rep.Residuals = append(rep.Residuals, "source "+id+" is a Git repository: history still contains the content; rewrite history (e.g. git filter-repo), expire reflogs, and force-push — Be Me does not rewrite Git history")
+	}
+
+	// 7. Finalize: the purge is complete only once the journal is gone.
+	if !req.DryRun {
+		if err := fail(StageFinalize); err != nil {
+			return rep, err
+		}
+		if err := os.Remove(rt.journalPath(req.Key)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return rep, fmt.Errorf("remove purge journal: %w", err)
+		}
 	}
 	rep.Residuals = append(rep.Residuals, "backups and sync copies outside Be Me are not erased; restored stores stay filtered by the tombstone ledger")
 	return rep, nil
 }
 
-func mentionsAny(hay string, targets map[string]*purgeTarget) bool {
+// planPurge locates every record matching key across projections and
+// resolves everything the purge must remove, while the content is still
+// available for matching. Only identifiers are kept.
+func (rt *Runtime) planPurge(key string) (*purgeJournal, error) {
+	plan := &purgeJournal{SchemaVersion: "1", Records: []journalRecord{}, Traces: []string{}, Observations: []string{}}
+	byID := map[string]*journalRecord{}
+	texts := map[string][]string{}
+	for _, p := range allProfiles {
+		path := rt.ProjectionPath(p)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		store, err := storage.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open %s projection: %w", p, err)
+		}
+		for _, rec := range store.Records() {
+			match := rec.RecordID == key
+			if src, ok := strings.CutPrefix(key, "source:"); ok {
+				match = rec.SourceID == src
+			}
+			if !match {
+				continue
+			}
+			jr := byID[rec.RecordID]
+			if jr == nil {
+				jr = &journalRecord{RecordID: rec.RecordID, SourceID: rec.SourceID, SourceRecordID: rec.SourceRecordID,
+					ProvenanceRefs: []string{}, Locators: []string{}, Profiles: []string{}}
+				byID[rec.RecordID] = jr
+			}
+			jr.Profiles = addUnique(jr.Profiles, string(p))
+			for _, ref := range rec.ProvenanceRefs {
+				jr.ProvenanceRefs = addUnique(jr.ProvenanceRefs, ref)
+				if prov, ok := store.Provenance(ref); ok && prov.Locator != "" {
+					jr.Locators = addUnique(jr.Locators, prov.Locator)
+				}
+			}
+			for _, s := range []string{rec.Title, rec.Statement, rec.CompactText} {
+				if len(normalizeText(s)) >= 12 {
+					texts[rec.RecordID] = append(texts[rec.RecordID], s)
+				}
+			}
+		}
+		store.Close()
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		plan.Records = append(plan.Records, *byID[id])
+	}
+	if len(ids) == 0 {
+		return plan, nil
+	}
+	plan.Traces = rt.tracesNaming(ids)
+	if _, err := os.Stat(filepath.Join(rt.Config.DataDir, "observations")); err == nil {
+		if obsStore, err := learning.Open(rt.Config.DataDir); err == nil {
+			for _, obs := range obsStore.List("") {
+				hay := strings.Join([]string{obs.Hypothesis, obs.SupportingEvidence, obs.Counterevidence, obs.Task}, "\n")
+				if mentionsAny(hay, ids, texts) {
+					plan.Observations = append(plan.Observations, obs.ObservationID)
+				}
+			}
+		}
+	}
+	return plan, nil
+}
+
+// tracesNaming lists persisted trace files that reference any record ID.
+func (rt *Runtime) tracesNaming(ids []string) []string {
+	out := []string{}
+	traceDir := filepath.Join(rt.Config.CacheDir, "traces")
+	entries, err := os.ReadDir(traceDir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(traceDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, id := range ids {
+			if strings.Contains(string(data), `"`+id+`"`) {
+				out = append(out, e.Name())
+				break
+			}
+		}
+	}
+	return out
+}
+
+func mentionsAny(hay string, ids []string, texts map[string][]string) bool {
 	h := normalizeText(hay)
-	for id, t := range targets {
+	for _, id := range ids {
 		if strings.Contains(hay, id) {
 			return true
 		}
-		for _, s := range t.texts {
-			n := normalizeText(s)
-			if len(n) >= 12 && strings.Contains(h, n) {
+		for _, s := range texts[id] {
+			if n := normalizeText(s); len(n) >= 12 && strings.Contains(h, n) {
 				return true
 			}
 		}
 	}
-	// The observation may restate a record in a shorter form: check each
-	// observation line against the record texts too.
+	// The observation may restate a record in a shorter form.
 	for _, line := range strings.Split(hay, "\n") {
 		n := normalizeText(line)
 		if len(n) < 12 {
 			continue
 		}
-		for _, t := range targets {
-			for _, s := range t.texts {
+		for _, id := range ids {
+			for _, s := range texts[id] {
 				if strings.Contains(normalizeText(s), n) {
 					return true
 				}
@@ -354,6 +572,31 @@ func mentionsAny(hay string, targets map[string]*purgeTarget) bool {
 func normalizeText(s string) string {
 	s = strings.ToLower(strings.Join(strings.Fields(s), " "))
 	return strings.Trim(s, " .,;:!?\"'`")
+}
+
+func addUnique(list []string, v string) []string {
+	if v == "" {
+		return list
+	}
+	for _, x := range list {
+		if x == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+func unionSorted(a, b []string) []string {
+	set := map[string]bool{}
+	for _, v := range append(append([]string{}, a...), b...) {
+		set[v] = true
+	}
+	out := make([]string, 0, len(set))
+	for v := range set {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // containedPath joins a provenance locator to a source root and refuses any
@@ -379,12 +622,4 @@ func containedPath(root, locator string) (string, error) {
 		return "", errors.New("locator escapes source root")
 	}
 	return realPath, nil
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }

@@ -165,7 +165,7 @@ corpus is private.
 | P5 | Explain/error/log/trace/cache/status reveal denied data or existence (6, 7, 26) | `evals/public/denial-invisibility/` |
 | P6 | Allowed relationships traverse into denied records (8) | `evals/public/relationship-traversal/` |
 | P7 | Cache/concurrency mix capabilities or namespaces (9, 28) | `evals/public/concurrency/` |
-| P7.5 | Revoked/purged content in FTS, stale packs, backup restore (10, 18, 30) | `evals/public/revocation/` |
+| P7.5 | Revoked/purged content in FTS, stale packs, backup restore (10, 18, 30); purge provenance completeness, partial-failure resumption, ledger dictionary resistance (S1, S2, S3) | `evals/public/revocation/` |
 | P8 | Agent feedback writes canonical state (11); repeated model output counted as independent evidence (12); rejected candidate re-proposed (13) | `evals/public/learning/` |
 | P9 | Budget truncates hard prohibition (14) | `evals/public/budget/` |
 | P10 | Network server starts unauthenticated (15) | `evals/public/transport/` |
@@ -177,6 +177,13 @@ corpus is private.
 | P16 | Expansion reference guessed/replayed/stale-after-rebuild (24) | `evals/public/expansion-refs/` |
 | P17 | Declassification leaks via metadata/counts/locators/hashes (25) | `evals/public/declassification/` |
 | P18 | Oversized/recursive/malformed/Unicode/decompression-bomb input bypasses bounds (29) | `evals/public/bounds/` |
+
+Numbers are blueprint §19 cases; `S`-prefixed IDs are supplementary
+purge-reliability cases (ADR-027). Every ID maps to exactly one executable
+case in the shared registry `internal/privacycorpus` (`NewSuite`), run by
+`TestPrivacyCorpusDeterministic` and `cmd/beme-threat-corpus`;
+`scripts/test_docs_consistency.py` D10 keeps this table and the registry in
+lockstep.
 
 Acceptance rate must be 100%. One failing case = no release.
 

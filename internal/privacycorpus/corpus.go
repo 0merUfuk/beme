@@ -7,9 +7,10 @@
 // asserts the invariant. Acceptance rate must be 100% — one failure blocks
 // release (binary blockers, never averaged).
 //
-// The runner reports passed | failed | not_run per case with reasons;
-// not_run is reserved for cases requiring environments unavailable here
-// (none in the deterministic set).
+// The registry (NewSuite) is shared by the Go test and the executable runner
+// cmd/beme-threat-corpus. Results are passed | failed | not_run per case with
+// reasons; not_run is reserved for cases whose environment is unavailable
+// (only case 19 without a repository checkout).
 package privacycorpus
 
 import (
@@ -24,25 +25,40 @@ import (
 
 // Result is one threat-case execution.
 type Result struct {
-	Case   string
-	Group  string
-	State  string // passed | failed | not_run
-	Reason string
+	Case   string `json:"case"`
+	Group  string `json:"group"`
+	State  string `json:"state"` // passed | failed | not_run
+	Reason string `json:"reason,omitempty"`
 }
 
-// CaseFn executes one threat case; it calls t-helper style fatals via the
-// returned error, so the runner can record failures instead of aborting.
+// CaseFn executes one threat case; a returned error records a failure (or a
+// not_run, via NotRun) instead of aborting the suite.
 type CaseFn func() error
 
-// AllCases is the deterministic threat-case suite, keyed by blueprint §19
-// number and invariant group.
-func AllCases() map[string]CaseFn {
-	return map[string]CaseFn{}
+// Options configures the registry.
+type Options struct {
+	// RepoRoot is a repository checkout for process-gate cases (case 19
+	// audits the CI workflow). Empty → those cases report not_run.
+	RepoRoot string
 }
 
-// Run executes the provided suite and returns results. Suite functions are
-// defined as test-scoped closures in runner_test.go to share fixtures; this
-// runner provides the bookkeeping and 100%-acceptance gate.
+// Suite is the shared registry: case IDs → executable case and invariant
+// group. Built by NewSuite (cases.go).
+type Suite struct {
+	Cases  map[string]CaseFn
+	Groups map[string]string
+}
+
+// SupplementaryCases are the purge-reliability cases added beyond the §19
+// list (ADR-027).
+var SupplementaryCases = []string{"S1", "S2", "S3"}
+
+// Run executes every case in ID order.
+func (s *Suite) Run() []Result {
+	return Run(s.Cases, func(id string) string { return s.Groups[id] })
+}
+
+// Run executes the provided cases and returns results in ID order.
 func Run(suite map[string]CaseFn, groupOf func(caseID string) string) []Result {
 	ids := make([]string, 0, len(suite))
 	for id := range suite {

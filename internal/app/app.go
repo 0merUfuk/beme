@@ -254,7 +254,7 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 			if !ok {
 				continue
 			}
-			if ledger.Purged(rec, f.Hash) {
+			if ledger.Purged(rec) {
 				report.PurgeBlocked++
 				continue
 			}

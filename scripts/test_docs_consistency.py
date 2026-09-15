@@ -168,6 +168,62 @@ for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "do
             d9.append(f"{f.name}: {name}")
 check("D9 Go tests referenced in docs exist", not d9, "; ".join(sorted(set(d9))[:5]))
 
+# --- D10: the threat matrix (EVALUATION_CONTRACT §7) and the executable
+# registry list exactly the same cases under the same invariant groups
+cases_go = (ROOT / "internal" / "privacycorpus" / "cases.go").read_text()
+registry = dict(re.findall(r'group\["([^"]+)"\]\s*=\s*"([^"]+)"', cases_go))
+matrix = {}
+contract = (ROOT / "evals" / "EVALUATION_CONTRACT.md").read_text()
+for row in re.finditer(r"^\| (P[\d.]+) \| (.*?) \|", contract, re.M):
+    for group in re.findall(r"\(([^)]*)\)", row.group(2)):
+        for tok in (t.strip() for t in group.split(",")):
+            if re.fullmatch(r"\d+|S\d+", tok):
+                matrix[tok] = row.group(1)
+d10 = []
+if not registry:
+    d10.append("no cases found in internal/privacycorpus/cases.go")
+for case, grp in sorted(registry.items()):
+    if case not in matrix:
+        d10.append(f"case {case} missing from the threat matrix")
+    elif matrix[case] != grp:
+        d10.append(f"case {case}: registry {grp} vs matrix {matrix[case]}")
+for case in sorted(set(matrix) - set(registry)):
+    d10.append(f"matrix case {case} has no executable registry case")
+check("D10 threat matrix matches the executable case registry", not d10, "; ".join(d10[:5]))
+
+# --- D11: the privacy corpus runner claim is true — one shared registry used
+# by both the Go test and the runner, no empty placeholder API
+d11 = []
+corpus_go = (ROOT / "internal" / "privacycorpus" / "corpus.go").read_text()
+if re.search(r"func AllCases\(", corpus_go):
+    d11.append("placeholder AllCases() still present")
+corpus_test = (ROOT / "internal" / "privacycorpus" / "corpus_test.go").read_text()
+if "privacycorpus.NewSuite(" not in corpus_test:
+    d11.append("TestPrivacyCorpusDeterministic does not use the shared registry")
+runner = ROOT / "cmd" / "beme-threat-corpus" / "main.go"
+if not runner.exists() or "privacycorpus.NewSuite(" not in runner.read_text():
+    d11.append("cmd/beme-threat-corpus missing or not using the shared registry")
+for rel in ["evals/README.md", "docs/ACCEPTANCE.md", "docs/HANDOFF.md"]:
+    if "beme-threat-corpus" not in (ROOT / rel).read_text():
+        d11.append(f"{rel} does not name the threat corpus runner")
+check("D11 privacy corpus runner claim backed by a shared registry", not d11, "; ".join(d11))
+
+# --- D12: docs never describe the purge ledger as holding content-derived
+# digests (ADR-027 minimality). DECISIONS/CHANGELOG keep history verbatim.
+d12 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    if f.name in ("DECISIONS.md",):
+        continue
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if not re.search(r"ledger|tombstone|purge", line, re.I):
+            continue
+        if re.search(r"no (content|digest)|holds no|without content|no content", line, re.I):
+            continue
+        for pat in [r"content[ -]hash", r"text[ -]fingerprint", r"normali[sz]ed statement", r"sha-?256 of (the )?(content|text)"]:
+            if re.search(pat, line, re.I):
+                d12.append(f"{f.name}:{n}: '{line.strip()[:80]}'")
+check("D12 docs keep the purge ledger content-free", not d12, "; ".join(d12[:4]))
+
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]
 print(f"\n{passed}/{len(results)} documentation-consistency checks passed")

@@ -9,9 +9,14 @@
 | cache (indexes, packs, temp) | `~/Library/Caches/beme` | `$XDG_CACHE_HOME/beme` (`~/.cache/beme`) | `%LocalAppData%\beme` | `BEME_CACHE_HOME` |
 
 The durable tombstone ledger lives under the canonical root
-(`<config>/ledger/tombstones.json`, ADR-027), never in the data dir, so
-restoring or rebuilding derived data cannot resurrect forgotten or purged
-records.
+(`<config>/ledger/`, ADR-027), never in the data dir, so restoring or
+rebuilding derived data cannot resurrect forgotten or purged records:
+
+| File | Contents | Handling |
+|---|---|---|
+| `tombstones.json` | logical-forget keys; keyed purge fingerprints (no content) | back up with the canonical root |
+| `purge.key` | HMAC key for purge fingerprints (0600) | back up with the ledger; never share or commit (git-ignored) |
+| `pending/*.json` | journal of an interrupted purge (identifiers only) | transient; removed when the purge completes (git-ignored) |
 
 Deployment layout:
 
@@ -58,10 +63,16 @@ beme candidate review obs_xxxxxxxx --action reject --note "reason"
   backups do not resurrect it. The content stays on disk until purged.
 - `beme purge` (RED, typed `--confirm`) erases the record from both
   projection stores (files rewritten), persisted traces, and restating
-  observations, optionally deletes the source file, and leaves only a
-  fingerprint tombstone. It reports what it cannot erase — Git history,
+  observations, optionally deletes the source files, and leaves only a keyed
+  identity fingerprint. It reports what it cannot erase — Git history,
   external backups — with the remediation. Exit codes: 3 unconfirmed,
   4 key not found.
+- An interrupted purge (crash, full disk, locked file) leaves a journal;
+  `beme doctor` reports it as degraded. Re-run the same `beme purge` command
+  to finish; the report shows `resumed`. Re-running a completed purge prints
+  `already purged` and changes nothing.
+- If `ledger/purge.key` is lost while purge entries exist, resolution,
+  rebuild, and purge fail closed until the key is restored from backup.
 - Logs are structured and sanitized: no raw task text, personal record text,
   source excerpts, absolute personal paths, or credentials (NFR-014).
 - Telemetry: none. Network: none (offline by default; FR-060).

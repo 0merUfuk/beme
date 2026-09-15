@@ -2,6 +2,31 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
+## [Unreleased] — purge reliability (owner review)
+
+### Fixed
+- Projection purge deleted provenance by a convention-derived ID; it now
+  removes every ref in the record payload, the refs in the purge plan, and
+  rows matching the record's source identity.
+- A purge that failed part-way could not be re-run (the second run reported
+  not-found and stranded traces, observations, and canonical files). Purge is
+  now resumable through a content-free journal and idempotent (`already
+  purged`); `beme doctor` reports interrupted purges.
+- The purge ledger stored unkeyed digests of source content and statement
+  text — a dictionary oracle for low-entropy private data. Entries are now
+  keyed HMAC fingerprints of record identity only, with the key in
+  `ledger/purge.key` (git-ignored); a missing key fails closed (ADR-027).
+
+### Added
+- Failure-injection tests for every purge stage; provenance tests with
+  multiple and nonconventional IDs; ledger minimality and key tests.
+- Shared threat-case registry `privacycorpus.NewSuite` (the empty
+  `AllCases()` placeholder is gone), runner `cmd/beme-threat-corpus` (exit
+  0/1/3) run in CI on Linux, macOS, and Windows, and supplementary cases
+  S1–S3.
+- Docs checks D10 (threat matrix matches the registry), D11 (runner claim
+  backed by the shared registry), D12 (docs keep the ledger content-free).
+
 ## [Unreleased] — purge, benchmark, harness verification, Windows
 
 ### Added
