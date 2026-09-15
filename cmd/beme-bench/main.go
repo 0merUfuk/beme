@@ -21,10 +21,15 @@ import (
 	"github.com/0merUfuk/beme/internal/benchmark"
 )
 
+// removeAll removes the default temporary work dir; tests replace it to
+// exercise cleanup failure.
+var removeAll = os.RemoveAll
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 // run returns the exit code so deferred cleanup always executes before exit.
-func run(args []string, stdout, stderr io.Writer) int {
+// A cleanup failure is reported and turns an otherwise successful exit into 1.
+func run(args []string, stdout, stderr io.Writer) (code int) {
 	fs := flag.NewFlagSet("beme-bench", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	seed := fs.String("seed", "", "public seed corpus (normalized records JSON); required — testdata/synthetic/records.json in a repository checkout")
@@ -61,7 +66,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
-		defer os.RemoveAll(tmp)
+		defer func() {
+			if err := removeAll(tmp); err != nil {
+				fmt.Fprintf(stderr, "error: cleanup of temporary work dir failed: %v\n", err)
+				if code == 0 {
+					code = 1
+				}
+			}
+		}()
 		dir = tmp
 	}
 
