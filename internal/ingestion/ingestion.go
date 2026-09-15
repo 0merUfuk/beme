@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -83,8 +84,10 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ingestion timeout exceeded")
 		}
+		// Relative paths are slash-separated on every platform: globs,
+		// excludes, and provenance locators are portable (NFR-007).
 		rel := strings.TrimPrefix(path, realRoot)
-		rel = strings.TrimPrefix(rel, string(filepath.Separator))
+		rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
 		if d.IsDir() {
 			if rel == "" {
 				return nil
@@ -92,7 +95,7 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 			if matchAny(rel, HardExcludes) || matchAny(rel, exclude) {
 				return fs.SkipDir
 			}
-			if strings.Count(rel, string(filepath.Separator))+1 > w.limits.MaxDepth {
+			if strings.Count(rel, "/")+1 > w.limits.MaxDepth {
 				return fs.SkipDir
 			}
 			return nil
@@ -148,12 +151,12 @@ func matchAny(rel string, patterns []string) bool {
 		if matchGlob(p, rel) {
 			return true
 		}
-		if matchGlob(p, filepath.Base(rel)) {
+		if matchGlob(p, path.Base(rel)) {
 			return true
 		}
 		// directory-tree excludes: a plain name matching a leading path
 		// segment excludes the whole subtree ("secrets", ".git").
-		if !strings.Contains(p, "*") && strings.HasPrefix(rel, p+string(filepath.Separator)) {
+		if !strings.Contains(p, "*") && strings.HasPrefix(rel, p+"/") {
 			return true
 		}
 	}
@@ -161,33 +164,35 @@ func matchAny(rel string, patterns []string) bool {
 }
 
 // matchGlob supports ** as a zero-or-more-segment wildcard (gitignore
-// semantics): "a/**/*.md" matches both "a/x.md" and "a/b/c/x.md".
+// semantics): "a/**/*.md" matches both "a/x.md" and "a/b/c/x.md". Patterns
+// and rel are slash-separated; path.Match keeps "*" from crossing "/" on
+// every platform.
 func matchGlob(pattern, rel string) bool {
 	if !strings.Contains(pattern, "**") {
-		ok, _ := filepath.Match(pattern, rel)
+		ok, _ := path.Match(pattern, rel)
 		return ok
 	}
 	segs := strings.Split(pattern, "**")
-	first := strings.TrimSuffix(segs[0], string(filepath.Separator))
-	lastSegs := strings.Split(segs[len(segs)-1], string(filepath.Separator))
+	first := strings.TrimSuffix(segs[0], "/")
+	lastSegs := strings.Split(segs[len(segs)-1], "/")
 	// last part keeps its glob (e.g. "*.md"); match against the basename
 	last := lastSegs[len(lastSegs)-1]
 	if first != "" {
-		if !strings.HasPrefix(rel, first+string(filepath.Separator)) {
+		if !strings.HasPrefix(rel, first+"/") {
 			return false
 		}
 		rel = rel[len(first)+1:]
 	}
 	if last != "" && last != "." {
-		base := filepath.Base(rel)
-		ok, _ := filepath.Match(last, base)
+		base := path.Base(rel)
+		ok, _ := path.Match(last, base)
 		if !ok {
 			return false
 		}
 		if len(lastSegs) > 1 {
 			// multi-segment tail beyond the glob: require it as suffix
-			tail := strings.Join(lastSegs, string(filepath.Separator))
-			tail = strings.TrimSuffix(tail, string(filepath.Separator)+last)
+			tail := strings.Join(lastSegs, "/")
+			tail = strings.TrimSuffix(tail, "/"+last)
 			if tail != "" && !strings.HasSuffix(rel, tail) {
 				return false
 			}
