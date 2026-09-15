@@ -13,6 +13,13 @@ package app
 //     completes the remaining cleanup; a completed purge reports
 //     already_purged. Git history and external backups are outside Be Me's
 //     reach and are reported as explicit residuals.
+//
+// Durability (ADR-030): every file a purge removes is zeroized, flushed,
+// unlinked, and its directory flushed (durable.Erase) before the journal is
+// finalized; a retry re-flushes the directories of files an earlier attempt
+// already removed. Projection stores are compacted with synchronous=FULL and
+// their files and directory flushed. Forget, purge, build, and learning
+// writes are serialized by the maintenance lock.
 
 import (
 	"crypto/sha256"
@@ -26,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/contracts"
+	"github.com/0merUfuk/beme/internal/durable"
 	"github.com/0merUfuk/beme/internal/learning"
 	"github.com/0merUfuk/beme/internal/storage"
 )
@@ -59,6 +67,11 @@ var allProfiles = []contracts.Profile{contracts.ProfilePersonal, contracts.Profi
 
 // Forget tombstones a record or source for one profile, durably.
 func (rt *Runtime) Forget(profile contracts.Profile, key, reason string) error {
+	lk, err := rt.lock()
+	if err != nil {
+		return err
+	}
+	defer lk.Release()
 	l, err := rt.LoadLedger()
 	if err != nil {
 		return err
@@ -136,16 +149,7 @@ func (rt *Runtime) journalPath(key string) string {
 
 // PendingPurges counts interrupted purges awaiting a resuming run.
 func (rt *Runtime) PendingPurges() int {
-	entries, err := os.ReadDir(rt.pendingDir())
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			n++
-		}
-	}
+	n, _ := rt.pendingJournals()
 	return n
 }
 
@@ -168,14 +172,14 @@ func (rt *Runtime) saveJournal(key string, j *purgeJournal) error {
 	if err := rt.ensureLedgerDir(); err != nil {
 		return err
 	}
-	if err := ensureDirDurable(rt.pendingDir()); err != nil {
+	if err := durable.EnsureDir(rt.pendingDir()); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileDurable(rt.journalPath(key), data, 0o600)
+	return durable.WriteFile(rt.journalPath(key), data, 0o600)
 }
 
 // PhysicalPurge executes (or resumes) the RED physical-purge workflow.
@@ -187,6 +191,11 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	if fail == nil {
 		fail = func(string) error { return nil }
 	}
+	lk, err := rt.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer lk.Release()
 	ledger, err := rt.LoadLedger()
 	if err != nil {
 		return nil, err
@@ -234,6 +243,11 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 			ledger.addPurge(ledger.recordFingerprint(r.SourceID, r.RecordID))
 			superseded[r.RecordID] = true
 		}
+		// Observation identities too: a restored copy of a removed
+		// observation file stays hidden on every learning surface.
+		for _, id := range plan.Observations {
+			ledger.addObservation(id)
+		}
 		ledger.dropRevocations(superseded)
 		if err := rt.saveLedger(ledger); err != nil {
 			return rep, fmt.Errorf("write tombstone ledger: %w", err)
@@ -262,7 +276,7 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	}
 	for _, p := range allProfiles {
 		path := rt.ProjectionPath(p)
-		exists, err := statExists(path)
+		exists, err := durable.Exists(path)
 		if err != nil {
 			return rep, fmt.Errorf("inspect %s projection: %w", p, err)
 		}
@@ -315,21 +329,25 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	}
 	for _, name := range unionSorted(plan.Traces, current) {
 		path := filepath.Join(traceDir, filepath.Base(name))
-		exists, err := statExists(path)
+		exists, err := durable.Exists(path)
 		if err != nil {
 			return rep, fmt.Errorf("inspect trace: %w", err)
 		}
-		if !exists {
-			continue // already removed
+		if exists {
+			traces++
 		}
-		traces++
-		if !req.DryRun {
+		if req.DryRun {
+			continue
+		}
+		if exists {
 			if err := fail(StageTrace); err != nil {
 				return rep, err
 			}
-			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return rep, fmt.Errorf("remove trace: %w", err)
-			}
+		}
+		// Erase also when already absent: a retry flushes the directory
+		// entry an earlier attempt removed but could not flush.
+		if _, err := durable.Erase(path); err != nil {
+			return rep, fmt.Errorf("remove trace: %w", err)
 		}
 	}
 	rep.Steps = append(rep.Steps, PurgeStep{Step: "derived_purge_traces", Outcome: outcome, Count: traces})
@@ -340,7 +358,7 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	obsRemoved := 0
 	if len(plan.Observations) > 0 {
 		obsDir := filepath.Join(rt.Config.DataDir, "observations")
-		exists, err := statExists(obsDir)
+		exists, err := durable.Exists(obsDir)
 		if err != nil {
 			return rep, fmt.Errorf("inspect observations: %w", err)
 		}
@@ -354,17 +372,19 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 				if err != nil {
 					return rep, fmt.Errorf("inspect observation: %w", err)
 				}
-				if !present {
-					continue // already removed
+				if present {
+					obsRemoved++
 				}
-				obsRemoved++
-				if !req.DryRun {
+				if req.DryRun {
+					continue
+				}
+				if present {
 					if err := fail(StageObservation); err != nil {
 						return rep, err
 					}
-					if _, err := obsStore.Remove(id); err != nil {
-						return rep, fmt.Errorf("remove observation: %w", err)
-					}
+				}
+				if _, err := obsStore.Remove(id); err != nil {
+					return rep, fmt.Errorf("remove observation: %w", err)
 				}
 			}
 		}
@@ -401,21 +421,30 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 				case err != nil:
 					return rep, fmt.Errorf("inspect canonical file for %s: %w", r.RecordID, err)
 				}
-				exists, err := statExists(path)
+				exists, err := durable.Exists(path)
 				if err != nil {
 					return rep, fmt.Errorf("inspect canonical file for %s: %w", r.RecordID, err)
 				}
-				if !exists {
-					continue // already removed
+				if exists {
+					removed++
 				}
-				removed++
-				if !req.DryRun {
+				if req.DryRun {
+					continue
+				}
+				if exists {
 					if err := fail(StageCanonical); err != nil {
 						return rep, err
 					}
-					if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-						return rep, fmt.Errorf("remove canonical file for %s: %w", r.RecordID, err)
-					}
+				}
+				_, err = durable.Erase(path)
+				switch {
+				case errors.Is(err, durable.ErrMultipleLinks), errors.Is(err, durable.ErrNotRegular):
+					// the content is shared with names Be Me was not asked
+					// to erase: report instead of zeroizing them
+					removed--
+					rep.Residuals = append(rep.Residuals, "canonical file for "+r.RecordID+" not removed: "+err.Error()+"; remove every link yourself")
+				case err != nil:
+					return rep, fmt.Errorf("remove canonical file for %s: %w", r.RecordID, err)
 				}
 			}
 		}
@@ -443,7 +472,7 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 		if err := fail(StageFinalize); err != nil {
 			return rep, err
 		}
-		if err := removeFileDurable(rt.journalPath(req.Key)); err != nil {
+		if err := durable.Remove(rt.journalPath(req.Key)); err != nil {
 			return rep, fmt.Errorf("remove purge journal: %w", err)
 		}
 	}
@@ -460,7 +489,7 @@ func (rt *Runtime) planPurge(key string) (*purgeJournal, error) {
 	texts := map[string][]string{}
 	for _, p := range allProfiles {
 		path := rt.ProjectionPath(p)
-		exists, err := statExists(path)
+		exists, err := durable.Exists(path)
 		if err != nil {
 			return nil, fmt.Errorf("inspect %s projection: %w", p, err)
 		}
@@ -522,7 +551,7 @@ func (rt *Runtime) planPurge(key string) (*purgeJournal, error) {
 	}
 	plan.Traces = traces
 	obsDir := filepath.Join(rt.Config.DataDir, "observations")
-	exists, err := statExists(obsDir)
+	exists, err := durable.Exists(obsDir)
 	if err != nil {
 		return nil, fmt.Errorf("inspect observations: %w", err)
 	}

@@ -177,6 +177,13 @@ func (rt *Runtime) ProjectionPath(profile contracts.Profile) string {
 // exists but cannot be opened (corruption), it is deleted and recreated from
 // the registered sources. Canonical sources are never touched.
 func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error) {
+	// Serialized with forget, purge, and learning writes: a build never
+	// re-ingests content a concurrent purge is erasing (ADR-030).
+	lk, err := rt.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer lk.Release()
 	storePath := rt.ProjectionPath(profile)
 
 	// Detect an unusable existing store and recreate it (recovery path).
@@ -202,6 +209,10 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 	if err != nil {
 		return nil, err
 	}
+	erased, err := rt.eraseHiddenObservations(ledger)
+	if err != nil {
+		return nil, err
+	}
 
 	store, err := storage.Open(storePath)
 	if err != nil {
@@ -215,7 +226,7 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 	safeMode := profile == contracts.ProfileWorkSafe
 	builder := &projection.Builder{Store: store, SafeManifestMode: safeMode}
 	walker := ingestion.NewWalker(ingestion.DefaultLimits())
-	report := &BuildReport{Profile: string(profile)}
+	report := &BuildReport{Profile: string(profile), PurgedObservationsErased: erased}
 	ingestedIDs := []string{}
 
 	for _, sd := range rt.Sources {
@@ -300,6 +311,9 @@ type BuildReport struct {
 	// PurgeBlocked counts entries refused because they match a physical-purge
 	// tombstone (anti-resurrection, ADR-027).
 	PurgeBlocked int `json:"purge_blocked,omitempty"`
+	// PurgedObservationsErased counts restored copies of purged observation
+	// files the build erased.
+	PurgedObservationsErased int `json:"purged_observations_erased,omitempty"`
 }
 
 // Serve opens a projection store read-only and binds one immutable

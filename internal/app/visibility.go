@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/contracts"
+	"github.com/0merUfuk/beme/internal/durable"
 	"github.com/0merUfuk/beme/internal/resolver"
 	"github.com/0merUfuk/beme/internal/storage"
 )
@@ -131,7 +132,7 @@ func (rt *Runtime) ExportProjection(profile contracts.Profile) (*ProjectionExpor
 	if _, err := rt.LoadLedger(); err != nil {
 		return nil, err
 	}
-	exists, err := statExists(rt.ProjectionPath(profile))
+	exists, err := durable.Exists(rt.ProjectionPath(profile))
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +191,7 @@ func (rt *Runtime) LoadTrace(profile contracts.Profile, traceID string) ([]resol
 	}
 
 	visibleIDs := map[string]bool{}
-	exists, err := statExists(rt.ProjectionPath(profile))
+	exists, err := durable.Exists(rt.ProjectionPath(profile))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +240,7 @@ func (rt *Runtime) ProjectionFindings(profile contracts.Profile) ([]string, erro
 	if _, err := rt.LoadLedger(); err != nil {
 		return nil, err
 	}
-	exists, err := statExists(rt.ProjectionPath(profile))
+	exists, err := durable.Exists(rt.ProjectionPath(profile))
 	if err != nil || !exists {
 		return nil, err
 	}

@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/0merUfuk/beme/internal/contracts"
+	"github.com/0merUfuk/beme/internal/durable"
 )
 
 // PurgeTarget names one record to erase. Provenance is resolved from the
@@ -138,8 +140,14 @@ func (s *Store) PurgeRecords(targets []PurgeTarget) (int, error) {
 
 // Compact rewrites the store so purged content does not survive on disk:
 // FTS5 segments are merged (dropping deleted postings), the database file is
-// rebuilt with VACUUM, and the WAL is checkpointed and truncated. Idempotent.
+// rebuilt with VACUUM, and the WAL is checkpointed and truncated — all with
+// synchronous=FULL — and then the database file, the WAL, and their directory
+// are flushed explicitly, so the rewrite reaches stable storage before a
+// purge can finalize. Idempotent: a retry repeats every flush.
 func (s *Store) Compact() error {
+	if _, err := s.db.Exec(`PRAGMA synchronous=FULL`); err != nil {
+		return fmt.Errorf("synchronous: %w", err)
+	}
 	if _, err := s.db.Exec(`INSERT INTO records_fts(records_fts) VALUES('optimize')`); err != nil {
 		return fmt.Errorf("fts optimize: %w", err)
 	}
@@ -148,6 +156,14 @@ func (s *Store) Compact() error {
 	}
 	if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return fmt.Errorf("wal checkpoint: %w", err)
+	}
+	for _, f := range []string{s.path, s.path + "-wal"} {
+		if err := durable.SyncFile(f); err != nil {
+			return fmt.Errorf("flush store: %w", err)
+		}
+	}
+	if err := durable.SyncDir(filepath.Dir(s.path)); err != nil {
+		return fmt.Errorf("flush store: %w", err)
 	}
 	return nil
 }

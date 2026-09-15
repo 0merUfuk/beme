@@ -656,9 +656,17 @@ func TestPurgeLedgerIsKeyedAndContentFree(t *testing.T) {
 			t.Fatalf("purge entry is not a keyed fingerprint: %q", fp)
 		}
 	}
-	key, err := os.ReadFile(f.rt.PurgeKeyPath())
-	if err != nil || len(strings.TrimSpace(string(key))) != 64 {
-		t.Fatalf("purge key must exist as 32 hex bytes: %v", err)
+	keyData, err := os.ReadFile(f.rt.PurgeKeyPath())
+	var keyFile struct {
+		Key       string `json:"key"`
+		KeyID     string `json:"key_id"`
+		Committed bool   `json:"committed"`
+	}
+	if err != nil || json.Unmarshal(keyData, &keyFile) != nil || len(keyFile.Key) != 64 || !keyFile.Committed {
+		t.Fatalf("purge key must exist as a committed 32-byte hex key: %v %s", err, keyData)
+	}
+	if bytes.Contains(ledger, []byte(keyFile.Key)) {
+		t.Fatal("ledger must not contain the purge key")
 	}
 	if runtime.GOOS != "windows" {
 		if info, _ := os.Stat(f.rt.PurgeKeyPath()); info.Mode().Perm() != 0o600 {
@@ -681,8 +689,9 @@ func TestPurgeLedgerIsKeyedAndContentFree(t *testing.T) {
 	if err := os.WriteFile(g.rt.PurgeKeyPath(), []byte(hex.EncodeToString(foreign)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if text, _ := resolvedText(t, g.rt); !strings.Contains(text, purgeCanary) {
-		t.Fatal("fingerprints must not match under a different key")
+	// A different key cannot be substituted: the ledger is bound to its key.
+	if _, _, err := resolvePersonal(g.rt); !errors.Is(err, app.ErrLedgerUnusable) {
+		t.Fatalf("a ledger paired with a foreign key must fail closed; got %v", err)
 	}
 	copyFile(t, f.rt.PurgeKeyPath(), g.rt.PurgeKeyPath())
 	if text, _ := resolvedText(t, g.rt); strings.Contains(text, purgeCanary) {

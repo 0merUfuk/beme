@@ -4,57 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/0merUfuk/beme/internal/contracts"
+	"github.com/0merUfuk/beme/internal/durable"
 )
-
-func TestWriteFileDurableReplacesAndLeavesNoTemps(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "ledger.json")
-	for _, v := range []string{"v1", "v2"} {
-		if err := writeFileDurable(p, []byte(v), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if data, _ := os.ReadFile(p); string(data) != "v2" {
-		t.Fatalf("content %q, want v2", data)
-	}
-	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 {
-		t.Fatalf("temporary files left behind: %v", entries)
-	}
-	if runtime.GOOS != "windows" {
-		if info, _ := os.Stat(p); info.Mode().Perm() != 0o600 {
-			t.Fatalf("mode %v, want 0600", info.Mode().Perm())
-		}
-	}
-}
-
-func TestDurableWritesReportDirectoryFlushFailure(t *testing.T) {
-	injected := errors.New("injected directory flush failure")
-	orig := syncDirHook
-	syncDirHook = func(string) error { return injected }
-	t.Cleanup(func() { syncDirHook = orig })
-	dir := t.TempDir()
-	if err := writeFileDurable(filepath.Join(dir, "a"), []byte("x"), 0o600); !errors.Is(err, injected) {
-		t.Fatalf("writeFileDurable must surface the flush failure; got %v", err)
-	}
-	if err := createFileDurable(filepath.Join(dir, "b"), []byte("x"), 0o600); !errors.Is(err, injected) {
-		t.Fatalf("createFileDurable must surface the flush failure; got %v", err)
-	}
-	if err := ensureDirDurable(filepath.Join(dir, "c")); !errors.Is(err, injected) {
-		t.Fatalf("ensureDirDurable must surface the flush failure; got %v", err)
-	}
-}
-
-func TestSyncDirOnRealDirectory(t *testing.T) {
-	if err := syncDir(t.TempDir()); err != nil {
-		t.Fatalf("directory flush must work on this platform: %v", err)
-	}
-}
 
 func internalPurgeFixture(t *testing.T) (*Runtime, string) {
 	t.Helper()
@@ -110,15 +65,14 @@ func TestPurgeErasesNothingBeforeDurabilityBoundary(t *testing.T) {
 			rt, src := internalPurgeFixture(t)
 			injected := errors.New("injected flush failure")
 			target := c.failIn(rt)
-			orig := syncDirHook
-			syncDirHook = func(dir string) error {
+			restore := durable.SetFlushHooks(func(dir string) error {
 				if dir == target {
 					return injected
 				}
-				return orig(dir)
-			}
+				return durable.PlatformDirFlush(dir)
+			}, nil)
 			_, err := rt.PhysicalPurge(PurgeRequest{Key: "rec_can-001", Confirm: "rec_can-001", RemoveCanonical: true})
-			syncDirHook = orig
+			restore()
 			if !errors.Is(err, injected) {
 				t.Fatalf("purge must stop at the %s durability boundary; got %v", c.name, err)
 			}
@@ -143,12 +97,12 @@ func TestMergeIgnoreRules(t *testing.T) {
 		name, existing, want string
 		changed              bool
 	}{
-		{"empty", "", "purge.key\npending/\n", true},
-		{"unrelated rules without trailing newline", "custom-rule\n*.bak", "custom-rule\n*.bak\npurge.key\npending/\n", true},
-		{"anchored equivalents present", "/purge.key\npending\n", "/purge.key\npending\n", false},
-		{"partial", "# keep\npurge.key\n", "# keep\npurge.key\npending/\n", true},
-		{"crlf file", "custom\r\n", "custom\r\npurge.key\npending/\n", true},
-		{"commented rule is not a rule", "# purge.key\n", "# purge.key\npurge.key\npending/\n", true},
+		{"empty", "", "purge.key\npending/\n.lock\n", true},
+		{"unrelated rules without trailing newline", "custom-rule\n*.bak", "custom-rule\n*.bak\npurge.key\npending/\n.lock\n", true},
+		{"anchored equivalents present", "/purge.key\npending\n/.lock/\n", "/purge.key\npending\n/.lock/\n", false},
+		{"partial", "# keep\npurge.key\n", "# keep\npurge.key\npending/\n.lock\n", true},
+		{"crlf file", "custom\r\n", "custom\r\npurge.key\npending/\n.lock\n", true},
+		{"commented rule is not a rule", "# purge.key\n", "# purge.key\npurge.key\npending/\n.lock\n", true},
 	}
 	for _, c := range cases {
 		got, changed := mergeIgnoreRules(c.existing, ledgerIgnoreRules)
@@ -182,7 +136,7 @@ func TestExistingLedgerGitignoreGainsRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "custom-rule\n*.bak\npurge.key\npending/\n" {
+	if string(data) != "custom-rule\n*.bak\npurge.key\npending/\n.lock\n" {
 		t.Fatalf(".gitignore = %q", data)
 	}
 }

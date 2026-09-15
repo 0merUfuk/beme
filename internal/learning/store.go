@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/0merUfuk/beme/internal/durable"
 )
 
 func readRand(b []byte) (int, error) { return rand.Read(b) }
@@ -80,15 +82,33 @@ type ReviewOutcome struct {
 type Store struct {
 	dir   string
 	index map[string]bool // tombstone fingerprints (reject/scope-limited)
+	opts  Options
 }
 
-// Open prepares the durable observations directory.
-func Open(dataDir string) (*Store, error) {
+// Options bind a store to deployment enforcement state.
+type Options struct {
+	// Hidden reports observation IDs that were physically purged. Hidden
+	// observations are invisible to Open's tombstone index, List, ListAll,
+	// FamilyCounts, Get, Review, and Observe's family dedup, even when a
+	// restored backup brings their files back. Exists and Remove stay raw:
+	// they serve the purge that erases the files.
+	Hidden func(id string) bool
+	// Lock serializes writes (Observe, Review) with other maintenance
+	// operations; it returns the release function.
+	Lock func() (release func(), err error)
+}
+
+// Open prepares the durable observations directory with no enforcement
+// state. Deployment surfaces use app.Runtime.OpenLearning instead.
+func Open(dataDir string) (*Store, error) { return OpenWith(dataDir, Options{}) }
+
+// OpenWith prepares the observations directory bound to opts.
+func OpenWith(dataDir string, opts Options) (*Store, error) {
 	dir := filepath.Join(dataDir, "observations")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, index: map[string]bool{}}
+	s := &Store{dir: dir, index: map[string]bool{}, opts: opts}
 	// load existing tombstones; an unreadable store is an error, never an
 	// empty one (tombstones and purge inspection depend on it)
 	entries, err := os.ReadDir(dir)
@@ -97,6 +117,9 @@ func Open(dataDir string) (*Store, error) {
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if s.hiddenName(e.Name()) {
 			continue
 		}
 		var obs Observation
@@ -109,6 +132,26 @@ func Open(dataDir string) (*Store, error) {
 		}
 	}
 	return s, nil
+}
+
+// hidden reports whether an observation ID was purged.
+func (s *Store) hidden(id string) bool { return s.opts.Hidden != nil && s.opts.Hidden(id) }
+
+// hiddenName applies hidden to a "<id>.json" directory entry.
+func (s *Store) hiddenName(name string) bool { return s.hidden(strings.TrimSuffix(name, ".json")) }
+
+// erasedRemnant reports a zero-length observation file: what an erase leaves
+// behind when a crash loses the unlink but kept the zeroized content.
+func erasedRemnant(e os.DirEntry) bool {
+	info, err := e.Info()
+	return err == nil && info.Size() == 0
+}
+
+func (s *Store) lock() (func(), error) {
+	if s.opts.Lock == nil {
+		return func() {}, nil
+	}
+	return s.opts.Lock()
 }
 
 func isTerminalReject(status string) bool {
@@ -127,6 +170,11 @@ func (s *Store) Dir() string { return s.dir }
 // count instead of creating a new observation (FR-052: correlated
 // repetitions never appear independent).
 func (s *Store) Observe(kind, hypothesis, family, sourceProfile, inheritedSensitivity, task string) (*Observation, error) {
+	release, err := s.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	now := time.Now().UTC().Format(time.RFC3339)
 	fingerprint := hypothesisFingerprint(kind, hypothesis)
 
@@ -175,7 +223,7 @@ func (s *Store) findByFingerprint(fingerprint, family string) (*Observation, err
 		return nil, err
 	}
 	for _, e := range sortedEntries(entries) {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || s.hiddenName(e.Name()) {
 			continue
 		}
 		var obs Observation
@@ -198,12 +246,8 @@ func (s *Store) write(id string, obs *Observation) error {
 	if err != nil {
 		return err
 	}
-	// Atomic write: temp + rename (process-safe on the same host).
-	tmp := filepath.Join(s.dir, id+".tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(s.dir, id+".json"))
+	// Atomic, flushed replacement (temp + fsync + rename + directory flush).
+	return durable.WriteFile(filepath.Join(s.dir, id+".json"), data, 0o600)
 }
 
 // List returns observations by status ("quarantined" = pending batch review).
@@ -211,7 +255,7 @@ func (s *Store) List(status string) []Observation {
 	out := []Observation{}
 	entries, _ := os.ReadDir(s.dir)
 	for _, e := range sortedEntries(entries) {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || s.hiddenName(e.Name()) {
 			continue
 		}
 		var obs Observation
@@ -235,11 +279,11 @@ func validObservationID(id string) bool {
 }
 
 func (s *Store) Get(id string) (*Observation, error) {
-	if !validObservationID(id) {
+	if !validObservationID(id) || s.hidden(id) {
 		return nil, fmt.Errorf("%w: %s", ErrObservationNotFound, id)
 	}
 	data, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || (err == nil && len(data) == 0) {
 		return nil, fmt.Errorf("%w: %s", ErrObservationNotFound, id)
 	}
 	if err != nil {
@@ -263,7 +307,7 @@ func (s *Store) ListAll() ([]Observation, error) {
 	}
 	out := []Observation{}
 	for _, e := range sortedEntries(entries) {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || s.hiddenName(e.Name()) || erasedRemnant(e) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
@@ -300,6 +344,11 @@ func (s *Store) Exists(id string) (bool, error) {
 // user-approved-for-promotion and emits a canonical REVISION PROPOSAL
 // file for the trusted proposal path — it never writes knowledge entries.
 func (s *Store) Review(id, action, reviewer, note string) (*Observation, error) {
+	release, err := s.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	obs, err := s.Get(id)
 	if err != nil {
 		return nil, err
@@ -399,19 +448,30 @@ func sortedEntries(entries []os.DirEntry) []os.DirEntry {
 	return out
 }
 
-// Remove deletes one observation file and reports whether it existed. It
-// exists only for the RED physical purge workflow (§7.8 derived purge of
-// pending observations); ordinary review never deletes observations.
+// Remove erases one observation file (zeroize, flush, unlink, directory
+// flush — durable.Erase) and reports whether it existed; when it is already
+// gone the directory is still flushed. It exists only for the RED physical
+// purge workflow and for removing purged observations restored from a
+// backup; ordinary review never deletes observations.
 func (s *Store) Remove(id string) (bool, error) {
 	if !validObservationID(id) {
 		return false, fmt.Errorf("invalid observation id %q", id)
 	}
-	err := os.Remove(filepath.Join(s.dir, id+".json"))
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, os.ErrNotExist):
-		return false, nil
+	return durable.Erase(filepath.Join(s.dir, id+".json"))
+}
+
+// HiddenPresent lists purged observation IDs whose files are present (e.g.
+// restored from a backup).
+func (s *Store) HiddenPresent() ([]string, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, fmt.Errorf("read observations: %w", err)
 	}
-	return false, err
+	out := []string{}
+	for _, e := range sortedEntries(entries) {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") && s.hiddenName(e.Name()) {
+			out = append(out, strings.TrimSuffix(e.Name(), ".json"))
+		}
+	}
+	return out, nil
 }

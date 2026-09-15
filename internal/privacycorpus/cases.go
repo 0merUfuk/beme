@@ -1353,22 +1353,31 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 			return errf("purge wrote no fingerprints")
 		}
 		for _, fp := range parsed.Purges {
-			if !strings.HasPrefix(fp, "hmac-sha256:") {
-				return errf("purge entry is not a keyed fingerprint")
+			if len(fp) != len("hmac-sha256:")+64 || !strings.HasPrefix(fp, "hmac-sha256:") {
+				return errf("purge entry is not a full keyed fingerprint")
 			}
 		}
+		// A leaked ledger is useless without its key: another deployment
+		// holding it fails closed, both without a key and with a guessed
+		// one (the ledger is bound to its key ID).
 		other, err := fresh("s3-other")
 		if err != nil {
 			return err
 		}
+		if ok, err := personalResolves(other); err != nil || !ok {
+			return fmt.Errorf("positive control failed: the other deployment must resolve before receiving the leaked ledger (err=%v)", err)
+		}
 		if err := writeFixture(other.Runtime.LedgerPath(), ledger, 0o600); err != nil {
 			return err
+		}
+		if _, err := personalResolves(other); !errors.Is(err, app.ErrPurgeKeyMissing) {
+			return errf("a leaked ledger without its key must fail closed (err=%v)", err)
 		}
 		if err := writeFixture(other.Runtime.PurgeKeyPath(), []byte(newHex(32)), 0o600); err != nil {
 			return err
 		}
-		if ok, err := personalResolves(other); err != nil || !ok {
-			return errf("fingerprints must not match under a different key (err=%v)", err)
+		if _, err := personalResolves(other); !errors.Is(err, app.ErrLedgerUnusable) {
+			return errf("a leaked ledger with a guessed key must fail closed (err=%v)", err)
 		}
 		return nil
 	}
@@ -1485,6 +1494,13 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 			return errf("doctor must report a rebuild without naming the record (findings=%v err=%v)", findings, err)
 		}
 
+		expandID := firstSelected(after)
+		if err := precondition(expandID != "", "the post-purge pack must select a record so the fail-closed expansion check reaches the ledger"); err != nil {
+			return err
+		}
+		if _, err := sess.ExpandItem(after.PackID, expandID); err != nil {
+			return precondition(false, "the selected post-purge item must expand while the key is present (err=%v)", err)
+		}
 		if err := os.Remove(rt.PurgeKeyPath()); err != nil {
 			return err
 		}
@@ -1492,7 +1508,7 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 		_, _, checks["resolve"] = sess.Resolve(contracts.ResolutionRequest{SchemaVersion: contracts.SchemaVersion, Task: "anything"})
 		_, checks["visible count"] = sess.VisibleCount()
 		_, checks["export"] = rt.ExportProjection(contracts.ProfilePersonal)
-		_, checks["expand"] = sess.ExpandItem(after.PackID, firstSelected(after))
+		_, checks["expand"] = sess.ExpandItem(after.PackID, expandID)
 		_, checks["explain"] = rt.LoadTrace(contracts.ProfilePersonal, pack.TraceRef)
 		_, checks["doctor findings"] = rt.ProjectionFindings(contracts.ProfilePersonal)
 		_, checks["rebuild"] = rt.BuildProfile(contracts.ProfilePersonal)

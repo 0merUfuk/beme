@@ -10,7 +10,6 @@ import (
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
-	"github.com/0merUfuk/beme/internal/learning"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -144,7 +143,10 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		// evidence-family dedup (correlated repetitions are one family, not
 		// independent confirmations), and rejected-proposal tombstones
 		// (FR-052/053). Never canonical; promotion is user-owned.
-		ls, err := learning.Open(sess.Runtime.Config.DataDir)
+		ls, err := sess.Runtime.OpenLearning()
+		if errors.Is(err, app.ErrLedgerUnusable) {
+			return toolError(policyBlockedMsg), nil, nil
+		}
 		if err != nil {
 			// Learning-write failure is separate from context reads (§13.7):
 			// reads remain unaffected; report the degradation honestly.
