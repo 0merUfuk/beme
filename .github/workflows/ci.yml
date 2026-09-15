@@ -57,6 +57,114 @@ jobs:
       - name: Threat corpus runner (shared registry, synthetic data)
         run: go run ./cmd/beme-threat-corpus --repo .
 
+  # Installed-binary smoke test (ACCEPTANCE P2): the release artifact is
+  # `go install`ed and driven from OUTSIDE the repository, in an isolated
+  # deployment (BEME_* homes under the runner temp dir), so nothing reads the
+  # runner's real config and no test fixture is in scope. No model calls.
+  installed-binary-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - name: Keep fixtures byte-exact (no CRLF conversion)
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+      - name: Install the binaries
+        run: go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-threat-corpus ./cmd/beme-eval
+      - name: Smoke the installed binaries outside the repository (bash)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          root="$RUNNER_TEMP/beme-smoke"
+          mkdir -p "$root/cfg/sources" "$root/src/entries"
+          cd "$root"
+          export BEME_CONFIG_HOME="$root/cfg" BEME_DATA_HOME="$root/data" BEME_CACHE_HOME="$root/cache"
+          cat > "$root/src/entries/SMOKE-001.md" <<'EOF'
+          ---
+          id: SMOKE-001
+          title: "Smoke preference"
+          type: preference
+          status: active
+          ---
+
+          Keep installed-binary smoke tests synthetic and isolated.
+          EOF
+          cat > "$root/cfg/sources/smoke.yaml" <<EOF
+          schema_version: "1"
+          source_id: smoke-src
+          type: directory
+          root: $root/src
+          purpose: [reusable_knowledge]
+          trust: canonical
+          instruction_semantics: registered_files_only
+          authority_ceiling: default
+          sensitivity: personal_private
+          profiles_allowed: [personal]
+          ingestion_mode: index_content
+          include: ["entries/**/*.md"]
+          EOF
+          beme doctor --json --config "$root/cfg"
+          beme build --profile personal --config "$root/cfg"
+          beme status --json --config "$root/cfg"
+          beme preview --task "installed binary smoke" --json --config "$root/cfg" | grep -q '"pack_id"'
+          beme candidate list --json --config "$root/cfg"
+          beme forget rec_smoke-001 "smoke" --config "$root/cfg"
+          beme purge --confirm rec_smoke-001 --dry-run rec_smoke-001 --config "$root/cfg"
+          beme-threat-corpus --repo "$GITHUB_WORKSPACE"
+          beme-bench --seed "$GITHUB_WORKSPACE/testdata/synthetic/records.json" --scales 1 --iterations 2 --warmup 1 --build-runs 1 --out - > /dev/null
+      - name: Smoke the installed binaries outside the repository (pwsh)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          $root = Join-Path $env:RUNNER_TEMP "beme-smoke"
+          New-Item -ItemType Directory -Force -Path "$root\cfg\sources", "$root\src\entries" | Out-Null
+          Set-Location $root
+          $env:BEME_CONFIG_HOME = "$root\cfg"; $env:BEME_DATA_HOME = "$root\data"; $env:BEME_CACHE_HOME = "$root\cache"
+          @"
+          ---
+          id: SMOKE-001
+          title: "Smoke preference"
+          type: preference
+          status: active
+          ---
+
+          Keep installed-binary smoke tests synthetic and isolated.
+          "@ | Set-Content -Encoding utf8 "$root\src\entries\SMOKE-001.md"
+          $srcRoot = "$root\src" -replace '\\', '/'
+          @"
+          schema_version: "1"
+          source_id: smoke-src
+          type: directory
+          root: $srcRoot
+          purpose: [reusable_knowledge]
+          trust: canonical
+          instruction_semantics: registered_files_only
+          authority_ceiling: default
+          sensitivity: personal_private
+          profiles_allowed: [personal]
+          ingestion_mode: index_content
+          include: ["entries/**/*.md"]
+          "@ | Set-Content -Encoding utf8 "$root\cfg\sources\smoke.yaml"
+          beme doctor --json --config "$root\cfg"
+          beme build --profile personal --config "$root\cfg"
+          beme status --json --config "$root\cfg"
+          $pack = beme preview --task "installed binary smoke" --json --config "$root\cfg"
+          if ($pack -notmatch '"pack_id"') { throw "preview produced no pack" }
+          beme candidate list --json --config "$root\cfg"
+          beme forget rec_smoke-001 "smoke" --config "$root\cfg"
+          beme purge --confirm rec_smoke-001 --dry-run rec_smoke-001 --config "$root\cfg"
+          beme-threat-corpus --repo "$env:GITHUB_WORKSPACE"
+          beme-bench --seed "$env:GITHUB_WORKSPACE/testdata/synthetic/records.json" --scales 1 --iterations 2 --warmup 1 --build-runs 1 --out - | Out-Null
+
   private-data-scan:
     runs-on: ubuntu-latest
     steps:
