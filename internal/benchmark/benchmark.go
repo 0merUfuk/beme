@@ -12,6 +12,7 @@
 package benchmark
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,9 +25,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
+	"github.com/0merUfuk/beme/internal/ingestion"
 )
 
 // DefaultTasks is the fixed resolution workload (covers principle,
@@ -99,10 +105,19 @@ type seedRecord struct {
 	Statement      string `json:"statement"`
 }
 
-// Run executes the benchmark.
+// Run executes the benchmark. The seed corpus is fully validated — including
+// every replica entry at the largest requested scale — before anything is
+// written under the work dir.
 func Run(cfg Config) (*Report, error) {
 	if cfg.Iterations <= 0 || cfg.BuildRuns <= 0 || len(cfg.Scales) == 0 {
 		return nil, fmt.Errorf("benchmark: iterations, build runs, and scales must be positive")
+	}
+	maxScale := 0
+	for _, scale := range cfg.Scales {
+		if scale <= 0 {
+			return nil, fmt.Errorf("scale must be positive, got %d", scale)
+		}
+		maxScale = max(maxScale, scale)
 	}
 	if err := validateWorkDir(cfg.WorkDir); err != nil {
 		return nil, err
@@ -124,6 +139,9 @@ func Run(cfg Config) (*Report, error) {
 	if len(seed) == 0 {
 		return nil, fmt.Errorf("seed corpus is empty")
 	}
+	if err := validateSeed(seed, maxScale); err != nil {
+		return nil, err
+	}
 	sum := sha256.Sum256(raw)
 
 	rep := &Report{
@@ -143,9 +161,6 @@ func Run(cfg Config) (*Report, error) {
 		WithinTarget:  true,
 	}
 	for _, scale := range cfg.Scales {
-		if scale <= 0 {
-			return nil, fmt.Errorf("scale must be positive, got %d", scale)
-		}
 		res, err := runScale(cfg, seed, scale)
 		if err != nil {
 			return nil, fmt.Errorf("scale %d: %w", scale, err)
@@ -212,29 +227,43 @@ func runScale(cfg Config, seed []seedRecord, scale int) (*ScaleResult, error) {
 
 // materialize writes the seed corpus (replicated scale times) as markdown
 // entries plus a registered safe_declassified source, and loads a runtime.
+// The seed must already have passed validateSeed. Every directory under root
+// is freshly created (never reused) and confirmed with Lstat, and every file
+// is created exclusively, so nothing planted under the work dir is followed.
 func materialize(root string, seed []seedRecord, scale int) (*app.Runtime, error) {
 	if err := removeOwnedScaleDir(root); err != nil {
 		return nil, err
 	}
-	cfg := filepath.Join(root, "cfg")
-	entries := filepath.Join(root, "seed", "entries")
-	for _, d := range []string{filepath.Join(cfg, "sources"), entries} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			return nil, err
-		}
+	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
+		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(root, scaleMarker), []byte("created by beme-bench; safe to delete\n"), 0o600); err != nil {
+	if _, err := mkdirFresh(filepath.Dir(root), filepath.Base(root)); err != nil {
+		return nil, err
+	}
+	// Mark ownership first so a partially materialized dir stays reclaimable.
+	if err := writeNewFile(filepath.Join(root, scaleMarker), []byte("created by beme-bench; safe to delete\n")); err != nil {
+		return nil, err
+	}
+	cfg, err := mkdirFresh(root, "cfg")
+	if err != nil {
+		return nil, err
+	}
+	sources, err := mkdirFresh(cfg, "sources")
+	if err != nil {
+		return nil, err
+	}
+	seedDir, err := mkdirFresh(root, "seed")
+	if err != nil {
+		return nil, err
+	}
+	entries, err := mkdirFresh(seedDir, "entries")
+	if err != nil {
 		return nil, err
 	}
 	for r := 0; r < scale; r++ {
 		for _, rec := range seed {
-			id := rec.SourceRecordID
-			if r > 0 {
-				id = fmt.Sprintf("%s-R%04d", id, r)
-			}
-			doc := fmt.Sprintf("---\nid: %s\ntitle: %q\ntype: %s\nstatus: %s\n---\n\n%s\n",
-				id, rec.Title, rec.Kind, rec.Status, rec.Statement)
-			if err := os.WriteFile(filepath.Join(entries, id+".md"), []byte(doc), 0o600); err != nil {
+			id := replicaID(rec.SourceRecordID, r)
+			if err := writeNewFile(filepath.Join(entries, id+".md"), renderEntry(id, rec)); err != nil {
 				return nil, err
 			}
 		}
@@ -243,7 +272,7 @@ func materialize(root string, seed []seedRecord, scale int) (*app.Runtime, error
 		`schema_version: "1"`,
 		"source_id: seed-synthetic",
 		"type: directory",
-		"root: " + filepath.ToSlash(filepath.Join(root, "seed")),
+		"root: " + filepath.ToSlash(seedDir),
 		"purpose: [safe_declassified]",
 		"trust: canonical",
 		"instruction_semantics: registered_files_only",
@@ -253,10 +282,239 @@ func materialize(root string, seed []seedRecord, scale int) (*app.Runtime, error
 		"ingestion_mode: index_content",
 		`include: ["entries/**/*.md"]`,
 	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(cfg, "sources", "seed.yaml"), []byte(desc), 0o600); err != nil {
+	if err := writeNewFile(filepath.Join(sources, "seed.yaml"), []byte(desc)); err != nil {
 		return nil, err
 	}
 	return app.Load(cfg)
+}
+
+// mkdirFresh creates parent/name, failing if anything (including a symlink)
+// already exists there, and confirms without following links that the result
+// is a real directory.
+func mkdirFresh(parent, name string) (string, error) {
+	p := filepath.Join(parent, name)
+	if err := os.Mkdir(p, 0o700); err != nil {
+		return "", fmt.Errorf("benchmark: create %s: %w", p, err)
+	}
+	info, err := os.Lstat(p)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("benchmark: refusing %s: not a real directory", p)
+	}
+	return p, nil
+}
+
+// writeNewFile creates path exclusively: an existing file, a symlink (even a
+// dangling one), or a case-insensitive name collision is an error, never an
+// overwrite or a write through a link.
+func writeNewFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("benchmark: create %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("benchmark: write %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("benchmark: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// Seed field limits. Statements longer than the ingestion statement limit
+// would be truncated on ingest, so they are rejected rather than altered.
+const (
+	maxSeedIDBytes        = 64
+	maxSeedTitleBytes     = 200
+	maxSeedStatementBytes = 600
+)
+
+func replicaID(base string, r int) string {
+	if r == 0 {
+		return base
+	}
+	return fmt.Sprintf("%s-R%04d", base, r)
+}
+
+// validateSeed rejects any seed whose materialization could leave the entries
+// directory, collide with another entry, or alter entry metadata. It checks
+// each record's fields, then renders every entry that materialize will write
+// at maxScale and proves it round-trips exactly.
+func validateSeed(seed []seedRecord, maxScale int) error {
+	fail := func(i int, err error) error {
+		return fmt.Errorf("seed corpus: record %d (%q): %w", i, seed[i].SourceRecordID, err)
+	}
+	for i, rec := range seed {
+		if err := validateSeedRecord(rec); err != nil {
+			return fail(i, err)
+		}
+	}
+	type owner struct{ record, replica int }
+	names := map[string]owner{}     // case-folded entry file name
+	recordIDs := map[string]owner{} // normalized ingestion record_id
+	for r := 0; r < maxScale; r++ {
+		for i, rec := range seed {
+			id := replicaID(rec.SourceRecordID, r)
+			recordID, err := verifyEntry(renderEntry(id, rec), id, rec)
+			if err != nil {
+				return fail(i, err)
+			}
+			if prev, dup := names[strings.ToLower(id)]; dup {
+				return fail(i, fmt.Errorf("entry %q (replica %d) would collide case-insensitively with record %d replica %d", id, r, prev.record, prev.replica))
+			}
+			if prev, dup := recordIDs[recordID]; dup {
+				return fail(i, fmt.Errorf("entry %q (replica %d) would collide with record %d replica %d as record_id %q", id, r, prev.record, prev.replica, recordID))
+			}
+			names[strings.ToLower(id)] = owner{i, r}
+			recordIDs[recordID] = owner{i, r}
+		}
+	}
+	return nil
+}
+
+func validateSeedRecord(rec seedRecord) error {
+	if err := validateSeedID(rec.SourceRecordID); err != nil {
+		return err
+	}
+	if !contracts.Kind(rec.Kind).Valid() {
+		return fmt.Errorf("kind %q is not a normalized record kind", rec.Kind)
+	}
+	switch contracts.Status(rec.Status) {
+	case contracts.StatusActive:
+	case contracts.StatusDeprecated:
+		return errors.New("status \"deprecated\" records are never indexed; every seed record must be active")
+	default:
+		return fmt.Errorf("status %q is not a canonical status", rec.Status)
+	}
+	if err := validateSeedText("title", rec.Title, maxSeedTitleBytes); err != nil {
+		return err
+	}
+	// The ingestion frontmatter parser strips surrounding quotes and cuts at
+	// '#'; the renderer's quoting needs no '"' or '\'.
+	if strings.ContainsAny(rec.Title, "\"\\#") || strings.HasPrefix(rec.Title, "'") || strings.HasSuffix(rec.Title, "'") {
+		return errors.New(`title must not contain '"', '\', or '#', or start or end with '''`)
+	}
+	if err := validateSeedText("statement", rec.Statement, maxSeedStatementBytes); err != nil {
+		return err
+	}
+	if strings.ContainsAny(rec.Statement[:1], "#[!") {
+		return errors.New("statement must not start with '#', '[', or '!' (markdown the entry parser skips)")
+	}
+	return nil
+}
+
+// validateSeedID is the strict allowlist for identifiers that become entry
+// file names: [A-Za-z0-9][A-Za-z0-9_-]*, at most maxSeedIDBytes. It excludes
+// '.', '/', '\', ':', whitespace, control characters, and non-ASCII (whose
+// case folding and normalization differ across filesystems), so no ID can be
+// a traversal, a separator, a drive or UNC prefix, or an absolute path.
+func validateSeedID(id string) error {
+	if id == "" {
+		return errors.New("source_record_id is empty")
+	}
+	if len(id) > maxSeedIDBytes {
+		return fmt.Errorf("source_record_id is longer than %d bytes", maxSeedIDBytes)
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (i > 0 && (c == '_' || c == '-')) {
+			continue
+		}
+		return errors.New("source_record_id must match [A-Za-z0-9][A-Za-z0-9_-]* (no dots, separators, drive prefixes, whitespace, control or non-ASCII characters)")
+	}
+	if windowsDeviceName(id) {
+		return errors.New("source_record_id is a reserved Windows device name")
+	}
+	return nil
+}
+
+func windowsDeviceName(id string) bool {
+	u := strings.ToUpper(id)
+	switch u {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	return len(u) == 4 && (strings.HasPrefix(u, "COM") || strings.HasPrefix(u, "LPT")) && u[3] >= '0' && u[3] <= '9'
+}
+
+func validateSeedText(field, v string, limit int) error {
+	switch {
+	case v == "":
+		return fmt.Errorf("%s is empty", field)
+	case len(v) > limit:
+		return fmt.Errorf("%s is longer than %d bytes", field, limit)
+	case !utf8.ValidString(v):
+		return fmt.Errorf("%s is not valid UTF-8", field)
+	case strings.TrimSpace(v) != v:
+		return fmt.Errorf("%s has leading or trailing whitespace", field)
+	}
+	for _, r := range v {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' {
+			return fmt.Errorf("%s contains control, format, or line-separator character %U", field, r)
+		}
+	}
+	return nil
+}
+
+// renderEntry emits one entry document. Every frontmatter value is a YAML
+// double-quoted scalar. validateSeedRecord guarantees no value contains '"',
+// '\', or a line break, so each scalar's content is literal YAML (escapes need
+// '\', folding needs a break) and is exactly what ingestion.ParseMarkdown
+// yields after stripping the quotes. verifyEntry re-proves this per document.
+func renderEntry(id string, rec seedRecord) []byte {
+	return []byte("---\n" +
+		"id: \"" + id + "\"\n" +
+		"title: \"" + rec.Title + "\"\n" +
+		"type: \"" + rec.Kind + "\"\n" +
+		"status: \"" + rec.Status + "\"\n" +
+		"---\n\n" + rec.Statement + "\n")
+}
+
+// verifyEntry proves a rendered entry carries exactly the intended metadata
+// under both the ingestion frontmatter parser and a real YAML parser, and
+// that ingestion indexes it with the intended ID and statement. It returns
+// the normalized record_id.
+func verifyEntry(doc []byte, id string, rec seedRecord) (string, error) {
+	want := []struct{ key, field, value string }{
+		{"id", "source_record_id", id},
+		{"title", "title", rec.Title},
+		{"type", "kind", rec.Kind},
+		{"status", "status", rec.Status},
+	}
+	fm, body := ingestion.ParseMarkdown(doc)
+	end := bytes.Index(doc, []byte("\n---\n"))
+	if end < 0 {
+		return "", errors.New("entry frontmatter is not terminated")
+	}
+	var yfm map[string]any
+	if err := yaml.Unmarshal(doc[len("---\n"):end+1], &yfm); err != nil {
+		return "", fmt.Errorf("entry frontmatter is not valid YAML: %w", err)
+	}
+	if len(fm) != len(want) || len(yfm) != len(want) {
+		return "", fmt.Errorf("entry frontmatter has %d/%d keys, want exactly %d", len(fm), len(yfm), len(want))
+	}
+	for _, w := range want {
+		if got, ok := fm[w.key].(string); !ok || got != w.value {
+			return "", fmt.Errorf("%s does not round-trip through the entry frontmatter parser", w.field)
+		}
+		if got, ok := yfm[w.key].(string); !ok || got != w.value {
+			return "", fmt.Errorf("%s does not round-trip through YAML", w.field)
+		}
+	}
+	norm, ok := ingestion.NormalizeEntry(contracts.SourceDescriptor{SourceID: "seed-synthetic"}, ingestion.MarkdownEntry{Frontmatter: fm, Body: body})
+	if !ok || norm.SourceRecordID != id {
+		return "", errors.New("source_record_id would not be indexed by the entry adapter")
+	}
+	if norm.Title != rec.Title {
+		return "", errors.New("title does not round-trip through the entry adapter")
+	}
+	if norm.Statement != rec.Statement {
+		return "", errors.New("statement does not round-trip through the entry adapter")
+	}
+	return norm.RecordID, nil
 }
 
 func summarize(d []time.Duration) Stats {
@@ -350,8 +608,10 @@ func isAncestor(parent, child string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// removeOwnedScaleDir deletes a previous scale directory only when it carries
-// this harness's marker; any other existing path is refused.
+// removeOwnedScaleDir deletes a previous scale directory only when it is a
+// real directory (not a symlink) carrying this harness's marker as a regular
+// file; any other existing path is refused. os.RemoveAll unlinks symlinks
+// found inside without following them.
 func removeOwnedScaleDir(root string) error {
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -363,7 +623,7 @@ func removeOwnedScaleDir(root string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("benchmark: refusing to replace %s: not a directory created by beme-bench", root)
 	}
-	if _, err := os.Lstat(filepath.Join(root, scaleMarker)); err != nil {
+	if m, err := os.Lstat(filepath.Join(root, scaleMarker)); err != nil || !m.Mode().IsRegular() {
 		return fmt.Errorf("benchmark: refusing to delete %s: it was not created by beme-bench (no %s marker)", root, scaleMarker)
 	}
 	return os.RemoveAll(root)
