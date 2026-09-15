@@ -427,6 +427,37 @@ fixed post-test (make's exit-2 wrapping of the validator's exit 3 now
 documented precisely).
 **Reopen:** a future fresh-agent test failure re-opens this ADR.
 
+## ADR-026 — Explicit config dir is a self-contained deployment root (test/production data isolation)
+
+**Date:** 2026-09-15
+**Status:** accepted (YELLOW — material, reversible)
+**Context:** The privacy threat-case corpus (§19 threat model verification)
+exposed cross-contamination: `app.Load(explicitCfg)` with no `config.yaml`
+defaulted `DataDir` to the operator's real data home
+(`~/Library/Application Support/beme`). Test deployments (threat corpus,
+recovery tests, MCP e2e) silently wrote synthetic records, tombstones, and
+observations into the real operator store. On this machine the entire store
+was synthetic residue from agent tests (verified by direct SQLite inspection:
+`rec_priv-001`, `rec_safe-001`, `rec_f-001` + two tombstones + one
+observation); the directory was removed and the machine restored to a
+pristine no-beme-state baseline. The operator's real configuration lives
+under `~/.config/beme` (private eval corpus only) and was never touched.
+**Decision:** an explicit config dir is a self-contained deployment root —
+when `Load()` is called with a non-empty override, `DataDir`/`CacheDir`
+default INSIDE it (`<cfg>/data`, `<cfg>/cache`), never to the user data
+home. The user-home default applies only to `Load("")` (the real CLI
+deployment case). Pinned by `TestExplicitConfigDirIsSelfContained`
+(`internal/app/isolation_test.go`).
+**Alternatives rejected:** requiring every caller to set `data_dir`
+explicitly (silent foot-gun for every future test); making `Load` fail when
+no config.yaml exists (breaks legitimate empty deployments).
+**Consequences:** test deployments cannot write outside their temp dir by
+construction. Deployments that deliberately share the user data home must
+set `data_dir` explicitly in config.yaml.
+**Rollback:** restore the old defaulting in `Load` (one block).
+**Reopen:** a test or subprocess path that writes to the default data home
+again.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

@@ -1,21 +1,24 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 9 — 2026-09-15
-**Position:** `v0.1.0-alpha.1` published; blueprint execution complete to
-the boundary of owner-gated evidence. The documentation gate PASSES
-(fresh-agent re-test at `8896df9`, zero improvisation). End-to-end
-verification hardening landed: real-MCP e2e (official Go SDK client against
-the real stdio server, protocol-level elevation rejection), corrupt-store
-recovery by rebuild (FR-065), byte-exact adapter cycles verified against
-the installed Codex 0.154.0 and Claude Code 2.1.271 (FR-043). ACCEPTANCE §7
-is fully checked except the owner-owned release-approval item; §5
-recall/precision and the §6 beta gates require the owner-run live-model
-evaluation.
+**Revision:** 10 — 2026-09-15
+**Position:** `v0.1.0-alpha.1` published. Evaluation-infrastructure session
+(user-directed continuation): the executable evaluation runner
+(EVALUATION_CONTRACT.md) is implemented and proven with deterministic mock
+providers (B0–B4 arms, ablations, repeat runs, immutable manifests, blinded
+packaging, explicit not_run/failed/passed); the deterministic privacy
+threat-case corpus runs all 30 §19 cases (28 passed, 2 explicit not_run —
+the backup/restore and physical-purge cases, which need owner-gated
+infrastructure); a critical test/production data-isolation defect was found
+and fixed (ADR-026); an ingestion off-by-one (markdown bodies starting with
+"-") and an FTS tombstone deadlock were found and fixed. The documentation
+gate still PASSES; ACCEPTANCE §7 remains checked except the owner-owned
+release-approval item.
 
 Remaining owner-gated work (cannot be executed by the agent):
-live-model B4-vs-B0 behavioral evaluation (paid API runs; protocol and
-corpus ready); `assured` adapter labeling (needs measured pre-decision
-use); Windows runtime verification; explicit non-alpha release approval.
+live-model B4-vs-B0 behavioral evaluation (paid API runs; protocol, corpus,
+and the runner itself are now ready); `assured` adapter labeling (needs
+measured pre-decision use); Windows runtime verification; explicit
+non-alpha release approval.
 
 ## 1. Status
 
@@ -154,11 +157,16 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 1. **Owner:** run the live behavioral evaluation (B0/B1/B2/B3/B4 + ablations)
    against the private corpus — the one gate this delegation could not
    cover (paid API usage). `evals/EVALUATION_CONTRACT.md` §4–§6 defines the
-   protocol; the frozen split map is in the private pack.
+   protocol; the executable runner is implemented
+   (`internal/evalrunner`, deterministic-mock proof in
+   `internal/evalrunner/runner_test.go`); the frozen split map is in the
+   private pack. Wire a real provider (paid API client) into
+   `evalrunner.Provider` — the interface is the single integration point.
 2. **Then:** dogfood — `beme build`, `beme preview` in a real registered
    workspace; extend the corpus in thin categories (TR/EN, bounded-output).
 3. **Optional:** batch-review CLI for quarantined observations (WP9
-   completion); assured-mode wrapper experiments per harness.
+   completion); assured-mode wrapper experiments per harness; performance
+   benchmark harness on the public seed corpus (NFR-008 measurement).
 
 ## 9. Acceptance evidence (this session)
 

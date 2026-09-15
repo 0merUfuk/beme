@@ -274,7 +274,7 @@ func ParseMarkdown(content []byte) (map[string]any, string) {
 		}
 		front[k] = v
 	}
-	body := rest[end+3:]
+	body := rest[end+4:] // skip "\n---" entirely (end points at the newline; +4 passes the closing dashes)
 	return front, body
 }
 

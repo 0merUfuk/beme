@@ -82,18 +82,30 @@ func Load(configDirOverride string) (*Runtime, error) {
 		rt.Config.CanonicalRoot = configDir
 	}
 	if rt.Config.DataDir == "" {
-		_, dataHome, _, err := DefaultDirs()
-		if err != nil {
-			return nil, err
+		// Isolation rule (ADR-026): an explicit config dir is a self-contained
+		// deployment root — derived data defaults INSIDE it, never to the
+		// operator's real data home. The user-home default applies only when
+		// Load() is called with no override (the real CLI deployment case).
+		if configDirOverride != "" {
+			rt.Config.DataDir = filepath.Join(configDir, "data")
+		} else {
+			_, dataHome, _, err := DefaultDirs()
+			if err != nil {
+				return nil, err
+			}
+			rt.Config.DataDir = dataHome
 		}
-		rt.Config.DataDir = dataHome
 	}
 	if rt.Config.CacheDir == "" {
-		_, _, cacheHome, err := DefaultDirs()
-		if err != nil {
-			return nil, err
+		if configDirOverride != "" {
+			rt.Config.CacheDir = filepath.Join(configDir, "cache")
+		} else {
+			_, _, cacheHome, err := DefaultDirs()
+			if err != nil {
+				return nil, err
+			}
+			rt.Config.CacheDir = cacheHome
 		}
-		rt.Config.CacheDir = cacheHome
 	}
 
 	// Sources: trusted registration only (FR-020).
@@ -340,4 +352,16 @@ func OpenStoreForProfile(rt *Runtime, profile contracts.Profile) (*storage.Store
 		return nil, fmt.Errorf("invalid profile %q", profile)
 	}
 	return storage.Open(rt.ProjectionPath(profile))
+}
+
+// ResolveOnly resolves a pack for a task without CLI output/trace-persistence
+// side effects — the interface evaluation harnesses use.
+func (s *Session) ResolveOnly(task, workspaceHint string) (resolver.Pack, error) {
+	req := contracts.ResolutionRequest{
+		SchemaVersion: contracts.SchemaVersion,
+		Task:          task,
+		WorkspaceHint: workspaceHint,
+	}
+	pack, _, err := s.Resolve(req)
+	return pack, err
 }
