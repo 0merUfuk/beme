@@ -45,8 +45,10 @@ deletes every source file those refs locate. If it fails part-way, re-running
 the same command finishes the remaining cleanup; running it again after
 completion is a no-op.
 
-What remains is minimal: a keyed HMAC fingerprint of the record's identity
-(source ID + record ID) and of the purge key. The ledger holds no content,
+After a purge with `--remove-canonical` completes, what remains is minimal: a
+keyed HMAC fingerprint of the record's identity (source ID + record ID) and of
+the purge key. Without `--remove-canonical`, the canonical source file also
+remains; the fingerprint keeps it from being re-ingested. The ledger holds no content,
 no digest of content or text, no readable IDs, and no timestamps, so a copy
 of the ledger alone cannot be used to confirm a guess about what was purged.
 The HMAC key (`ledger/purge.key`) is stored separately and excluded from Git
@@ -56,6 +58,15 @@ record returns through sync, rollback, rebuild, or a backup restore;
 deliberately re-authoring the same words under a new ID is not blocked. Git
 history and external backups are outside Be Me's reach: the purge report
 lists them as residuals with the remediation.
+
+Every read surface — resolve and preview, export, explain, `beme doctor`, and
+the MCP status count and context-item expansion — applies the ledger at read
+time, so a restored pre-purge backup cannot surface purged or forgotten
+records. If the ledger or its key cannot be read, those surfaces refuse
+(CLI exit 3, MCP `policy_blocked`) rather than read unfiltered data. One
+residual: observations restored from a backup of the data dir cannot be
+matched against purged content, because the ledger holds none; review them
+with `beme candidate list` after such a restore.
 
 ## Public/private boundary
 

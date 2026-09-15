@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/0merUfuk/beme/internal/contracts"
 	"github.com/0merUfuk/beme/internal/ingestion"
@@ -281,6 +282,11 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 	if err := builder.Finalize(ingestedIDs); err != nil {
 		return nil, err
 	}
+	// A fresh generation per build invalidates ContextPacks issued against
+	// earlier projection contents (pack-bound expansion, ADR-029).
+	if err := store.SetMeta("build_generation", newOpaqueToken()); err != nil {
+		return nil, err
+	}
 	report.SourcesIngested = ingestedIDs
 	return report, nil
 }
@@ -308,14 +314,14 @@ func (rt *Runtime) Serve(profile contracts.Profile, capabilityID string, experim
 	}
 	view := projection.NewView(store, capabilityID, profile)
 	cap := policy.Capability{CapabilityID: capabilityID, Profile: profile, ExperimentalLearnedGuidance: experimentalLearned && profile == contracts.ProfilePersonal}
-	sess := &Session{View: view, Capability: cap, Runtime: rt, Store: store}
-	// Freshness honesty: an unbuilt (empty) projection must not resolve as
-	// if it were a complete index (§13.7): resolution works but carries an
-	// explicit degradation notice.
+	sess := &Session{View: view, Capability: cap, Runtime: rt, Store: store, issued: &packRegistry{}}
+	// Freshness honesty (§13.7). The notice never says why a rebuild is
+	// needed, so it cannot reveal that suppressed (purged) records sit in a
+	// restored store; doctor gives the operator the specifics.
 	if _, restored, err := rt.EffectiveRevoked(profile, store); err == nil && restored {
 		sess.degradations = append(sess.degradations, resolver.DegradationInput{
 			Kind:   "stale_projection",
-			Detail: "projection holds physically purged content (restored or stale store); it is filtered from resolution — run `beme build --profile " + string(profile) + "`",
+			Detail: "projection is out of date; run `beme build --profile " + string(profile) + "` before relying on results",
 		})
 	}
 	if store.Count() == 0 {
@@ -333,8 +339,15 @@ type Session struct {
 	Capability policy.Capability
 	Runtime    *Runtime
 	Store      *storage.Store
+	// PackTTL bounds how long an issued ContextPack authorizes expansion
+	// (DefaultPackTTL when zero). Now overrides the clock; both are
+	// verification hooks.
+	PackTTL time.Duration
+	Now     func() time.Time
+
 	// degradations carry honesty notices surfaced into every resolved pack.
 	degradations []resolver.DegradationInput
+	issued       *packRegistry
 }
 
 // Resolve runs the two-stage pipeline for one request.
@@ -371,6 +384,7 @@ func (s *Session) Resolve(req contracts.ResolutionRequest) (resolver.Pack, []res
 		Degradations: s.degradations,
 	}
 	pack, trace := resolver.Resolve(s.View, s.Capability, tc, req, opts)
+	s.registerPack(pack, tc)
 	return pack, trace, nil
 }
 
@@ -387,15 +401,6 @@ func clampKinds(hints []string) []string {
 		out = append(out, h)
 	}
 	return out
-}
-
-// OpenStoreForProfile opens a projection store for administrative
-// inspection (export, explain). Read-only intent; the store is derived.
-func OpenStoreForProfile(rt *Runtime, profile contracts.Profile) (*storage.Store, error) {
-	if profile != contracts.ProfilePersonal && profile != contracts.ProfileWorkSafe {
-		return nil, fmt.Errorf("invalid profile %q", profile)
-	}
-	return storage.Open(rt.ProjectionPath(profile))
 }
 
 // ResolveOnly resolves a pack for a task without CLI output/trace-persistence

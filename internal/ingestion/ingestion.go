@@ -163,45 +163,49 @@ func matchAny(rel string, patterns []string) bool {
 	return false
 }
 
-// matchGlob supports ** as a zero-or-more-segment wildcard (gitignore
-// semantics): "a/**/*.md" matches both "a/x.md" and "a/b/c/x.md". Patterns
-// and rel are slash-separated; path.Match keeps "*" from crossing "/" on
-// every platform.
+// matchGlob matches a slash-separated relative path against a pattern
+// segment by segment (gitignore semantics). "**" matches zero or more whole
+// segments anywhere in the pattern, including before a multi-segment tail
+// such as "a/**/b/*.md"; every other segment uses path.Match, so "*" never
+// crosses "/". Paths containing ".." never match.
 func matchGlob(pattern, rel string) bool {
-	if !strings.Contains(pattern, "**") {
-		ok, _ := path.Match(pattern, rel)
-		return ok
+	if rel == "" {
+		return false
 	}
-	segs := strings.Split(pattern, "**")
-	first := strings.TrimSuffix(segs[0], "/")
-	lastSegs := strings.Split(segs[len(segs)-1], "/")
-	// last part keeps its glob (e.g. "*.md"); match against the basename
-	last := lastSegs[len(lastSegs)-1]
-	if first != "" {
-		if !strings.HasPrefix(rel, first+"/") {
+	rs := strings.Split(rel, "/")
+	for _, seg := range rs {
+		if seg == ".." {
 			return false
 		}
-		rel = rel[len(first)+1:]
 	}
-	if last != "" && last != "." {
-		base := path.Base(rel)
-		ok, _ := path.Match(last, base)
-		if !ok {
-			return false
-		}
-		if len(lastSegs) > 1 {
-			// multi-segment tail beyond the glob: require it as suffix
-			tail := strings.Join(lastSegs, "/")
-			tail = strings.TrimSuffix(tail, "/"+last)
-			if tail != "" && !strings.HasSuffix(rel, tail) {
-				return false
+	return matchSegments(strings.Split(strings.Trim(pattern, "/"), "/"), rs)
+}
+
+func matchSegments(ps, rs []string) bool {
+	for len(ps) > 0 {
+		if ps[0] == "**" {
+			for len(ps) > 1 && ps[1] == "**" {
+				ps = ps[1:]
 			}
+			if len(ps) == 1 {
+				return true // trailing ** matches any remainder
+			}
+			for i := 0; i <= len(rs); i++ {
+				if matchSegments(ps[1:], rs[i:]) {
+					return true
+				}
+			}
+			return false
 		}
+		if len(rs) == 0 {
+			return false
+		}
+		if ok, err := path.Match(ps[0], rs[0]); err != nil || !ok {
+			return false
+		}
+		ps, rs = ps[1:], rs[1:]
 	}
-	if len(segs) > 2 {
-		return !strings.Contains(rel, "..")
-	}
-	return !strings.Contains(rel, "..")
+	return len(rs) == 0
 }
 
 func isTextFile(rel string) bool {

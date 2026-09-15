@@ -451,9 +451,10 @@ deployment case). Pinned by `TestExplicitConfigDirIsSelfContained`
 **Alternatives rejected:** requiring every caller to set `data_dir`
 explicitly (silent foot-gun for every future test); making `Load` fail when
 no config.yaml exists (breaks legitimate empty deployments).
-**Consequences:** test deployments cannot write outside their temp dir by
-construction. Deployments that deliberately share the user data home must
-set `data_dir` explicitly in config.yaml.
+**Consequences:** a test deployment that omits `data_dir` and `cache_dir`
+cannot write outside its config root by construction. Explicit `data_dir` or
+`cache_dir` values are still honored and may point anywhere, including the
+user data home, so the guarantee covers defaulted paths only.
 **Rollback:** restore the old defaulting in `Load` (one block).
 **Reopen:** a test or subprocess path that writes to the default data home
 again.
@@ -509,7 +510,47 @@ alone).
    `already_purged` (exit 0). `beme doctor` reports pending purges.
    `PurgeRequest.FailAt` is a verification hook (never set by the CLI or
    MCP) that injects failures at every stage in tests.
-5. Git history and external backups are out of reach; the report lists them
+5. **Durability boundary.** The ledger, the purge key, and the journal are
+   written by durable replacement: temp file → fsync (`F_FULLFSYNC` on macOS)
+   → rename followed by an fsync of the parent directory on Unix; on Windows,
+   which has no directory fsync, `MoveFileExW` with
+   `MOVEFILE_WRITE_THROUGH`, which returns only after the move is flushed. No
+   erasure begins until both the ledger fingerprints and the journal have
+   crossed that boundary; any flush error aborts the purge before erasure.
+   This does not protect against storage that acknowledges flushes it does not
+   perform (volatile drive caches, some network or virtualized filesystems).
+   The first revision only fsynced the file and described the ordering more
+   strongly than the implementation supported.
+6. **Inspection failures abort.** A projection, trace directory, observation
+   store (unreadable directory, unreadable or corrupt observation file), or
+   canonical path that cannot be inspected fails the purge — during planning,
+   before anything is written, or during execution with the journal left for
+   a resume. No step is reported `done` over data that was not inspected.
+   Observations planned for removal are deleted by ID on resume even if their
+   files became corrupt in between.
+7. **Read surfaces.** Every surface that can reveal projection content,
+   provenance, counts, or metadata reads through `internal/app` and applies
+   store tombstones plus the durable ledger at read time; an unusable ledger
+   or purge key fails each closed (`ErrLedgerUnusable`; CLI exit 3, MCP
+   `policy_blocked`). `TestReadSurfacesUseLedgerFilter` fails the build if
+   product code outside `internal/app`, `storage`, `projection`, or
+   `resolver` reads projection rows directly.
+
+   | Surface | Entry point | Rule |
+   |---|---|---|
+   | resolve, preview, MCP `resolve_context` | `Session.Resolve` | Stage A excludes revoked and purged records |
+   | MCP `get_context_item` | `Session.ExpandItem` | pack-bound (ADR-029), visibility, Stage A |
+   | MCP `status` record count | `Session.VisibleCount` | counts visible records only |
+   | `beme export` | `Runtime.ExportProjection` | visible records and their provenance only |
+   | `beme explain` | `Runtime.LoadTrace` | steps naming non-visible records dropped; pack counts withheld |
+   | `beme doctor` | `Runtime.ProjectionFindings` | generic "rebuild required"; no IDs or counts |
+   | pack degradation notice | `Runtime.Serve` | generic "out of date"; never mentions a purge |
+   | `beme build` (admin write) | `Runtime.BuildProfile` | reports only a purge-blocked count of entries from operator-owned sources |
+   | `beme candidate` | learning store | observations, not projection records — see consequences |
+8. **Ledger ignore rules** are merged into an existing `ledger/.gitignore`:
+   missing `purge.key` and `pending/` rules are appended, unrelated rules are
+   preserved byte for byte.
+9. Git history and external backups are out of reach; the report lists them
    as residuals with the remediation instead of claiming erasure.
 **Evidence:** `TestPurgeRecordsUsesPayloadProvenanceRefs`,
 `TestPhysicalPurgeRemovesEveryProvenanceRef`,
@@ -518,8 +559,16 @@ alone).
 `TestPurgeLedgerMatchesIdentityNotContent`, `TestMissingPurgeKeyFailsClosed`,
 `TestPhysicalPurgeErasesAndBlocksResurrection`,
 `TestForgetSurvivesRestoreAndCorruptRecovery`, `TestCorruptLedgerFailsClosed`;
-threat cases 18, 30, S1–S3 in `TestPrivacyCorpusDeterministic` and
-`TestThreatCorpusRunner`. Each of the three review defects was reintroduced
+threat cases 18, 30, S1–S4 in `TestPrivacyCorpusDeterministic` and
+`TestThreatCorpusRunner`; revision 3: `TestPurgePlanningFailsOnCorruptObservation`,
+`TestPurgeResumeWithObservationStorageFailures`,
+`TestPurgeFailsOnUnreadableTracesAndCanonicalPaths`,
+`TestPurgeErasesNothingBeforeDurabilityBoundary`,
+`TestDurableWritesReportDirectoryFlushFailure`,
+`TestRestoredBackupHiddenOnEveryReadSurface`,
+`TestUnusableLedgerFailsClosedOnEveryReadSurface`,
+`TestRestoredBackupCannotResurrectOnAnySurface`,
+`TestExistingLedgerGitignoreGainsRules`, `TestReadSurfacesUseLedgerFilter`. Each of the three review defects was reintroduced
 in a scratch copy and the tests failed.
 **Alternatives rejected:** unkeyed or salted fast content hashes (a
 per-entry salt still allows a cheap dictionary test per entry); slow-KDF
@@ -544,7 +593,12 @@ ownership boundary, §5).
 - The pre-release v1 ledger format (content-derived purge entries) is
   rejected with an explicit error; it was never released.
 - A restored pre-purge store still holds bytes until the next `beme build`;
-  resolution filters them and `Serve` reports a degradation.
+  every read surface filters them, packs carry a generic "out of date"
+  notice, and `beme doctor` reports that a rebuild is required.
+- Observations restored from a backup of the data dir cannot be recognized:
+  the ledger holds no content to match them against. The operator reviews
+  them with `beme candidate list` after such a restore.
+- Refusal paths are not timing-equalized.
 **Rollback:** delete `internal/app/purge.go`/`ledger.go` and the ledger merge
 in `Session.Resolve`; existing ledgers become inert files.
 **Reopen:** a resurrection path the identity fingerprint does not cover, a
@@ -578,6 +632,45 @@ test-suite verified in CI; released-binary behavior inside Windows harnesses
 is still not exercised.
 **Rollback:** restore the single-layout `DefaultDirs` and drop the CI job.
 **Reopen:** a platform convention change or a Windows failure CI cannot see.
+
+## ADR-029 — Pack-bound context-item expansion
+
+**Date:** 2026-09-15
+**Status:** accepted (YELLOW — MCP tool contract change: `pack_id` is now required)
+**Context:** `beme.get_context_item` found the record in the raw store, ran
+an unrelated resolution, and returned the full record whenever that
+resolution produced a pack ID. It never checked that the record had been
+selected into a pack the caller received, nor whether the record was revoked
+or purged. Reproduced against `597bfc4` over a real MCP client: a forgotten
+record and a purged record from a restored backup were both returned in full.
+**Decision:** each serving session keeps a bounded registry (256 packs,
+30-minute TTL) of the packs it issued: the random pack ID, the selected
+record IDs, the trusted task context, and the projection build generation.
+Expansion requires `pack_id` and `record_id` and succeeds only when the pack
+is known to this session and unexpired, the record was selected into it, the
+projection generation is unchanged (every build stamps a new random
+generation; a restored store carries an older one), the record is visible
+under store tombstones and the durable ledger, and it still passes Stage-A
+policy with the pack's task context. Every refusal is the single
+`ErrItemUnavailable` ("context item not available"). An unusable ledger
+returns `policy_blocked`, independent of the requested record. Work-safe
+expansions omit source ID, source record ID, and provenance refs (FR-039).
+**Evidence:** `TestExpandItemIsPackBound`,
+`TestWorkSafeExpansionOmitsSourceIdentity`,
+`TestRestoredBackupHiddenOnEveryReadSurface`,
+`TestRestoredBackupCannotResurrectOnAnySurface`, `TestMCPClientEndToEnd`;
+threat cases 8, 24, 26, S4.
+**Alternatives rejected:** signed expansion tokens (they survive restarts but
+add key management and still need revocation and generation checks);
+re-resolving the original task at expansion time (budget-dependent and
+costly); record-only expansion with a Stage-A re-check (the original defect —
+eligible is not the same as selected).
+**Consequences:** packs do not survive a server restart; clients re-resolve
+after a restart, a rebuild, or 30 minutes. Refusal paths are not
+timing-equalized. Clients that sent only `record_id` must add `pack_id`
+(pre-release contract).
+**Rollback:** restore record-only lookup in `mcp.go` (reintroduces the leak).
+**Reopen:** a need for expansion across sessions or restarts.
 
 ## Open decisions (tracked, none blocking contracts work)
 

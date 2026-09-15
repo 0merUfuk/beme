@@ -51,7 +51,7 @@ type Suite struct {
 
 // SupplementaryCases are the purge-reliability cases added beyond the §19
 // list (ADR-027).
-var SupplementaryCases = []string{"S1", "S2", "S3"}
+var SupplementaryCases = []string{"S1", "S2", "S3", "S4"}
 
 // Run executes every case in ID order.
 func (s *Suite) Run() []Result {
@@ -102,9 +102,35 @@ type ThreatDeployment struct {
 	Workspace string // registered workspace path
 }
 
+// SecretValue is the synthetic credential planted in the fixture; it must
+// never enter any index.
+const SecretValue = "wJalrXUtnFEMIsecret"
+
+// mkdirs creates fixture directories, reporting the first failure.
+func mkdirs(dirs ...string) error {
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("fixture mkdir %s: %w", d, err)
+		}
+	}
+	return nil
+}
+
+// writeFixture writes one fixture file (creating its directory) and reports
+// failures instead of silently producing an absent fixture.
+func writeFixture(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("fixture mkdir %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, data, perm); err != nil {
+		return fmt.Errorf("fixture write %s: %w", path, err)
+	}
+	return nil
+}
+
 // NewThreatDeployment builds the standard adversarial fixture: a personal
-// source with secret-shaped content, a safe declassified source, and a
-// registered workspace root.
+// source with a private preference and planted credentials (excluded by the
+// descriptor), a safe declassified source, and a registered workspace root.
 func NewThreatDeployment(dir string) (*ThreatDeployment, error) {
 	if dir == "" {
 		d, err := os.MkdirTemp("", "beme-threat-")
@@ -114,28 +140,32 @@ func NewThreatDeployment(dir string) (*ThreatDeployment, error) {
 		dir = d
 	}
 	cfg := filepath.Join(dir, "cfg")
-	os.MkdirAll(filepath.Join(cfg, "sources"), 0o700)
-	os.MkdirAll(filepath.Join(cfg, "policies"), 0o700)
-
-	// personal source (private preference + a secrets file that must be excluded)
-	personalRoot := filepath.Join(dir, "personal", "entries")
-	os.MkdirAll(personalRoot, 0o755)
-	os.WriteFile(filepath.Join(personalRoot, "PRIV-001.md"), []byte("---\nid: PRIV-001\ntitle: \"Private preference\"\ntype: preference\nstatus: active\n---\n\nThe owner prefers private working sessions late at night.\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "personal", "secrets", "prod.env"), []byte("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIsecret"), 0o600)
-
-	// safe declassified source
-	safeRoot := filepath.Join(dir, "safe", "entries")
-	os.MkdirAll(safeRoot, 0o755)
-	os.WriteFile(filepath.Join(safeRoot, "SAFE-001.md"), []byte("---\nid: SAFE-001\ntitle: \"Measured need\"\ntype: heuristic\nstatus: active\n---\n\nIntroduce complexity only for a demonstrated measured need.\n"), 0o644)
-
-	// registered workspace
+	personal := filepath.Join(dir, "personal")
+	safe := filepath.Join(dir, "safe")
 	wsDir := filepath.Join(dir, "workspace-repo")
-	os.MkdirAll(wsDir, 0o755)
-
-	os.WriteFile(filepath.Join(cfg, "sources", "personal.yaml"), []byte("schema_version: \"1\"\nsource_id: personal-th\ntype: directory\nroot: "+filepath.Join(dir, "personal")+"\npurpose: [reusable_knowledge]\ntrust: canonical\ninstruction_semantics: registered_files_only\nauthority_ceiling: default\nsensitivity: personal_private\nprofiles_allowed: [personal]\ningestion_mode: index_content\ninclude: [\"entries/**/*.md\"]\nexclude: [\"secrets/**\"]\n"), 0o600)
-	os.WriteFile(filepath.Join(cfg, "sources", "safe.yaml"), []byte("schema_version: \"1\"\nsource_id: safe-th\ntype: directory\nroot: "+filepath.Join(dir, "safe")+"\npurpose: [safe_declassified]\ntrust: canonical\ninstruction_semantics: registered_files_only\nauthority_ceiling: recommended\nsensitivity: public_general\nprofiles_allowed: [personal, work-safe]\ningestion_mode: index_content\ninclude: [\"entries/**/*.md\"]\n"), 0o600)
-	os.WriteFile(filepath.Join(cfg, "policies", "ws.yaml"), []byte("schema_version: \"1\"\nworkspace_id: ws-threat\ncanonical_roots:\n  - "+wsDir+"\nsensitivity_namespace: work_restricted\nauthority_ceiling: default\n"), 0o600)
-
+	if err := mkdirs(filepath.Join(cfg, "sources"), filepath.Join(cfg, "policies"),
+		filepath.Join(personal, "entries"), filepath.Join(personal, "secrets"),
+		filepath.Join(safe, "entries"), wsDir); err != nil {
+		return nil, err
+	}
+	files := []struct {
+		path string
+		body string
+		perm os.FileMode
+	}{
+		{filepath.Join(personal, "entries", "PRIV-001.md"), "---\nid: PRIV-001\ntitle: \"Private preference\"\ntype: preference\nstatus: active\n---\n\nThe owner prefers private working sessions late at night.\n", 0o644},
+		{filepath.Join(personal, "secrets", "prod.env"), "AWS_SECRET_ACCESS_KEY=" + SecretValue + "\n", 0o600},
+		{filepath.Join(personal, "secrets", "prod-credentials.yaml"), "aws_secret_access_key: " + SecretValue + "\n", 0o600},
+		{filepath.Join(safe, "entries", "SAFE-001.md"), "---\nid: SAFE-001\ntitle: \"Measured need\"\ntype: heuristic\nstatus: active\n---\n\nIntroduce complexity only for a demonstrated measured need.\n", 0o644},
+		{filepath.Join(cfg, "sources", "personal.yaml"), "schema_version: \"1\"\nsource_id: personal-th\ntype: directory\nroot: " + personal + "\npurpose: [reusable_knowledge]\ntrust: canonical\ninstruction_semantics: registered_files_only\nauthority_ceiling: default\nsensitivity: personal_private\nprofiles_allowed: [personal]\ningestion_mode: index_content\ninclude: [\"entries/**/*.md\"]\nexclude: [\"secrets/**\"]\n", 0o600},
+		{filepath.Join(cfg, "sources", "safe.yaml"), "schema_version: \"1\"\nsource_id: safe-th\ntype: directory\nroot: " + safe + "\npurpose: [safe_declassified]\ntrust: canonical\ninstruction_semantics: registered_files_only\nauthority_ceiling: recommended\nsensitivity: public_general\nprofiles_allowed: [personal, work-safe]\ningestion_mode: index_content\ninclude: [\"entries/**/*.md\"]\n", 0o600},
+		{filepath.Join(cfg, "policies", "ws.yaml"), "schema_version: \"1\"\nworkspace_id: ws-threat\ncanonical_roots:\n  - " + wsDir + "\nsensitivity_namespace: work_restricted\nauthority_ceiling: default\n", 0o600},
+	}
+	for _, f := range files {
+		if err := writeFixture(f.path, []byte(f.body), f.perm); err != nil {
+			return nil, err
+		}
+	}
 	rt, err := app.Load(cfg)
 	if err != nil {
 		return nil, err

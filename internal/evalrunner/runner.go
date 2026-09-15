@@ -7,17 +7,21 @@
 // not_run for any condition it cannot honestly execute (never silent).
 //
 // Supported:
-//   - Baselines B0–B4 and ablations (no-scope, no-provenance, no-unknowns,
-//     canonical-only, learned-only) — every baseline shares the same hard
-//     capability boundary (§18.6).
+//   - Baselines B0–B4 and the ablations whose pack transform exists
+//     (no-provenance, no-unknowns, learned-only) — every baseline shares the
+//     same hard capability boundary (§18.6). no-scope and canonical-only have
+//     no transform yet and are reported not_run, never graded as the full
+//     pack under an ablation label.
 //   - Repeat runs (1..5) with per-case mean/variance/worst.
 //   - Immutable manifests per §18.7 (36 required fields) written per run,
 //     content-hashed.
 //   - Blinded result packaging: condition labels are replaced by opaque
 //     arm IDs + a separate key file, so a human grader can grade without
 //     knowing which arm is Be Me.
-//   - Explicit states: passed | failed | not_run (exit code contract:
-//     0 = all executed cases passed; 1 = ≥1 failed; 3 = not_run).
+//   - Explicit states: passed | failed | not_run. A zero score (prohibited
+//     or unsafe output) is a binary blocker: the unit fails and is never
+//     averaged. Summary.ExitCode applies the exit contract: 0 = every unit
+//     passed; 1 = any failure or blocker; 3 = no failure but ≥1 not_run.
 package evalrunner
 
 import (
@@ -340,6 +344,12 @@ func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, resolv
 				repeats = 5
 			}
 			res := CaseResult{CaseID: cs.ID, Arm: arm}
+			if reason := unimplementedArm(arm); reason != "" {
+				res.Outcome = OutcomeNotRun
+				res.Reason = reason
+				summary.CaseResults = append(summary.CaseResults, res)
+				continue
+			}
 			// resolve the pack per arm semantics
 			pack, packErr := resolve(armProfile(cs), cs.Scenario.Task, cs.Scenario.Workspace)
 			if packErr != nil {
@@ -372,13 +382,18 @@ func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, resolv
 					res.Reason = "grading error: " + gerr.Error()
 					break
 				}
+				res.PerRepeat = append(res.PerRepeat, RepeatResult{Repeat: rep, Score: score, Text: gen.Text})
 				if score == 0 {
-					// prohibited/unsafe → blocker, not averaged
+					// prohibited/unsafe → binary blocker: the unit fails and
+					// is never averaged (§18.7.1)
 					summary.Blockers = append(summary.Blockers, fmt.Sprintf("%s/%s rep%d: %s", cs.ID, arm, rep, why))
+					res.Outcome = OutcomeFailed
+					res.Reason = "blocker: " + why
+					res.Score = 0
+					break
 				}
 				scores = append(scores, score)
 				worst = math.Min(worst, score)
-				res.PerRepeat = append(res.PerRepeat, RepeatResult{Repeat: rep, Score: score})
 			}
 			if res.Outcome == "" && len(scores) > 0 {
 				mean := 0.0
@@ -452,15 +467,6 @@ func packForArm(p resolver.Pack, arm Arm) resolver.Pack {
 		}
 	case ArmAblNoUnknowns:
 		out.Unknowns = nil
-	case ArmAblCanonOnly:
-		// keep only canonical-knowledge guidance; drop precedents/learned
-		out.Precedents = nil
-		out.LearnedExperimental = nil
-		keep := []resolver.ContextItem{}
-		for _, g := range out.Guidance {
-			keep = append(keep, g)
-		}
-		_ = keep
 	case ArmAblLearnedOnly:
 		out.Constraints, out.Guidance, out.Precedents = nil, nil, nil
 	}
@@ -561,4 +567,47 @@ func ratio(n, d int) float64 {
 		return 0
 	}
 	return math.Round(float64(n)/float64(d)*1000) / 1000
+}
+
+// unimplementedArm names arms whose pack transform does not exist. Grading
+// them would silently re-grade the full pack under an ablation label.
+func unimplementedArm(arm Arm) string {
+	switch arm {
+	case ArmAblNoScope:
+		return "ablation not implemented: no-scope needs a scope-disabled resolver run on synthetic data (§18.6)"
+	case ArmAblCanonOnly:
+		return "ablation not implemented: canonical-only needs source-role data that ContextPack items do not carry"
+	}
+	return ""
+}
+
+// ExitCode applies the runner's exit contract: 1 when any evaluation unit or
+// retrieval measurement failed or any blocker was recorded; 3 when nothing
+// failed but at least one was not_run; 0 only when everything passed.
+func (s *Summary) ExitCode() int {
+	failed := len(s.Blockers) > 0
+	notRun := false
+	for _, cr := range s.CaseResults {
+		switch cr.Outcome {
+		case OutcomeFailed:
+			failed = true
+		case OutcomeNotRun:
+			notRun = true
+		}
+	}
+	for _, rc := range s.Retrieval.Cases {
+		switch rc.Outcome {
+		case OutcomeFailed:
+			failed = true
+		case OutcomeNotRun:
+			notRun = true
+		}
+	}
+	switch {
+	case failed:
+		return 1
+	case notRun:
+		return 3
+	}
+	return 0
 }

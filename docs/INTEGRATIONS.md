@@ -8,12 +8,20 @@ Stdio only in v1 (ADR-014). Each serving process binds one immutable
 capability and one projection store; requests may narrow, never widen
 (FR-010/011).
 
+Expansion is pack-bound (ADR-029): pass the `pack_id` of a pack returned by
+`beme.resolve_context` in the same server session and the `record_id` of an
+item selected into it. Packs expire after 30 minutes and on server restart or
+projection rebuild; unknown, expired, unselected, denied, revoked, and
+nonexistent items all return "context item not available". Every tool reads
+through the durable tombstone ledger and returns `policy_blocked` when it
+cannot be read.
+
 Tool surface (ADR-009, contract-tested):
 
 | Tool | Purpose |
 |---|---|
 | `beme.resolve_context` | scoped ContextPack for the current task |
-| `beme.get_context_item` | expand a record already authorized in a current pack |
+| `beme.get_context_item` | expand a record selected into a ContextPack this server issued in the same session; requires `pack_id` + `record_id` (ADR-029) |
 | `beme.report_feedback` | quarantined observation/correction candidate |
 | `beme.status` | safe health/capability metadata (private sources hidden in work-safe) |
 

@@ -277,8 +277,9 @@ func TestPhysicalPurgeErasesAndBlocksResurrection(t *testing.T) {
 	if strings.Contains(text, purgeCanary) {
 		t.Fatal("restored backup resurrected purged content")
 	}
-	if !strings.Contains(strings.Join(degr, " "), "physically purged") {
-		t.Fatalf("restored purged store must carry a degradation notice; got %v", degr)
+	joined := strings.Join(degr, " ")
+	if !strings.Contains(joined, "out of date") || strings.Contains(joined, "purge") || strings.Contains(joined, "can-001") {
+		t.Fatalf("restored purged store must carry a generic rebuild notice that does not reveal the purge; got %v", degr)
 	}
 
 	// Migration rollback + re-migrate + rebuild.

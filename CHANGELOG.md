@@ -2,22 +2,15 @@
 
 All notable changes. Format: Keep a Changelog; versioning: semantic.
 
-## [Unreleased] — purge reliability (owner review)
-
-### Fixed
-- Projection purge deleted provenance by a convention-derived ID; it now
-  removes every ref in the record payload, the refs in the purge plan, and
-  rows matching the record's source identity.
-- A purge that failed part-way could not be re-run (the second run reported
-  not-found and stranded traces, observations, and canonical files). Purge is
-  now resumable through a content-free journal and idempotent (`already
-  purged`); `beme doctor` reports interrupted purges.
-- The purge ledger stored unkeyed digests of source content and statement
-  text — a dictionary oracle for low-entropy private data. Entries are now
-  keyed HMAC fingerprints of record identity only, with the key in
-  `ledger/purge.key` (git-ignored); a missing key fails closed (ADR-027).
+## [Unreleased]
 
 ### Added
+- Positive controls for every threat case; supplementary case S4 (restored
+  backup across every read surface, fail-closed without the key).
+- `TestReadSurfacesUseLedgerFilter`, durable-write primitives,
+  `Summary.ExitCode`, mutation-tested regression suites for every fix below,
+  and docs checks D13 (MCP tool table), D14 (no unqualified crash-safety
+  claims), D15 (single Unreleased section).
 - Failure-injection tests for every purge stage; provenance tests with
   multiple and nonconventional IDs; ledger minimality and key tests.
 - Shared threat-case registry `privacycorpus.NewSuite` (the empty
@@ -26,10 +19,6 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
   S1–S3.
 - Docs checks D10 (threat matrix matches the registry), D11 (runner claim
   backed by the shared registry), D12 (docs keep the ledger content-free).
-
-## [Unreleased] — purge, benchmark, harness verification, Windows
-
-### Added
 - `beme purge` / `app.PhysicalPurge` (FR-055, ADR-027): RED physical purge
   with typed confirmation and dry run. Erases the record from both
   projection stores (files rewritten), persisted traces, and restating
@@ -49,27 +38,6 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 - Docs-consistency checks D7 (requirements counts derived from rows), D8
   (runner readiness), D9 (referenced Go tests exist); D1 now also catches
   "Contracts-phase".
-
-### Fixed
-- CLI and MCP output printed a literal `\n` instead of newlines.
-- `beme forget` swallowed every tombstone error (the check compared an error
-  with itself).
-- Ingestion on Windows ingested nothing: relative paths used backslashes, so
-  include globs never matched. Paths and locators are now slash-separated.
-- Linux and Windows default directories used the macOS `~/Library` layout
-  (ADR-028: XDG on Linux, `%AppData%`/`%LocalAppData%` on Windows).
-- Requirements matrix: FR-055 carried a non-canonical status cell, which hid
-  one of the four `partial` rows from counts; statuses are now canonical and
-  the summary line is CI-checked.
-
-### Changed
-- Removed stale "Contracts-phase document" banners (ARCHITECTURE,
-  THREAT_MODEL); evals/README, ACCEPTANCE, ROADMAP, PRIVACY, OPERATIONS, and
-  INTEGRATIONS reconciled with the implemented state.
-
-## [Unreleased] — end-to-end verification hardening
-
-### Added
 - `TestMCPClientEndToEnd`: a real MCP client (official Go SDK) drives the
   real stdio server — initialize, tools/list (exactly four tools),
   resolve_context under work-safe, status (private sources hidden),
@@ -82,43 +50,12 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 - `TestAdapterInstallRemoveByteExact` + real-config verification: the
   adapter install→remove cycle is now byte-exact on real harness configs
   (found and fixed a separator-newline residue bug in the process).
-
-### Fixed
-- Adapter install/remove byte-exactness (FR-043): install previously left
-  separator newlines behind after removal; the managed-region design now
-  makes removal the exact inverse of installation.
-- Corrupt projection stores no longer brick `beme build`: the build path
-  recreates them (derived data only; canonical sources untouched).
-
-## [Unreleased] — documentation reconciliation (ADR-024)
-
-### Fixed
-- Removed stale lifecycle claims that failed the first fresh-agent
-  documentation test: "contracts phase / pre-implementation" (README),
-  "production implementation gated behind WP2B" (PROJECT_CONTEXT),
-  "WP2B blocked on user" and "WP4–WP11 not authorized" (ROADMAP), stale
-  fixture/test counts, and DEVELOPMENT.md's pre-ADR-023 description of
-  private-corpus coupling in the public validation path.
-- `docs/HANDOFF.md` §1 is now the single canonical current-status section;
-  every other lifecycle statement derives from it.
-- README and DEVELOPMENT now document a reproducible clean-checkout
-  validation bootstrap: Python 3.11+ requirement, isolated venv creation,
-  jsonschema + pyyaml install, behavior when the system Python is older,
-  and the exact commands that work from a clean checkout.
-- Evidence claims use command-derived references instead of hard-coded
-  counts (drift-prone prose).
-
-### Added
 - `scripts/test_docs_consistency.py` (D1–D6, CI-gated): phase
   contradictions, stale hard-coded counts, public/private validation
   semantics, bootstrap documentation presence, link integrity, and the
   canonical status anchor.
 - ADR-024: binding record of the failed documentation gate, remediation,
   and reopen condition.
-
-## [Unreleased] — learning and governance (WP9)
-
-### Added
 - `internal/learning`: the observation → candidate → batch-review pipeline
   (blueprint §14). Observations carry hypothesis, evidence family, family
   count, inherited sensitivity, and candidate scopes from creation.
@@ -136,6 +73,87 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 - `beme.report_feedback` (MCP) now writes through the learning store:
   durable data dir, family dedup, tombstone enforcement, capability-derived
   inherited sensitivity (FR-054).
+
+### Fixed
+- Purge planning ignored observation-store read failures and could finish
+  while matching observations remained; unreadable trace directories,
+  canonical paths, and projections were likewise reported done. Each now
+  aborts the purge (resumable) and no step is reported done over data that was
+  not inspected.
+- `beme export`, `beme explain`, MCP status counts, and
+  `beme.get_context_item` read projection stores without the durable ledger,
+  so a restored pre-purge backup exposed purged and revoked records. Every
+  read surface now applies the ledger and fails closed (exit 3 /
+  `policy_blocked`) when the ledger or purge key cannot be read (ADR-027).
+- `beme.get_context_item` returned any stored record — including revoked and
+  purged ones — whenever an unrelated resolution succeeded. It now requires a
+  `pack_id` + `record_id` from a pack issued by the same session (ADR-029).
+- Evaluation runner: a zero-score (prohibited) generation was reported
+  `passed`; generated text was missing from results and raw/blinded
+  artifacts; no-scope and canonical-only ablations graded the full pack.
+- Threat corpus: the secret fixture was never written (unchecked writes),
+  case 12 could panic, case 16 used a global `/tmp` marker, and cases 2, 3, 15,
+  17, 22, 23, 24, 26, and 29 could pass without exercising their threat.
+- `**` patterns followed by a multi-segment tail (`a/**/b/*.md`) never
+  matched, so such includes and excludes were silently ignored.
+- Ledger, key, and journal writes did not flush the parent directory, and the
+  docs overstated the crash durability of the ledger-first ordering.
+- `benchmark.Run` with an empty or unsafe `WorkDir` deleted `scale-N`
+  directories under the working directory; `beme-bench` leaked its temp dir
+  on error exits and ignored report write failures.
+- An existing `ledger/.gitignore` was left without the `purge.key` and
+  `pending/` rules.
+- `beme build` omitted purge-blocked counts in human output; a failed
+  `beme purge` hid its partial report; explain accepted trace IDs containing
+  path separators.
+- Projection purge deleted provenance by a convention-derived ID; it now
+  removes every ref in the record payload, the refs in the purge plan, and
+  rows matching the record's source identity.
+- A purge that failed part-way could not be re-run (the second run reported
+  not-found and stranded traces, observations, and canonical files). Purge is
+  now resumable through a content-free journal and idempotent (`already
+  purged`); `beme doctor` reports interrupted purges.
+- The purge ledger stored unkeyed digests of source content and statement
+  text — a dictionary oracle for low-entropy private data. Entries are now
+  keyed HMAC fingerprints of record identity only, with the key in
+  `ledger/purge.key` (git-ignored); a missing key fails closed (ADR-027).
+- CLI and MCP output printed a literal `\n` instead of newlines.
+- `beme forget` swallowed every tombstone error (the check compared an error
+  with itself).
+- Ingestion on Windows ingested nothing: relative paths used backslashes, so
+  include globs never matched. Paths and locators are now slash-separated.
+- Linux and Windows default directories used the macOS `~/Library` layout
+  (ADR-028: XDG on Linux, `%AppData%`/`%LocalAppData%` on Windows).
+- Requirements matrix: FR-055 carried a non-canonical status cell, which hid
+  one of the four `partial` rows from counts; statuses are now canonical and
+  the summary line is CI-checked.
+- Adapter install/remove byte-exactness (FR-043): install previously left
+  separator newlines behind after removal; the managed-region design now
+  makes removal the exact inverse of installation.
+- Corrupt projection stores no longer brick `beme build`: the build path
+  recreates them (derived data only; canonical sources untouched).
+- Removed stale lifecycle claims that failed the first fresh-agent
+  documentation test: "contracts phase / pre-implementation" (README),
+  "production implementation gated behind WP2B" (PROJECT_CONTEXT),
+  "WP2B blocked on user" and "WP4–WP11 not authorized" (ROADMAP), stale
+  fixture/test counts, and DEVELOPMENT.md's pre-ADR-023 description of
+  private-corpus coupling in the public validation path.
+- `docs/HANDOFF.md` §1 is now the single canonical current-status section;
+  every other lifecycle statement derives from it.
+- README and DEVELOPMENT now document a reproducible clean-checkout
+  validation bootstrap: Python 3.11+ requirement, isolated venv creation,
+  jsonschema + pyyaml install, behavior when the system Python is older,
+  and the exact commands that work from a clean checkout.
+- Evidence claims use command-derived references instead of hard-coded
+  counts (drift-prone prose).
+
+### Changed
+- `beme.get_context_item` input now requires `pack_id` (ADR-029); work-safe
+  expansions omit source identity.
+- CHANGELOG consolidated into a single Unreleased section.
+- Removed stale "Contracts-phase document" banners (ARCHITECTURE,
+  THREAT_MODEL); evals/README, ACCEPTANCE, ROADMAP, PRIVACY, OPERATIONS, and
+  INTEGRATIONS reconciled with the implemented state.
 
 ## [0.1.0-alpha.1] — 2026-09-14
 

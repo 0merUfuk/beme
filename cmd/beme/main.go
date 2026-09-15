@@ -137,6 +137,9 @@ func main() {
 				for _, s := range r.SecretRejected {
 					fmt.Printf("  secret-rejected: %s\n", s)
 				}
+				if r.PurgeBlocked > 0 {
+					fmt.Printf("  purge-blocked: %d entr(ies) refused by physical-purge tombstones (not re-ingested)\n", r.PurgeBlocked)
+				}
 			}
 		}
 	case "preview", "resolve":
@@ -249,11 +252,23 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(4)
 		case err != nil:
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			if rt.PendingPurges() > 0 {
-				fmt.Fprintln(os.Stderr, "the purge is resumable: re-run the same command to finish the remaining cleanup")
+			code := exitForReadErr(err)
+			resumable := rt.PendingPurges() > 0
+			if jsonOut {
+				json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "error", "error": err.Error(), "resumable": resumable, "report": rep})
+			} else {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				if rep != nil && len(rep.Steps) > 0 {
+					fmt.Fprintf(os.Stderr, "partial purge of %s — steps completed before the failure:\n", rep.Key)
+					for _, st := range rep.Steps {
+						fmt.Fprintf(os.Stderr, "  %-36s %-8s %d\n", st.Step, st.Outcome, st.Count)
+					}
+				}
+				if resumable {
+					fmt.Fprintln(os.Stderr, "the purge is resumable: re-run the same command to finish the remaining cleanup")
+				}
 			}
-			os.Exit(1)
+			os.Exit(code)
 		}
 		if jsonOut {
 			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "report": rep})
@@ -278,8 +293,8 @@ func main() {
 			fmt.Printf("  residual: %s\n", r)
 		}
 	case "serve", "mcp":
-		if transport != "stdio" {
-			fmt.Fprintf(os.Stderr, "error: only stdio transport is supported in v1 (ADR-014)\n")
+		if err := app.ValidateTransport(transport); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(3)
 		}
 		runMCPServer(configDir, profile, capability, strconv.FormatBool(experimentalLearned))
@@ -360,6 +375,18 @@ func doctor(configDir string, jsonOut bool) {
 			if _, err := os.Stat(rt.ProjectionPath(contracts.Profile(p))); err != nil {
 				findings = append(findings, fmt.Sprintf("projection %s not built yet (run: beme build --profile %s)", p, p))
 			}
+		}
+		for _, p := range []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe} {
+			pf, err := rt.ProjectionFindings(p)
+			if err != nil {
+				status = "policy_blocked"
+				findings = append(findings, fmt.Sprintf("projection %s cannot be read safely: %v", p, err))
+				continue
+			}
+			if len(pf) > 0 && status == "healthy" {
+				status = "degraded"
+			}
+			findings = append(findings, pf...)
 		}
 		if n := rt.PendingPurges(); n > 0 {
 			status = "degraded"

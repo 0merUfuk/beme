@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -102,6 +103,9 @@ type seedRecord struct {
 func Run(cfg Config) (*Report, error) {
 	if cfg.Iterations <= 0 || cfg.BuildRuns <= 0 || len(cfg.Scales) == 0 {
 		return nil, fmt.Errorf("benchmark: iterations, build runs, and scales must be positive")
+	}
+	if err := validateWorkDir(cfg.WorkDir); err != nil {
+		return nil, err
 	}
 	if cfg.Target <= 0 {
 		cfg.Target = time.Second
@@ -209,7 +213,7 @@ func runScale(cfg Config, seed []seedRecord, scale int) (*ScaleResult, error) {
 // materialize writes the seed corpus (replicated scale times) as markdown
 // entries plus a registered safe_declassified source, and loads a runtime.
 func materialize(root string, seed []seedRecord, scale int) (*app.Runtime, error) {
-	if err := os.RemoveAll(root); err != nil {
+	if err := removeOwnedScaleDir(root); err != nil {
 		return nil, err
 	}
 	cfg := filepath.Join(root, "cfg")
@@ -218,6 +222,9 @@ func materialize(root string, seed []seedRecord, scale int) (*app.Runtime, error
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
 		}
+	}
+	if err := os.WriteFile(filepath.Join(root, scaleMarker), []byte("created by beme-bench; safe to delete\n"), 0o600); err != nil {
+		return nil, err
 	}
 	for r := 0; r < scale; r++ {
 		for _, rec := range seed {
@@ -285,3 +292,79 @@ func percentile(sorted []time.Duration, p float64) time.Duration {
 func ms(d time.Duration) float64 { return round(float64(d) / float64(time.Millisecond)) }
 
 func round(v float64) float64 { return math.Round(v*1000) / 1000 }
+
+// scaleMarker marks directories this harness created; only those are ever
+// deleted.
+const scaleMarker = ".beme-bench-scale"
+
+// validateWorkDir rejects work dirs where deleting and recreating scale-N
+// directories could reach user data: empty, relative, a filesystem root, the
+// home directory or its ancestors, the current working directory or its
+// ancestors, and repository or workspace roots.
+func validateWorkDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return errors.New("benchmark: work dir is required (scale directories under it are deleted and recreated)")
+	}
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("benchmark: work dir must be an absolute path, got %q", dir)
+	}
+	clean := filepath.Clean(dir)
+	if filepath.Dir(clean) == clean {
+		return fmt.Errorf("benchmark: refusing filesystem root %q as work dir", clean)
+	}
+	candidates := withRealPath(clean)
+	covers := func(protected string) bool {
+		for _, c := range candidates {
+			for _, p := range withRealPath(protected) {
+				if c == p || isAncestor(c, p) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && covers(home) {
+		return fmt.Errorf("benchmark: refusing %q: it is or contains the home directory", clean)
+	}
+	if wd, err := os.Getwd(); err == nil && covers(wd) {
+		return fmt.Errorf("benchmark: refusing %q: it is or contains the current working directory", clean)
+	}
+	for _, marker := range []string{".git", ".hg", ".svn", "go.mod"} {
+		if _, err := os.Lstat(filepath.Join(clean, marker)); err == nil {
+			return fmt.Errorf("benchmark: refusing %q: it looks like a repository or workspace root (%s present)", clean, marker)
+		}
+	}
+	return nil
+}
+
+func withRealPath(p string) []string {
+	out := []string{filepath.Clean(p)}
+	if r, err := filepath.EvalSymlinks(p); err == nil && r != out[0] {
+		out = append(out, r)
+	}
+	return out
+}
+
+func isAncestor(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// removeOwnedScaleDir deletes a previous scale directory only when it carries
+// this harness's marker; any other existing path is refused.
+func removeOwnedScaleDir(root string) error {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("benchmark: refusing to replace %s: not a directory created by beme-bench", root)
+	}
+	if _, err := os.Lstat(filepath.Join(root, scaleMarker)); err != nil {
+		return fmt.Errorf("benchmark: refusing to delete %s: it was not created by beme-bench (no %s marker)", root, scaleMarker)
+	}
+	return os.RemoveAll(root)
+}

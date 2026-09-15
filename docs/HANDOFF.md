@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 12 — 2026-09-15
+**Revision:** 13 — 2026-09-15
 **Position:** `v0.1.0-alpha.1` published. Continuation work is on branch
 `feat/eval-runner-and-privacy-corpus`, PR
 [#1](https://github.com/0merUfuk/beme/pull/1). Every safely implementable
@@ -31,11 +31,27 @@ revised); the privacy corpus is one shared registry
 and the runner `cmd/beme-threat-corpus`, with supplementary cases S1–S3;
 docs checks D10–D12 and a CI runner step guard these.
 
+**Rev 13 — release-blocking correctness and privacy gaps (owner review; PR
+#1 still not to be merged):** every issue was first reproduced against
+`597bfc4`, then fixed. Purge inspection failures (observation store, traces,
+canonical paths) now abort instead of reporting done; ledger, key, and
+journal writes cross a documented durability boundary before any erasure.
+Every read surface — resolve, export, explain, doctor, MCP status and
+expansion — applies the ledger and fails closed (ADR-027 §7), and
+`beme.get_context_item` is bound to packs the same session issued (ADR-029).
+The evaluation runner fails blocker units, keeps response text, and reports
+unimplemented ablations `not_run`. Every threat case has a positive control;
+S4 covers restored backups across all read surfaces. `**` globs with
+multi-segment tails match. The benchmark refuses unsafe work dirs. Existing
+ledger `.gitignore` files gain the required rules. All CodeRabbit review
+comments were dispositioned in the PR description.
+
 ## 1. Status
 
-**Current (rev 11):** PR #1 is open against `main` with CI on macOS, Ubuntu,
-and Windows plus the private-data scan. Nothing from this continuation is
-released or tagged; `main` is unchanged until the owner merges. The alpha
+**Current (rev 13):** PR #1 is open against `main`, unmerged at the owner's
+instruction, with CI on macOS, Ubuntu, and Windows plus the private-data
+scan. Nothing from this continuation is released or tagged; `main` is
+unchanged until the owner merges. The alpha
 release history below remains accurate.
 
 v0.1.0-alpha shipped with a release-verification failure (public CI read a
@@ -145,6 +161,10 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
   key in `ledger/purge.key`. Verified at raw-byte level on synthetic data,
   with failure injection at every stage; no resurrection through sync,
   backup restore, migration rollback, or corrupt-store recovery.
+- **Read surfaces + expansion** (`internal/app/visibility.go`, `expand.go`):
+  ADR-027 §7 and ADR-029; guarded by `TestReadSurfacesUseLedgerFilter`.
+- **Durable writes** (`internal/app/durable*.go`): file + parent-directory
+  flush on Unix, `MOVEFILE_WRITE_THROUGH` on Windows.
 - **Threat corpus registry** (`internal/privacycorpus/cases.go`,
   `cmd/beme-threat-corpus`): one registry for the Go test and the runner;
   §19 cases plus S1–S3; runner exit 0/1/3 (`TestThreatCorpusRunner`).
@@ -253,7 +273,7 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 | Mandatory-content budget protection (FR-035) | PASS |
 | Unknown-preference negative control (never invented) | PASS |
 | Clean history for publication | Single squashed root commit from audited tree (no private-term history) |
-| Documentation consistency (D1–D6) | `python3 scripts/test_docs_consistency.py` → all checks pass, exit 0 (CI-gated) |
+| Documentation consistency at the 2026-09-15 fresh-agent re-test (historical; the gate had D1–D6 then) | all six checks passed, exit 0 (CI-gated) |
 | Released module install | `go install github.com/0merUfuk/beme/cmd/beme@v0.1.0-alpha.1` → exit 0; installed binary runs (`status --json` OK; transport elevation rejected, exit 3) |
 | Privacy threat corpus (`TestPrivacyCorpusDeterministic`) | all 30 §19 cases executed and passing; none `not_run` |
 | Physical purge on synthetic data (`TestPhysicalPurgeErasesAndBlocksResurrection`) | purged text absent from every file under data, cache, and canonical root; no resurrection via sync, re-key, restore, rollback |
@@ -266,7 +286,15 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 | Purge resumability (`TestPhysicalPurgeResumesAfterFailureAtEveryStage`, `TestPhysicalPurgeIsIdempotent`) | failure injected at every stage (mid-stage for traces/observations); second run completes all cleanup; third run `already_purged` |
 | Ledger minimality (`TestPurgeLedgerIsKeyedAndContentFree`, `TestMissingPurgeKeyFailsClosed`) | no IDs, content digests, or timestamps; foreign key matches nothing; missing key fails closed |
 | Threat corpus runner (`go run ./cmd/beme-threat-corpus --repo .`, CI step on all three OSes) | every case passed; exit 3 without a checkout (case 19 `not_run`) |
-| Documentation consistency (D1–D12) | `python3 scripts/test_docs_consistency.py` → all checks pass |
+| Purge inspection failures (`TestPurgePlanningFailsOnCorruptObservation`, `TestPurgeResumeWithObservationStorageFailures`, `TestPurgeFailsOnUnreadableTracesAndCanonicalPaths`) | planning and resume abort over uninspectable storage; no step reported done; purge completes once storage is readable |
+| Durability boundary (`TestPurgeErasesNothingBeforeDurabilityBoundary`, `TestDurableWritesReportDirectoryFlushFailure`) | injected ledger or journal flush failure → nothing erased; completes after flushes succeed |
+| Read surfaces after a restored backup (`TestRestoredBackupHiddenOnEveryReadSurface`, `TestRestoredBackupCannotResurrectOnAnySurface`, `TestUnusableLedgerFailsClosedOnEveryReadSurface`) | resolve, export, explain, doctor, MCP status/resolve/expansion hide purged and revoked records; missing key or corrupt ledger fails each closed |
+| Pack-bound expansion (`TestExpandItemIsPackBound`) | eligible-but-unselected, unknown, replayed, expired, rebuilt, revoked, nonexistent → one refusal |
+| Evaluation runner (`TestRunnerBlockerFailsUnitAndPreservesText`, `TestSummaryExitCodeContract`) | blocker fails unit and exit; text in results, raw and blinded artifacts |
+| Glob tails (`TestMatchGlobTable`, `TestWalkIncludeExcludeNestedTails`) | direct and nested `a/**/b/*.md` include and exclude |
+| Benchmark guard (`TestBenchmarkRefusesUnsafeWorkDir`, `TestBenchCleansUpOnEveryExit`) | unsafe work dirs rejected, no user data deleted, temp dir removed on every exit |
+| Mutation evidence | each blocker's defect reintroduced in a scratch copy; its tests fail (recorded in the PR description) |
+| Documentation consistency (D1–D15) | `python3 scripts/test_docs_consistency.py` → all checks pass |
 
 
 ## 10. Reply/ownership venue

@@ -143,13 +143,27 @@ func TestRunnerFullPipelineB0ThroughB4(t *testing.T) {
 	// every case×arm executed and passed
 	executed := 0
 	for _, cr := range summary.CaseResults {
+		executed++
+		if cr.Arm == evalrunner.ArmAblNoScope || cr.Arm == evalrunner.ArmAblCanonOnly {
+			if cr.Outcome != evalrunner.OutcomeNotRun || cr.Reason == "" || len(cr.PerRepeat) != 0 {
+				t.Fatalf("unimplemented ablation %s must be not_run with a reason and no graded repeats; got %s", cr.Arm, cr.Outcome)
+			}
+			continue
+		}
 		if cr.Outcome != evalrunner.OutcomePassed {
-			t.Fatalf("case %s arm %s: outcome %s (%s) — the deterministic fixture should pass every arm", cr.CaseID, cr.Arm, cr.Outcome, cr.Reason)
+			t.Fatalf("case %s arm %s: outcome %s (%s) — the deterministic fixture should pass every implemented arm", cr.CaseID, cr.Arm, cr.Outcome, cr.Reason)
 		}
 		if len(cr.PerRepeat) != 3 {
 			t.Fatalf("case %s arm %s: expected 3 repeats, got %d", cr.CaseID, cr.Arm, len(cr.PerRepeat))
 		}
-		executed++
+		for _, rr := range cr.PerRepeat {
+			if rr.Text == "" {
+				t.Fatalf("case %s arm %s repeat %d: generated text must be preserved", cr.CaseID, cr.Arm, rr.Repeat)
+			}
+		}
+	}
+	if code := summary.ExitCode(); code != 3 {
+		t.Fatalf("a run with not_run units must exit 3; got %d", code)
 	}
 	wantUnits := 2 * len(evalrunner.AllArms)
 	if executed != wantUnits {
@@ -167,8 +181,9 @@ func TestRunnerFullPipelineB0ThroughB4(t *testing.T) {
 	// manifests: every required field present, digests recorded
 	manifestDir := filepath.Join(outDir, summary.RunID, "manifests")
 	entries, _ := os.ReadDir(manifestDir)
-	if len(entries) != 2*len(evalrunner.AllArms)*3 {
-		t.Fatalf("expected %d manifests, got %d", 2*len(evalrunner.AllArms)*3, len(entries))
+	implemented := len(evalrunner.AllArms) - 2
+	if len(entries) != 2*implemented*3 {
+		t.Fatalf("expected %d manifests, got %d", 2*implemented*3, len(entries))
 	}
 	manifestSample := map[string]any{}
 	data, _ := os.ReadFile(filepath.Join(manifestDir, entries[0].Name()))
@@ -319,6 +334,9 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 	if sum.Retrieval.Measured != 2 || sum.Retrieval.Recall != 0.75 || sum.Retrieval.ThresholdsMet {
 		t.Fatalf("aggregate retrieval: %+v", sum.Retrieval)
 	}
+	if code := sum.ExitCode(); code != 1 {
+		t.Fatalf("a failed retrieval measurement must force exit 1; got %d", code)
+	}
 
 	// no lookup configured → every case explicitly not_run
 	sum2, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: []evalrunner.Arm{evalrunner.ArmB0}, OutputDir: t.TempDir()},
@@ -328,5 +346,117 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 	}
 	if sum2.Retrieval.Measured != 0 || sum2.Retrieval.ThresholdsMet {
 		t.Fatalf("retrieval without a refs lookup must not be measured: %+v", sum2.Retrieval)
+	}
+}
+
+// prohibitedProvider always answers with case 1's prohibited conclusion.
+type prohibitedProvider struct{}
+
+const prohibitedAnswer = "embedded database file; the user dislikes client-server databases"
+
+func (prohibitedProvider) Name() string { return "mock_prohibited" }
+func (prohibitedProvider) Generate(req evalrunner.GenerationRequest) (evalrunner.GenerationResult, error) {
+	return evalrunner.GenerationResult{Text: prohibitedAnswer + " [" + req.CaseID + "]"}, nil
+}
+
+// TestRunnerBlockerFailsUnitAndPreservesText: a zero-score (prohibited)
+// generation fails its unit, is recorded as a blocker, is never averaged,
+// forces a non-success exit, and the generated text survives into the result,
+// raw artifacts, and blinded grading artifacts.
+func TestRunnerBlockerFailsUnitAndPreservesText(t *testing.T) {
+	rt, _ := fixtureDeployment(t)
+	corpus, err := evalrunner.LoadCorpus(fixtureCorpus(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(p contracts.Profile, task, ws string) (resolver.Pack, error) {
+		s, err := rt.Serve(p, "cap_eval_blocker", false)
+		if err != nil {
+			return resolver.Pack{}, err
+		}
+		defer s.Store.Close()
+		return s.ResolveOnly(task, ws)
+	}
+	out := t.TempDir()
+	arms := []evalrunner.Arm{evalrunner.ArmB0, evalrunner.ArmB4}
+	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{Arms: arms, OutputDir: out}, prohibitedProvider{}, evalrunner.DeterministicGrader{}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked, passed := 0, 0
+	for _, cr := range sum.CaseResults {
+		if len(cr.PerRepeat) == 0 || cr.PerRepeat[0].Text == "" || !strings.Contains(cr.PerRepeat[0].Text, prohibitedAnswer) {
+			t.Fatalf("%s/%s: generated text must be preserved in the result; got %+v", cr.CaseID, cr.Arm, cr.PerRepeat)
+		}
+		switch cr.CaseID {
+		case "decision.architecture.storage.embedded-vs-server.synthetic.v1":
+			if cr.Outcome != evalrunner.OutcomeFailed || !strings.HasPrefix(cr.Reason, "blocker:") || cr.Score != 0 || len(cr.PerRepeat) != 1 {
+				t.Fatalf("prohibited output must fail the unit at the first blocker: %+v", cr)
+			}
+			blocked++
+		default:
+			if cr.Outcome != evalrunner.OutcomePassed || len(cr.PerRepeat) != 3 {
+				t.Fatalf("non-prohibited case must still pass with all repeats: %+v", cr)
+			}
+			passed++
+		}
+	}
+	if blocked != len(arms) || passed != len(arms) || len(sum.Blockers) != len(arms) {
+		t.Fatalf("blocked=%d passed=%d blockers=%d", blocked, passed, len(sum.Blockers))
+	}
+	if code := sum.ExitCode(); code != 1 {
+		t.Fatalf("a blocker must force exit 1; got %d", code)
+	}
+
+	var saved evalrunner.Summary
+	data, err := os.ReadFile(filepath.Join(out, sum.RunID, "summary.json"))
+	if err != nil || json.Unmarshal(data, &saved) != nil {
+		t.Fatalf("summary.json unreadable: %v", err)
+	}
+	if saved.ExitCode() != 1 {
+		t.Fatal("the persisted summary must carry the blocker")
+	}
+	for _, sub := range []string{"raw", "blinded"} {
+		files, err := os.ReadDir(filepath.Join(out, sum.RunID, sub))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("%s artifacts missing: %v", sub, err)
+		}
+		for _, f := range files {
+			b, _ := os.ReadFile(filepath.Join(out, sum.RunID, sub, f.Name()))
+			if !strings.Contains(string(b), prohibitedAnswer) {
+				t.Fatalf("%s/%s lacks the generated text", sub, f.Name())
+			}
+			if sub == "blinded" {
+				for _, arm := range arms {
+					if strings.Contains(string(b), "\""+string(arm)+"\"") {
+						t.Fatalf("blinded artifact %s leaks arm %s", f.Name(), arm)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestSummaryExitCodeContract pins exit aggregation.
+func TestSummaryExitCodeContract(t *testing.T) {
+	pass := evalrunner.CaseResult{Outcome: evalrunner.OutcomePassed}
+	fail := evalrunner.CaseResult{Outcome: evalrunner.OutcomeFailed}
+	notRun := evalrunner.CaseResult{Outcome: evalrunner.OutcomeNotRun}
+	cases := []struct {
+		name string
+		s    evalrunner.Summary
+		want int
+	}{
+		{"all passed", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass, pass}}, 0},
+		{"not_run only", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass, notRun}}, 3},
+		{"failure beats not_run", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{notRun, fail}}, 1},
+		{"blocker alone", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass}, Blockers: []string{"x"}}, 1},
+		{"retrieval failed", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass}, Retrieval: evalrunner.RetrievalSummary{Cases: []evalrunner.RetrievalCase{{Outcome: evalrunner.OutcomeFailed}}}}, 1},
+		{"retrieval not_run", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass}, Retrieval: evalrunner.RetrievalSummary{Cases: []evalrunner.RetrievalCase{{Outcome: evalrunner.OutcomeNotRun}}}}, 3},
+	}
+	for _, c := range cases {
+		if got := c.s.ExitCode(); got != c.want {
+			t.Errorf("%s: exit %d, want %d", c.name, got, c.want)
+		}
 	}
 }

@@ -112,7 +112,8 @@ bundle. The privacy item is deterministic and checked on its own evidence.
 - [ ] Non-ambiguous cross-run decision stability: ≥85%.
 - [ ] Pre-decision context-use rate: 100% on every `assured` surface.
 - [x] All privacy adversarial cases pass — every §19 threat case and the
-      supplementary purge-reliability cases S1–S3 execute and pass from the
+      supplementary cases S1–S4, each behind a positive control proving its
+      fixture is present and detectable, execute and pass from the
       shared registry, none `not_run` (`TestPrivacyCorpusDeterministic`;
       runner `cmd/beme-threat-corpus`, `TestThreatCorpusRunner`; ADR-027).
 
@@ -129,7 +130,10 @@ this gate passed. Item-level status:
       sources byte-identical and resolution restored
       (`TestCorruptStoreRecovery`); revoke/forget tombstones honored in
       resolution and their rebuild semantics pinned
-      (`TestRebuildDoesNotResurrectForgotten`, `TestRevocationTombstone`).
+      (`TestRebuildDoesNotResurrectForgotten`, `TestRevocationTombstone`);
+      revoked and purged records stay hidden on every read surface after a
+      backup restore (`TestRestoredBackupHiddenOnEveryReadSurface`,
+      `TestRestoredBackupCannotResurrectOnAnySurface`).
 - [x] ≥2 Tier 1 harness adapters verified end to end (2026-09-15):
       protocol level — a real MCP client (official Go SDK) connected to the
       real stdio server, listed exactly the four tools, resolved a pack

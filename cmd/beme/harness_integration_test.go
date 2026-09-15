@@ -129,7 +129,11 @@ func TestCodexHarnessIntegration(t *testing.T) {
 			t.Fatalf("codex mcp list: %v\n%s", err, out)
 		}
 		var servers []map[string]any
-		if err := json.Unmarshal([]byte(out[strings.Index(out, "["):]), &servers); err != nil {
+		i := strings.Index(out, "[")
+		if i < 0 {
+			t.Fatalf("codex mcp list --json produced no JSON array:\n%s", out)
+		}
+		if err := json.Unmarshal([]byte(out[i:]), &servers); err != nil {
 			t.Fatalf("codex mcp list --json unparseable: %v\n%s", err, out)
 		}
 		return servers

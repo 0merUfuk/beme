@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,34 +14,34 @@ import (
 	"github.com/0merUfuk/beme/internal/resolver"
 )
 
-// explainCmd implements `beme context explain --trace <id>` (blueprint
-// §12.2, FR-038): explain output is generated from the ACTUAL resolver
-// trace created during resolution, never an LLM-generated retrospective.
-//
-// v1 trace persistence: traces are written to the cache dir as JSON at
-// resolution time (preview/resolve and MCP resolve_context both persist
-// them); explain loads one by trace id. Work-safe explain output cannot
-// reveal denied record names, raw paths, or personal evidence (FR-039):
-// trace steps carry only stage names, record IDs of SELECTED items, and
-// exclusion REASONS (which are class-level, e.g. "sensitivity denied",
-// never content).
-func explainCmd(rt *app.Runtime, traceID, profile string, jsonOut bool) {
-	dir := filepath.Join(rt.Config.CacheDir, "traces")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+// exitForReadErr maps read-surface errors to the CLI exit contract: an
+// unusable tombstone ledger or purge key is policy-blocked (3) — the command
+// never falls back to unfiltered projection data.
+func exitForReadErr(err error) int {
+	if errors.Is(err, app.ErrLedgerUnusable) {
+		return 3
 	}
-	path := filepath.Join(dir, strings.TrimPrefix(traceID, "trace_")+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		// Not-found and unreadable are indistinguishable by design.
+	return 1
+}
+
+// explainCmd implements `beme explain --trace <id>` (blueprint §12.2,
+// FR-038): explain output is generated from the ACTUAL resolver trace created
+// during resolution, never an LLM-generated retrospective.
+//
+// Traces are persisted to the cache dir at resolution time. explain loads one
+// through app.LoadTrace, which drops every step naming a record that is not
+// visible in the current projection (revoked, purged, or restored from a
+// backup) and fails closed when the tombstone ledger is unusable. Not-found
+// and rejected traces are indistinguishable (exit 4).
+func explainCmd(rt *app.Runtime, traceID, profile string, jsonOut bool) {
+	steps, err := rt.LoadTrace(contracts.Profile(profile), traceID)
+	switch {
+	case errors.Is(err, app.ErrTraceUnavailable):
 		fmt.Fprintln(os.Stderr, "error: trace not available")
 		os.Exit(4)
-	}
-	var steps []resolver.TraceStep
-	if err := json.Unmarshal(data, &steps); err != nil {
-		fmt.Fprintln(os.Stderr, "error: trace unreadable")
-		os.Exit(1)
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "policy blocked: %v\n", err)
+		os.Exit(exitForReadErr(err))
 	}
 	if jsonOut {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -100,49 +101,33 @@ func pruneTraces(dir string, keep int) {
 	}
 }
 
-// exportCmd implements `beme export` (blueprint §12.2): a bounded, JSON
-// export of a projection's normalized records + provenance. The export is
-// derived data, never canonical, and carries its sensitivity labels so a
-// downstream consumer can honor them. Secrets (secret_never_ingest) are
-// never exportable (they were never ingested).
+// exportCmd implements `beme export` (blueprint §12.2): a bounded JSON export
+// of a projection's normalized records + provenance. It reads through
+// app.ExportProjection, so revoked and purged records (including ones in a
+// restored backup) never appear, and an unusable ledger fails closed.
 func exportCmd(rt *app.Runtime, profile, outPath string, jsonOut bool) {
-	store, err := app.OpenStoreForProfile(rt, contracts.Profile(profile))
+	exp, err := rt.ExportProjection(contracts.Profile(profile))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer store.Close()
-
-	type exportRecord struct {
-		Record     contracts.Record       `json:"record"`
-		Provenance []contracts.Provenance `json:"provenance"`
-	}
-	out := []exportRecord{}
-	for _, rec := range store.Records() {
-		er := exportRecord{Record: rec}
-		for _, pid := range rec.ProvenanceRefs {
-			if p, ok := store.Provenance(pid); ok {
-				er.Provenance = append(er.Provenance, p)
-			}
-		}
-		out = append(out, er)
+		os.Exit(exitForReadErr(err))
 	}
 	payload := map[string]any{
 		"schema_version": contracts.SchemaVersion,
-		"profile":        profile,
+		"profile":        exp.Profile,
 		"exported_at":    cmdNowUTC(),
 		"derived_note":   "derived data; never canonical; sensitivity labels must be honored downstream",
-		"records":        out,
+		"records":        exp.Records,
 	}
-
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	if outPath == "-" {
-		os.Stdout.Write(data)
-		fmt.Println()
+		if _, err := os.Stdout.Write(append(data, '\n')); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write export: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if err := os.WriteFile(outPath, data, 0o600); err != nil {
@@ -150,6 +135,6 @@ func exportCmd(rt *app.Runtime, profile, outPath string, jsonOut bool) {
 		os.Exit(1)
 	}
 	if !jsonOut {
-		fmt.Printf("exported %d records → %s (derived data; never canonical)\n", len(out), outPath)
+		fmt.Printf("exported %d records → %s (derived data; never canonical)\n", len(exp.Records), outPath)
 	}
 }

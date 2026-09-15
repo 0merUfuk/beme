@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,8 +89,12 @@ func Open(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{dir: dir, index: map[string]bool{}}
-	// load existing tombstones
-	entries, _ := os.ReadDir(dir)
+	// load existing tombstones; an unreadable store is an error, never an
+	// empty one (tombstones and purge inspection depend on it)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read observations: %w", err)
+	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -222,16 +227,72 @@ func (s *Store) List(status string) []Observation {
 }
 
 // Get fetches one observation by ID.
+// ErrObservationNotFound: no observation with that ID exists.
+var ErrObservationNotFound = errors.New("observation not found")
+
+func validObservationID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, `/\`) && id != "." && id != ".."
+}
+
 func (s *Store) Get(id string) (*Observation, error) {
+	if !validObservationID(id) {
+		return nil, fmt.Errorf("%w: %s", ErrObservationNotFound, id)
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %s", ErrObservationNotFound, id)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("observation not found: %s", id)
+		return nil, fmt.Errorf("observation %s unreadable: %w", id, err)
 	}
 	var obs Observation
 	if err := json.Unmarshal(data, &obs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("observation %s corrupt: %w", id, err)
 	}
 	return &obs, nil
+}
+
+// ListAll returns every observation, failing on an unreadable directory or
+// any unreadable or corrupt observation file. Purge planning uses it so a
+// store that cannot be fully inspected never looks like a store with no
+// matches.
+func (s *Store) ListAll() ([]Observation, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, fmt.Errorf("read observations: %w", err)
+	}
+	out := []Observation{}
+	for _, e := range sortedEntries(entries) {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("observation %s unreadable: %w", e.Name(), err)
+		}
+		var obs Observation
+		if err := json.Unmarshal(data, &obs); err != nil {
+			return nil, fmt.Errorf("observation %s corrupt: %w", e.Name(), err)
+		}
+		out = append(out, obs)
+	}
+	return out, nil
+}
+
+// Exists reports whether an observation file exists (read errors other than
+// not-exist are returned).
+func (s *Store) Exists(id string) (bool, error) {
+	if !validObservationID(id) {
+		return false, fmt.Errorf("invalid observation id %q", id)
+	}
+	_, err := os.Stat(filepath.Join(s.dir, id+".json"))
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	}
+	return false, err
 }
 
 // Review applies one §14.5 batch-review action. Canonical promotion is NOT
@@ -338,16 +399,19 @@ func sortedEntries(entries []os.DirEntry) []os.DirEntry {
 	return out
 }
 
-// Remove deletes one observation file. It exists only for the RED physical
-// purge workflow (§7.8 derived purge of pending observations); ordinary
-// review never deletes observations.
-func (s *Store) Remove(id string) error {
-	if id == "" || strings.ContainsAny(id, `/\`) {
-		return fmt.Errorf("invalid observation id %q", id)
+// Remove deletes one observation file and reports whether it existed. It
+// exists only for the RED physical purge workflow (§7.8 derived purge of
+// pending observations); ordinary review never deletes observations.
+func (s *Store) Remove(id string) (bool, error) {
+	if !validObservationID(id) {
+		return false, fmt.Errorf("invalid observation id %q", id)
 	}
 	err := os.Remove(filepath.Join(s.dir, id+".json"))
-	if os.IsNotExist(err) {
-		return nil
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
 	}
-	return err
+	return false, err
 }

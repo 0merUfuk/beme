@@ -17,13 +17,16 @@ Public evaluation assets for the engine's claims.
 The runners live in Go packages so they share the production runtime path:
 
 - `internal/evalrunner` — the EVALUATION_CONTRACT.md runner: B0–B4 arms,
-  ablations, repeat runs, immutable manifests, blinded packaging, retrieval
-  recall/precision, explicit `passed`/`failed`/`not_run`. Proven end to end
-  with deterministic mock providers on public synthetic fixtures
-  (`TestRunnerFullPipelineB0ThroughB4`, `TestRunnerRetrievalMetrics`).
+  implemented ablations (no-scope and canonical-only report `not_run`),
+  repeat runs, immutable manifests, blinded packaging with the generated
+  text, retrieval recall/precision, explicit `passed`/`failed`/`not_run`; a
+  zero-score blocker fails its unit and `Summary.ExitCode` returns 0/1/3.
+  Proven end to end with deterministic mock providers on public synthetic
+  fixtures (`TestRunnerFullPipelineB0ThroughB4`,
+  `TestRunnerBlockerFailsUnitAndPreservesText`, `TestRunnerRetrievalMetrics`).
 - `internal/privacycorpus` + `cmd/beme-threat-corpus` — the shared threat-case
-  registry (`NewSuite`): every §19 case plus supplementary purge-reliability
-  cases S1–S3, executed by `TestPrivacyCorpusDeterministic` and by the runner
+  registry (`NewSuite`): every §19 case plus supplementary cases S1–S4, each
+  behind a positive control, executed by `TestPrivacyCorpusDeterministic` and by the runner
   (`go run ./cmd/beme-threat-corpus --repo .`; exit 0 all passed, 1 failed,
   3 not_run).
 - `internal/benchmark` + `cmd/beme-bench` — the reproducible performance

@@ -5,7 +5,8 @@ package app
 //   - Forget: logical tombstone, recorded in the store AND the durable ledger.
 //   - PhysicalPurge: RED, irreversible, idempotent, resumable. It writes the
 //     keyed anti-resurrection fingerprints first, then a content-free journal
-//     of the planned deletions, then erases the record from every projection
+//     of the planned deletions — both durably (durable.go) — and only then
+//     erases the record from every projection
 //     store (with on-disk erasure), persisted traces, pending observations,
 //     and (optionally) canonical source files. Every step tolerates work
 //     already done, so re-running the same purge after a partial failure
@@ -72,32 +73,6 @@ func (rt *Runtime) Forget(profile contracts.Profile, key, reason string) error {
 	}
 	defer store.Close()
 	return store.Tombstone(key, reason)
-}
-
-// EffectiveRevoked merges store tombstones with the durable ledger and marks
-// any record whose identity matches a purge fingerprint. restoredPurged
-// reports whether the store still holds purged records (e.g. restored from a
-// backup).
-func (rt *Runtime) EffectiveRevoked(profile contracts.Profile, store *storage.Store) (revoked map[string]bool, restoredPurged bool, err error) {
-	revoked = store.RevokedSet()
-	l, err := rt.LoadLedger()
-	if err != nil {
-		return nil, false, err
-	}
-	for _, r := range l.Revocations {
-		if r.Profile == "" || r.Profile == string(profile) {
-			revoked[r.Key] = true
-		}
-	}
-	if len(l.Purges) > 0 {
-		for _, rec := range store.Records() {
-			if l.Purged(rec) {
-				revoked[rec.RecordID] = true
-				restoredPurged = true
-			}
-		}
-	}
-	return revoked, restoredPurged, nil
 }
 
 // PurgeRequest describes one physical purge.
@@ -193,14 +168,14 @@ func (rt *Runtime) saveJournal(key string, j *purgeJournal) error {
 	if err := rt.ensureLedgerDir(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(rt.pendingDir(), 0o700); err != nil {
+	if err := ensureDirDurable(rt.pendingDir()); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(rt.journalPath(key), data, 0o600)
+	return writeFileDurable(rt.journalPath(key), data, 0o600)
 }
 
 // PhysicalPurge executes (or resumes) the RED physical-purge workflow.
@@ -287,7 +262,11 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	}
 	for _, p := range allProfiles {
 		path := rt.ProjectionPath(p)
-		if _, err := os.Stat(path); err != nil {
+		exists, err := statExists(path)
+		if err != nil {
+			return rep, fmt.Errorf("inspect %s projection: %w", p, err)
+		}
+		if !exists {
 			continue
 		}
 		store, err := storage.Open(path)
@@ -330,9 +309,17 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	// that appeared since planning.
 	traceDir := filepath.Join(rt.Config.CacheDir, "traces")
 	traces := 0
-	for _, name := range unionSorted(plan.Traces, rt.tracesNaming(ids)) {
+	current, err := rt.tracesNaming(ids)
+	if err != nil {
+		return rep, fmt.Errorf("inspect traces: %w", err)
+	}
+	for _, name := range unionSorted(plan.Traces, current) {
 		path := filepath.Join(traceDir, filepath.Base(name))
-		if _, err := os.Stat(path); err != nil {
+		exists, err := statExists(path)
+		if err != nil {
+			return rep, fmt.Errorf("inspect trace: %w", err)
+		}
+		if !exists {
 			continue // already removed
 		}
 		traces++
@@ -347,16 +334,27 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 	}
 	rep.Steps = append(rep.Steps, PurgeStep{Step: "derived_purge_traces", Outcome: outcome, Count: traces})
 
-	// 5. Pending observations that restate the content (matched at planning).
+	// 5. Pending observations that restate the content (matched at planning,
+	// when the store was fully inspected). A store that cannot be inspected
+	// aborts the purge; the step is never reported done.
 	obsRemoved := 0
 	if len(plan.Observations) > 0 {
-		if _, err := os.Stat(filepath.Join(rt.Config.DataDir, "observations")); err == nil {
+		obsDir := filepath.Join(rt.Config.DataDir, "observations")
+		exists, err := statExists(obsDir)
+		if err != nil {
+			return rep, fmt.Errorf("inspect observations: %w", err)
+		}
+		if exists {
 			obsStore, err := learning.Open(rt.Config.DataDir)
 			if err != nil {
-				return rep, fmt.Errorf("open observations: %w", err)
+				return rep, fmt.Errorf("inspect observations: %w", err)
 			}
 			for _, id := range plan.Observations {
-				if _, err := obsStore.Get(id); err != nil {
+				present, err := obsStore.Exists(id)
+				if err != nil {
+					return rep, fmt.Errorf("inspect observation: %w", err)
+				}
+				if !present {
 					continue // already removed
 				}
 				obsRemoved++
@@ -364,7 +362,7 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 					if err := fail(StageObservation); err != nil {
 						return rep, err
 					}
-					if err := obsStore.Remove(id); err != nil {
+					if _, err := obsStore.Remove(id); err != nil {
 						return rep, fmt.Errorf("remove observation: %w", err)
 					}
 				}
@@ -392,11 +390,22 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 			}
 			for _, loc := range r.Locators {
 				path, err := containedPath(sd.Root, loc)
-				if err != nil {
+				switch {
+				case errors.Is(err, errLocatorEscapes):
+					// refusing to delete outside the registered root is a
+					// policy decision, reported as a residual
 					rep.Residuals = append(rep.Residuals, "canonical file for "+r.RecordID+" not removed: "+err.Error())
 					continue
+				case errors.Is(err, errSourceRootGone):
+					continue // the registered root no longer exists: nothing left there
+				case err != nil:
+					return rep, fmt.Errorf("inspect canonical file for %s: %w", r.RecordID, err)
 				}
-				if _, err := os.Stat(path); err != nil {
+				exists, err := statExists(path)
+				if err != nil {
+					return rep, fmt.Errorf("inspect canonical file for %s: %w", r.RecordID, err)
+				}
+				if !exists {
 					continue // already removed
 				}
 				removed++
@@ -434,7 +443,7 @@ func (rt *Runtime) PhysicalPurge(req PurgeRequest) (*PurgeReport, error) {
 		if err := fail(StageFinalize); err != nil {
 			return rep, err
 		}
-		if err := os.Remove(rt.journalPath(req.Key)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeFileDurable(rt.journalPath(req.Key)); err != nil {
 			return rep, fmt.Errorf("remove purge journal: %w", err)
 		}
 	}
@@ -451,14 +460,23 @@ func (rt *Runtime) planPurge(key string) (*purgeJournal, error) {
 	texts := map[string][]string{}
 	for _, p := range allProfiles {
 		path := rt.ProjectionPath(p)
-		if _, err := os.Stat(path); err != nil {
+		exists, err := statExists(path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect %s projection: %w", p, err)
+		}
+		if !exists {
 			continue
 		}
 		store, err := storage.Open(path)
 		if err != nil {
 			return nil, fmt.Errorf("open %s projection: %w", p, err)
 		}
-		for _, rec := range store.Records() {
+		recs, err := store.AllRecords()
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("read %s projection: %w", p, err)
+		}
+		for _, rec := range recs {
 			match := rec.RecordID == key
 			if src, ok := strings.CutPrefix(key, "source:"); ok {
 				match = rec.SourceID == src
@@ -498,14 +516,29 @@ func (rt *Runtime) planPurge(key string) (*purgeJournal, error) {
 	if len(ids) == 0 {
 		return plan, nil
 	}
-	plan.Traces = rt.tracesNaming(ids)
-	if _, err := os.Stat(filepath.Join(rt.Config.DataDir, "observations")); err == nil {
-		if obsStore, err := learning.Open(rt.Config.DataDir); err == nil {
-			for _, obs := range obsStore.List("") {
-				hay := strings.Join([]string{obs.Hypothesis, obs.SupportingEvidence, obs.Counterevidence, obs.Task}, "\n")
-				if mentionsAny(hay, ids, texts) {
-					plan.Observations = append(plan.Observations, obs.ObservationID)
-				}
+	traces, err := rt.tracesNaming(ids)
+	if err != nil {
+		return nil, fmt.Errorf("inspect traces: %w", err)
+	}
+	plan.Traces = traces
+	obsDir := filepath.Join(rt.Config.DataDir, "observations")
+	exists, err := statExists(obsDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect observations: %w", err)
+	}
+	if exists {
+		obsStore, err := learning.Open(rt.Config.DataDir)
+		if err != nil {
+			return nil, fmt.Errorf("inspect observations: %w", err)
+		}
+		all, err := obsStore.ListAll()
+		if err != nil {
+			return nil, fmt.Errorf("inspect observations: %w", err)
+		}
+		for _, obs := range all {
+			hay := strings.Join([]string{obs.Hypothesis, obs.SupportingEvidence, obs.Counterevidence, obs.Task}, "\n")
+			if mentionsAny(hay, ids, texts) {
+				plan.Observations = append(plan.Observations, obs.ObservationID)
 			}
 		}
 	}
@@ -513,20 +546,27 @@ func (rt *Runtime) planPurge(key string) (*purgeJournal, error) {
 }
 
 // tracesNaming lists persisted trace files that reference any record ID.
-func (rt *Runtime) tracesNaming(ids []string) []string {
+// An unreadable trace directory or file is an error, never "no traces".
+func (rt *Runtime) tracesNaming(ids []string) ([]string, error) {
 	out := []string{}
 	traceDir := filepath.Join(rt.Config.CacheDir, "traces")
 	entries, err := os.ReadDir(traceDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
 	if err != nil {
-		return out
+		return nil, err
 	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(traceDir, e.Name()))
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		for _, id := range ids {
 			if strings.Contains(string(data), `"`+id+`"`) {
@@ -535,7 +575,7 @@ func (rt *Runtime) tracesNaming(ids []string) []string {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 func mentionsAny(hay string, ids []string, texts map[string][]string) bool {
@@ -599,27 +639,36 @@ func unionSorted(a, b []string) []string {
 	return out
 }
 
+var (
+	errLocatorEscapes = errors.New("locator escapes source root")
+	errSourceRootGone = errors.New("source root no longer exists")
+)
+
 // containedPath joins a provenance locator to a source root and refuses any
-// result that escapes the root (including via symlinks).
+// result that escapes the root (including via symlinks). Inspection failures
+// (e.g. permission denied) are returned as errors, never as "absent".
 func containedPath(root, locator string) (string, error) {
 	if filepath.IsAbs(locator) || strings.Contains(filepath.ToSlash(locator), "../") {
-		return "", errors.New("locator escapes source root")
+		return "", errLocatorEscapes
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errSourceRootGone
+	}
 	if err != nil {
-		return "", errors.New("source root unavailable")
+		return "", fmt.Errorf("resolve source root: %w", err)
 	}
 	path := filepath.Join(root, filepath.FromSlash(locator))
 	realPath, err := filepath.EvalSymlinks(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path, nil
+	}
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return path, nil
-		}
 		return "", err
 	}
 	rel, err := filepath.Rel(realRoot, realPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errors.New("locator escapes source root")
+		return "", errLocatorEscapes
 	}
 	return realPath, nil
 }

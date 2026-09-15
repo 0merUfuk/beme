@@ -33,6 +33,10 @@ import (
 
 const ledgerSchemaVersion = "2"
 
+// ErrLedgerUnusable: the tombstone ledger (or the purge key it depends on)
+// cannot be read. Every read surface and rebuild fails closed on it.
+var ErrLedgerUnusable = errors.New("tombstone ledger unusable")
+
 // ErrPurgeKeyMissing: the ledger holds purge fingerprints but the key needed
 // to recognize them is missing or unreadable. Resolution, rebuild, and purge
 // fail closed until it is restored.
@@ -75,7 +79,7 @@ func (rt *Runtime) LoadLedger() (*Ledger, error) {
 		return l, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("tombstone ledger unreadable: %w", err)
+		return nil, fmt.Errorf("%w: unreadable: %v", ErrLedgerUnusable, err)
 	}
 	var raw struct {
 		SchemaVersion string             `json:"schema_version"`
@@ -83,34 +87,34 @@ func (rt *Runtime) LoadLedger() (*Ledger, error) {
 		Purges        json.RawMessage    `json:"purges"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("tombstone ledger corrupt: %w", err)
+		return nil, fmt.Errorf("%w: corrupt: %v", ErrLedgerUnusable, err)
 	}
 	l.Revocations = raw.Revocations
 	switch raw.SchemaVersion {
 	case ledgerSchemaVersion:
 		if len(raw.Purges) > 0 && string(raw.Purges) != "null" {
 			if err := json.Unmarshal(raw.Purges, &l.Purges); err != nil {
-				return nil, fmt.Errorf("tombstone ledger corrupt: %w", err)
+				return nil, fmt.Errorf("%w: corrupt: %v", ErrLedgerUnusable, err)
 			}
 		}
 	case "1":
 		// Pre-release format: revocations are compatible; v1 purge entries
 		// carried content-derived hashes and cannot be converted.
 		if len(raw.Purges) > 0 && string(raw.Purges) != "null" && string(raw.Purges) != "[]" {
-			return nil, errors.New("tombstone ledger v1 purge entries are unsupported (they held content-derived hashes): re-run the purge with the current version after removing them")
+			return nil, fmt.Errorf("%w: v1 purge entries are unsupported (they held content-derived hashes): re-run the purge with the current version after removing them", ErrLedgerUnusable)
 		}
 	default:
-		return nil, fmt.Errorf("tombstone ledger schema %q unsupported", raw.SchemaVersion)
+		return nil, fmt.Errorf("%w: schema %q unsupported", ErrLedgerUnusable, raw.SchemaVersion)
 	}
 	for _, fp := range l.Purges {
 		if !strings.HasPrefix(fp, "hmac-sha256:") {
-			return nil, errors.New("tombstone ledger corrupt: purge entry is not a keyed fingerprint")
+			return nil, fmt.Errorf("%w: corrupt: purge entry is not a keyed fingerprint", ErrLedgerUnusable)
 		}
 	}
 	if len(l.Purges) > 0 {
 		key, err := rt.readPurgeKey()
 		if err != nil {
-			return nil, fmt.Errorf("%w (%v)", ErrPurgeKeyMissing, err)
+			return nil, fmt.Errorf("%w: %w (%v)", ErrLedgerUnusable, ErrPurgeKeyMissing, err)
 		}
 		l.key = key
 	}
@@ -129,7 +133,9 @@ func (rt *Runtime) readPurgeKey() ([]byte, error) {
 	return key, nil
 }
 
-// ensureKey loads the ledger key, creating it (random, 0600) on first use.
+// ensureKey loads the ledger key, creating it (random, 0600, durably) on
+// first use. A missing or invalid key is replaced only while the ledger holds
+// no purge fingerprints — otherwise existing tombstones would stop matching.
 func (l *Ledger) ensureKey(rt *Runtime) error {
 	if l.key != nil {
 		return nil
@@ -139,8 +145,8 @@ func (l *Ledger) ensureKey(rt *Runtime) error {
 		l.key = key
 		return nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%w (%v)", ErrPurgeKeyMissing, err)
+	if len(l.Purges) > 0 {
+		return fmt.Errorf("%w: %w (%v)", ErrLedgerUnusable, ErrPurgeKeyMissing, err)
 	}
 	if err := rt.ensureLedgerDir(); err != nil {
 		return err
@@ -149,36 +155,69 @@ func (l *Ledger) ensureKey(rt *Runtime) error {
 	if _, err := rand.Read(key); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(rt.PurgeKeyPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	encoded := []byte(hex.EncodeToString(key) + "\n")
+	if errors.Is(err, os.ErrNotExist) {
+		err = createFileDurable(rt.PurgeKeyPath(), encoded, 0o600)
+	} else {
+		// unreadable or truncated key with no dependent fingerprints
+		err = writeFileDurable(rt.PurgeKeyPath(), encoded, 0o600)
+	}
 	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(hex.EncodeToString(key) + "\n"); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
 		return err
 	}
 	l.key = key
 	return nil
 }
 
-// ensureLedgerDir creates the ledger dir with a .gitignore so a Git-tracked
-// canonical root never commits the key or pending purge journals.
+// ledgerIgnoreRules must always be present in ledger/.gitignore so a
+// Git-tracked canonical root never commits the key or pending journals.
+var ledgerIgnoreRules = []string{"purge.key", "pending/"}
+
+// ensureLedgerDir creates the ledger dir and makes sure ledger/.gitignore
+// ignores the key and pending journals, appending missing rules to an existing
+// file without touching unrelated rules.
 func (rt *Runtime) ensureLedgerDir() error {
-	if err := os.MkdirAll(rt.ledgerDir(), 0o700); err != nil {
+	if err := ensureDirDurable(rt.ledgerDir()); err != nil {
 		return err
 	}
 	ignore := filepath.Join(rt.ledgerDir(), ".gitignore")
-	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
-		return writeFileAtomic(ignore, []byte("purge.key\npending/\n"), 0o600)
+	existing, err := os.ReadFile(ignore)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read ledger .gitignore: %w", err)
 	}
-	return nil
+	merged, changed := mergeIgnoreRules(string(existing), ledgerIgnoreRules)
+	if !changed {
+		return nil
+	}
+	return writeFileDurable(ignore, []byte(merged), 0o600)
+}
+
+// mergeIgnoreRules appends each rule not already present. Rules compare after
+// trimming a leading or trailing "/", so "/purge.key" and "pending" count as
+// present; unrelated lines are preserved byte for byte.
+func mergeIgnoreRules(existing string, rules []string) (string, bool) {
+	norm := func(r string) string { return strings.Trim(strings.TrimSpace(r), "/") }
+	have := map[string]bool{}
+	for _, line := range strings.Split(existing, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
+			have[norm(t)] = true
+		}
+	}
+	out := existing
+	changed := false
+	for _, r := range rules {
+		if have[norm(r)] {
+			continue
+		}
+		if out != "" && !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		out += r + "\n"
+		have[norm(r)] = true
+		changed = true
+	}
+	return out, changed
 }
 
 func (rt *Runtime) saveLedger(l *Ledger) error {
@@ -197,27 +236,7 @@ func (rt *Runtime) saveLedger(l *Ledger) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(rt.LedgerPath(), data, 0o600)
-}
-
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeFileDurable(rt.LedgerPath(), data, 0o600)
 }
 
 func (l *Ledger) mac(parts ...string) string {

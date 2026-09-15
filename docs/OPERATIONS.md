@@ -18,18 +18,30 @@ rebuilding derived data cannot resurrect forgotten or purged records:
 | `purge.key` | HMAC key for purge fingerprints (0600) | back up with the ledger; never share or commit (git-ignored) |
 | `pending/*.json` | journal of an interrupted purge (identifiers only) | transient; removed when the purge completes (git-ignored) |
 
-Deployment layout:
+Missing `purge.key` and `pending/` rules are added to an existing
+`ledger/.gitignore` without touching other rules.
+
+Durability (ADR-027): the ledger, key, and journal are replaced by writing a
+temp file, flushing it, renaming it, and flushing the parent directory on
+macOS and Linux; on Windows the rename uses `MoveFileExW` with
+`MOVEFILE_WRITE_THROUGH`. A purge erases nothing until both the ledger and the
+journal have been flushed, and any flush error aborts it. Storage that
+acknowledges flushes without performing them (volatile drive caches, some
+network or virtualized filesystems) is outside this guarantee.
+
+Deployment layout (`<config>`, `<data>`, and `<cache>` are the directories in
+the table above; each already ends in `beme`):
 
 ```
-<config>/beme/
+<config>/
 ├── config.yaml          # canonical_root, data_dir, cache_dir (optional)
-├── sources/              # source descriptors (registration = the trust act)
+├── sources/             # source descriptors (registration = the trust act)
 ├── policies/            # workspace identity registry
-├── capabilities/        # (reserved) capability definitions
-└── adapters/            # (reserved) adapter installation state
-<data>/beme/projections/personal/store.db     # separate files per profile
-<data>/beme/projections/work-safe/store.db
-<cache>/beme/observations/                     # quarantined feedback
+└── ledger/              # durable tombstone ledger, purge key, pending purges
+<data>/projections/personal/store.db     # separate files per profile
+<data>/projections/work-safe/store.db
+<data>/observations/                     # quarantined feedback
+<cache>/traces/                          # persisted resolver traces (explain)
 ```
 
 ## Lifecycle
@@ -67,6 +79,11 @@ beme candidate review obs_xxxxxxxx --action reject --note "reason"
   identity fingerprint. It reports what it cannot erase — Git history,
   external backups — with the remediation. Exit codes: 3 unconfirmed,
   4 key not found.
+- A purge that cannot inspect something it must erase — an unreadable or
+  corrupt observation, an unreadable trace directory, a canonical path it
+  cannot stat — stops with an error instead of reporting the step done. The
+  failed command prints the steps that completed (`--json` includes the
+  partial report) and says whether the purge is resumable.
 - An interrupted purge (crash, full disk, locked file) leaves a journal;
   `beme doctor` reports it as degraded. Re-run the same `beme purge` command
   to finish; the report shows `resumed`. Re-running a completed purge prints
@@ -89,9 +106,17 @@ Builds disposable deployments from the public seed corpus at 1×, 20×, and
 version. Timings are machine-dependent evidence, so `bench` is not part of
 `make check`; `--enforce` exits 1 when a scale misses the p95 target.
 
+`--work` (default: a temp dir removed on every exit) must be an absolute path
+that is not a filesystem root, the home directory, the current directory, an
+ancestor of either, or a repository root. Only `scale-N` directories carrying
+the harness's marker file are ever deleted.
+
 ## Health states
 
 `healthy` · `degraded` (missing/stale source) · `unavailable` (cannot
 resolve) · `policy_blocked` (ambiguity, elevation attempt, corrupt policy) ·
 `rebuild_required` (index unusable, sources intact). `beme doctor` reports
-these with exact remediation.
+these with exact remediation: `policy_blocked` when the tombstone ledger or
+purge key cannot be read, and `degraded` with "rebuild required" when a
+projection holds records the ledger suppresses (for example after a backup
+restore). Findings never name suppressed records or count them.

@@ -88,6 +88,20 @@ interrupted purge stranding derived copies, resurrection through
 multi-provenance records, and offline dictionary tests against the ledger
 (corpus cases S1–S3).
 
+Read surfaces (ADR-027 §7, ADR-029): resolve, export, explain, doctor, MCP
+status counts, and context-item expansion all apply the ledger at read time,
+so a restored pre-purge backup cannot surface purged or revoked records in
+content, provenance, counts, or metadata, and an unusable ledger or purge key
+fails every one of them closed (case S4). Expansion is bound to a pack the
+same session issued: guessed, replayed, unselected, expired, rebuilt, and
+revoked combinations share one refusal (case 24). The ledger and journal
+cross a documented durability boundary (file and parent-directory flush;
+write-through rename on Windows) before any erasure; storage that
+acknowledges flushes it does not perform is outside that guarantee.
+Residuals: observations restored from a data-dir backup cannot be matched to
+purged content (the ledger holds none), and refusal timing is not
+equalized.
+
 ## 7. Non-goals (explicitly not claimed)
 
 - No protection against a compromised OS or a deliberate same-user process

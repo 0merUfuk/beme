@@ -224,6 +224,32 @@ for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "do
                 d12.append(f"{f.name}:{n}: '{line.strip()[:80]}'")
 check("D12 docs keep the purge ledger content-free", not d12, "; ".join(d12[:4]))
 
+# --- D13: the documented MCP tool table matches the registered contract, and
+# expansion is documented as pack-bound
+contract_go = (ROOT / "internal" / "contracts" / "mcp.go").read_text()
+registered_tools = set(re.findall(r'Tool\w+\s*=\s*"(beme\.[a-z_]+)"', contract_go))
+integrations = (ROOT / "docs" / "INTEGRATIONS.md").read_text()
+documented_tools = set(re.findall(r"^\| `(beme\.[a-z_]+)` \|", integrations, re.M))
+d13 = []
+if not registered_tools or registered_tools != documented_tools:
+    d13.append(f"INTEGRATIONS tools {sorted(documented_tools)} != contracts {sorted(registered_tools)}")
+if not re.search(r"`beme\.get_context_item`[^\n]*pack_id", integrations):
+    d13.append("INTEGRATIONS does not document that get_context_item requires pack_id")
+check("D13 MCP tool table matches the registered contract", not d13, "; ".join(d13))
+
+# --- D14: no unqualified crash-safety claims (ADR-027 documents the exact
+# durability boundary instead)
+d14 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if re.search(r"crash[- ]safe", line, re.I):
+            d14.append(f"{f.name}:{n}")
+check("D14 no unqualified crash-safety claims", not d14, "; ".join(d14[:4]))
+
+# --- D15: Keep a Changelog — one Unreleased section
+unreleased = re.findall(r"^## \[Unreleased\]", (ROOT / "CHANGELOG.md").read_text(), re.M)
+check("D15 CHANGELOG has a single Unreleased section", len(unreleased) <= 1, f"{len(unreleased)} Unreleased headings")
+
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]
 print(f"\n{passed}/{len(results)} documentation-consistency checks passed")
