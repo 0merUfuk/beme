@@ -418,6 +418,13 @@ with the caveat that status claims are stale".
 Lifecycle claims must derive from HANDOFF §1. No new release for docs-only
 changes; `v0.1.0-alpha.1` source retains the stale docs (recorded in its
 release notes) and the next release carries the remediated set.
+**Outcome (2026-09-15):** remediation verified. Re-test at clean checkout
+`8896df9` (isolated agent, documented commands only): system python3 3.9.6
+handled by the documented python3.13 fallback; all six documented gates
+exit 0; `not_run` semantics reproduced exactly; no contradictions; no
+improvisation; ~3 minutes total. Verdict: PASS. One residual imprecision
+fixed post-test (make's exit-2 wrapping of the validator's exit 3 now
+documented precisely).
 **Reopen:** a future fresh-agent test failure re-opens this ADR.
 
 ## Open decisions (tracked, none blocking contracts work)

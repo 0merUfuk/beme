@@ -122,9 +122,13 @@ this gate passed. Item-level status:
       integration is not — all surfaces remain `advisory`).
 - [x] No private/user-specific data in repository, packages, fixtures, logs,
       or CI artifacts (scan gate in CI; committed-tree deep scans).
-- [ ] Documentation executed successfully by a fresh agent with no prior
-      context (procedure in §9) — re-test in progress after ADR-024
-      remediation.
+- [x] Documentation executed successfully by a fresh agent with no prior
+      context (procedure in §9) — PASSED 2026-09-15: clean checkout @
+      `8896df9`, documented bootstrap only (python3.13 fallback per docs),
+      all six documented gates exit 0 with expected outputs
+      (`not_run` semantics verified), zero contradictions, zero
+      improvisation, ~3-minute total. Evidence: fresh-agent report +
+      transcript (recorded with ADR-024).
 - [x] Zero unresolved critical/high defects (none known at publication;
       alpha limitations documented).
 - [x] License, compatibility matrix, support boundaries, threat model, and

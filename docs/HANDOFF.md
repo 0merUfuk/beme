@@ -1,11 +1,13 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 7 — 2026-09-14
-**Position:** `v0.1.0-alpha.1` published and verified. First fresh-agent
-documentation test FAILED the documentation gate (stale lifecycle claims,
-undocumented validation bootstrap); remediation complete on `main`, docs
-consistency now regression-gated in CI. Re-test from clean checkout pending
-below.
+**Revision:** 8 — 2026-09-15
+**Position:** `v0.1.0-alpha.1` published and verified. The documentation gate
+(blueprint §24) now PASSES: first fresh-agent test failed (ADR-024),
+remediation landed, and the clean-checkout re-test at `8896df9` returned
+PASS with zero improvisation (all six documented gates exit 0; `not_run`
+semantics reproduced; no contradictions). Remaining owner-gated work is
+unchanged: live-model behavioral evaluation; `assured` adapter surfaces;
+Windows runtime verification.
 
 ## 1. Status
 
@@ -35,8 +37,11 @@ bootstrap, and a stale description of pre-ADR-023 validation coupling.
 Remediation: one canonical status section (here, §1), all stale claims
 removed, bootstrap documented in README + DEVELOPMENT, hard-coded counts
 replaced with command-derived evidence, and a documentation-consistency
-regression suite wired into CI so these classes cannot regress. A
-clean-checkout re-test at the new HEAD is the gate. Full findings and the
+regression suite wired into CI so these classes cannot regress. The
+clean-checkout re-test at `8896df9` (2026-09-15) returned PASS: documented
+bootstrap only (python3.13 fallback per docs on a 3.9.6 system), all six
+documented gates exit 0, `not_run` semantics reproduced exactly, zero
+contradictions, zero improvisation, ~3 minutes total. Findings and the
 verbatim stale strings are recorded in DECISIONS.md (ADR-024).
 
 ## 2. Verified evidence snapshot

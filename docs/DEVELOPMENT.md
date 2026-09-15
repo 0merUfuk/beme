@@ -41,8 +41,11 @@ any Python 3.11+ interpreter explicitly instead, e.g.
 ```sh
 # Same venv PATH prefix as every other Python gate:
 PATH="$PWD/.venv/bin:$PATH" make validate-private
-# with BEME_PRIVATE_EVAL_DIR unset →
-#   "private eval: not_run — …" and exit 3 (never a silent pass)
+# with BEME_PRIVATE_EVAL_DIR unset → prints
+#   "private eval: not_run — …" (validator exit 3; never a silent pass).
+# Note: make wraps recipe failure as its own exit 2 and shows "Error 3" —
+# the guaranteed semantic is the explicit not_run message + the validator's
+# exit 3, both shown above.
 ```
 
 The private corpus lives on the owner's machine only; its validation
