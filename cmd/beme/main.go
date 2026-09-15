@@ -41,6 +41,7 @@ func main() {
 		capability          string
 		transport           string
 		experimentalLearned bool
+		exportOut           string
 	)
 	switch cmd {
 	case "status", "doctor", "serve", "mcp":
@@ -61,7 +62,17 @@ func main() {
 		fs.StringVar(&task, "task", "", "task text (required)")
 		fs.StringVar(&wsHint, "workspace", "", "workspace path hint")
 		fs.StringVar(&capability, "capability", "", "capability name")
-	case "source", "profile-cmd", "forget", "explain":
+	case "explain":
+		fs.BoolVar(&jsonOut, "json", false, "JSON output")
+		fs.StringVar(&configDir, "config", "", "config directory override")
+		fs.StringVar(&profile, "projection", "personal", "projection profile")
+		fs.StringVar(&task, "trace", "", "trace ID (required)")
+	case "export":
+		fs.BoolVar(&jsonOut, "json", false, "JSON output")
+		fs.StringVar(&configDir, "config", "", "config directory override")
+		fs.StringVar(&profile, "projection", "personal", "projection profile")
+		fs.StringVar(&exportOut, "out", "-", "output path ('-' for stdout)")
+	case "source", "profile-cmd", "forget":
 		fs.BoolVar(&jsonOut, "json", false, "JSON output")
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "profile", "personal", "profile")
@@ -146,9 +157,12 @@ func main() {
 		}
 		pack, trace, err := sess.Resolve(req)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(3)
 		}
+		// FR-038: persist the actual trace so `beme explain --trace <id>`
+		// explains from the real resolver run, not a reconstruction.
+		PersistTrace(sess.Runtime.Config.CacheDir, pack.TraceRef, trace)
 		if jsonOut {
 			json.NewEncoder(os.Stdout).Encode(pack)
 			_ = trace
@@ -186,6 +200,24 @@ func main() {
 		fmt.Printf("tombstoned %s (logical forget; derived purge happens on next rebuild)\\n", key)
 	case "adapter":
 		adapterCmd(args[1:])
+	case "explain":
+		if task == "" {
+			fmt.Fprintln(os.Stderr, "error: --trace required")
+			os.Exit(2)
+		}
+		rtX, err := app.Load(configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		explainCmd(rtX, task, profile, jsonOut)
+	case "export":
+		rtE, err := app.Load(configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		exportCmd(rtE, profile, exportOut, jsonOut)
 	case "candidate":
 		rtC, err := app.Load(configDir)
 		if err != nil {

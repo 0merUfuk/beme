@@ -310,3 +310,12 @@ func clampKinds(hints []string) []string {
 	}
 	return out
 }
+
+// OpenStoreForProfile opens a projection store for administrative
+// inspection (export, explain). Read-only intent; the store is derived.
+func OpenStoreForProfile(rt *Runtime, profile contracts.Profile) (*storage.Store, error) {
+	if profile != contracts.ProfilePersonal && profile != contracts.ProfileWorkSafe {
+		return nil, fmt.Errorf("invalid profile %q", profile)
+	}
+	return storage.Open(rt.ProjectionPath(profile))
+}
