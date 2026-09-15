@@ -142,8 +142,30 @@ func (rt *Runtime) ProjectionPath(profile contracts.Profile) string {
 // (re)builds its projection store. The work-safe builder reads ONLY
 // approved safe-manifest sources (FR-012, ADR-018): this is construction,
 // not filtering.
+//
+// Corruption recovery (FR-065): a projection store is derived data — if it
+// exists but cannot be opened (corruption), it is deleted and recreated from
+// the registered sources. Canonical sources are never touched.
 func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error) {
-	store, err := storage.Open(rt.ProjectionPath(profile))
+	storePath := rt.ProjectionPath(profile)
+
+	// Detect an unusable existing store and recreate it (recovery path).
+	if _, err := os.Stat(storePath); err == nil {
+		if probe, perr := storage.Open(storePath); perr != nil {
+			// Unusable derived store: safe to remove and rebuild.
+			_ = probe
+			if err := os.Remove(storePath); err != nil {
+				return nil, fmt.Errorf("corrupt store could not be removed for rebuild: %w", err)
+			}
+			// WAL side files may also exist; remove them too (derived data).
+			os.Remove(storePath + "-wal")
+			os.Remove(storePath + "-shm")
+		} else {
+			probe.Close()
+		}
+	}
+
+	store, err := storage.Open(storePath)
 	if err != nil {
 		return nil, err
 	}

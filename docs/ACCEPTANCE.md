@@ -114,9 +114,13 @@ this gate passed. Item-level status:
 
 - [x] Clean-machine install and uninstall verified (alpha.1 recovery:
       fresh-home binary runs; tagged module install outside the checkout).
-- [ ] Upgrade, rollback, corrupt-index recovery, revoke, forget, rebuild
-      verified end-to-end (migration rollback is unit-tested; the full
-      operational cycle is not).
+- [x] Upgrade, rollback, corrupt-index recovery, revoke, forget, rebuild
+      verified (unit + e2e): migrations idempotent/rollback/failed-safe
+      (`migrate_test.go`); corrupt store recovered by rebuild with canonical
+      sources byte-identical and resolution restored
+      (`TestCorruptStoreRecovery`); revoke/forget tombstones honored in
+      resolution and their rebuild semantics pinned
+      (`TestRebuildDoesNotResurrectForgotten`, `TestRevocationTombstone`).
 - [ ] ≥2 Tier 1 harness adapters verified end to end against installed
       harnesses (install/verify lifecycle is tested; live harness
       integration is not — all surfaces remain `advisory`).
