@@ -1,6 +1,10 @@
 // Command beme-bench runs the NFR-008 performance benchmark on the public
 // synthetic seed corpus and writes a JSON evidence report.
 //
+// --seed is required: there is no default, so an installed binary never
+// resolves a repository-relative path against an unrelated working directory.
+// From a repository checkout:
+//
 //	go run ./cmd/beme-bench --seed testdata/synthetic/records.json --out -
 package main
 
@@ -23,7 +27,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("beme-bench", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	seed := fs.String("seed", "testdata/synthetic/records.json", "public seed corpus (normalized records JSON)")
+	seed := fs.String("seed", "", "public seed corpus (normalized records JSON); required — testdata/synthetic/records.json in a repository checkout")
 	scales := fs.String("scales", "1,20,200", "comma-separated replication factors (1 = seed corpus as-is)")
 	iterations := fs.Int("iterations", 50, "timed passes over the task set per scale")
 	warmup := fs.Int("warmup", 5, "untimed warm-up passes per scale")
@@ -33,6 +37,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	work := fs.String("work", "", "absolute deployment work dir (default: a temp dir removed afterwards)")
 	enforce := fs.Bool("enforce", false, "exit 1 when any scale misses the target")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*seed) == "" {
+		fmt.Fprintln(stderr, "error: --seed is required: path to the public seed corpus JSON (testdata/synthetic/records.json in a repository checkout)")
+		fs.Usage()
 		return 2
 	}
 
