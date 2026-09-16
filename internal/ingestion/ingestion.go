@@ -20,11 +20,18 @@ import (
 
 // Limits bound ingestion (NFR-009, threat case 29).
 type Limits struct {
-	MaxFileBytes  int64
+	MaxFileBytes int64
+	// MaxFiles bounds the files a source contributes: only files that pass
+	// the hard excludes, the descriptor excludes and the include patterns
+	// count. Files the descriptor never selects do not use up the budget.
 	MaxFiles      int
 	MaxDepth      int
 	MaxTotalBytes int64
-	Timeout       time.Duration
+	// MaxVisited bounds traversal itself — every file entry examined,
+	// selected or not — so a narrow include over a very large tree stays
+	// bounded. Zero means no traversal cap (the timeout still applies).
+	MaxVisited int
+	Timeout    time.Duration
 }
 
 // DefaultLimits are the conservative v1 bounds.
@@ -34,6 +41,7 @@ func DefaultLimits() Limits {
 		MaxFiles:      5000,
 		MaxDepth:      12,
 		MaxTotalBytes: 100 << 20, // 100 MiB per source
+		MaxVisited:    200000,
 		Timeout:       30 * time.Second,
 	}
 }
@@ -76,6 +84,7 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 	files := []File{}
 	total := int64(0)
 	count := 0
+	visited := 0
 
 	err = filepath.WalkDir(realRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -100,9 +109,9 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 			}
 			return nil
 		}
-		count++
-		if count > w.limits.MaxFiles {
-			return fmt.Errorf("file count limit exceeded (%d)", w.limits.MaxFiles)
+		visited++
+		if w.limits.MaxVisited > 0 && visited > w.limits.MaxVisited {
+			return fmt.Errorf("traversal limit exceeded (%d entries examined): narrow the source root", w.limits.MaxVisited)
 		}
 		if matchAny(rel, HardExcludes) || matchAny(rel, exclude) {
 			return nil
@@ -117,6 +126,13 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 		}
 		if len(include) > 0 && !matchAny(rel, include) {
 			return nil
+		}
+		// Only files the descriptor selects count toward the source-size
+		// limit; counting unselected files made a narrow include over a
+		// large repository abort the whole source.
+		count++
+		if count > w.limits.MaxFiles {
+			return fmt.Errorf("file count limit exceeded (%d)", w.limits.MaxFiles)
 		}
 		info, err := d.Info()
 		if err != nil {

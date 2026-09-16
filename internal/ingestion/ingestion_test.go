@@ -1,6 +1,7 @@
 package ingestion_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,49 @@ func TestSymlinkEscapeSkipped(t *testing.T) {
 		if f.RelPath == "escape.md" {
 			t.Fatal("symlink escaping the root must never be ingested")
 		}
+	}
+}
+
+// TestNarrowIncludeUnderLargeTree: files the descriptor never selects do not
+// consume the source-size budget, so a narrow include over a large repository
+// ingests its matches; the budget still applies to selected files, and
+// traversal itself stays bounded.
+func TestNarrowIncludeUnderLargeTree(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 150; i++ {
+		write(fmt.Sprintf("unrelated/doc-%03d.md", i))
+	}
+	for _, id := range []string{"A", "B", "C"} {
+		write("knowledge/entries/" + id + ".md")
+	}
+	limits := ingestion.Limits{MaxFileBytes: 1 << 20, MaxFiles: 100, MaxDepth: 8, MaxTotalBytes: 1 << 20, Timeout: 10 * time.Second}
+
+	files, err := ingestion.NewWalker(limits).Walk(root, []string{"knowledge/entries/*.md"}, nil)
+	if err != nil {
+		t.Fatalf("a narrow include over a large tree must ingest its matches: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("want the 3 selected entries, got %d", len(files))
+	}
+
+	// positive control: the budget still applies to what IS selected
+	if _, err := ingestion.NewWalker(limits).Walk(root, nil, nil); err == nil || !strings.Contains(err.Error(), "file count limit") {
+		t.Fatalf("selecting more than MaxFiles must still abort loudly; got %v", err)
+	}
+
+	// traversal stays bounded independently of what is selected
+	limits.MaxVisited = 50
+	if _, err := ingestion.NewWalker(limits).Walk(root, []string{"knowledge/entries/*.md"}, nil); err == nil || !strings.Contains(err.Error(), "traversal limit") {
+		t.Fatalf("examining more than MaxVisited entries must abort loudly; got %v", err)
 	}
 }
 

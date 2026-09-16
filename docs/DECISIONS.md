@@ -844,6 +844,42 @@ field is lowered, so a rollback needs a ledger rewrite).
 requirement to detect wholesale removal of enforcement state, or key custody
 moving to an OS keychain.
 
+## ADR-031 — The source-size limit counts selected files; traversal has its own cap
+
+**Date:** 2026-09-17
+**Status:** accepted
+**Context:** the ingestion walker counted every file it examined toward
+`MaxFiles` (5,000) before applying the descriptor's include patterns. A source
+whose root is an ordinary repository and whose `include` selects a handful of
+entry files therefore aborted with "file count limit exceeded" as soon as the
+repository held more than 5,000 files anywhere, and contributed zero records.
+Reproduced against a real personal knowledge repository: root at the
+repository, `include: ["knowledge/entries/*.md"]` selecting 8 files, 0 records
+ingested; the same files ingested when the root was narrowed to the entries
+directory.
+**Decision:** `MaxFiles` bounds the files a source contributes — only files
+that pass the hard excludes, the descriptor excludes and the include patterns
+count. Traversal itself is bounded separately by `MaxVisited` (default
+200,000 file entries examined), so a narrow include over a very large tree
+stays bounded, and the per-file size, total size, depth and timeout limits are
+unchanged.
+**Evidence:** `TestNarrowIncludeUnderLargeTree` (a narrow include under a tree
+exceeding `MaxFiles` ingests its matches; selecting more than `MaxFiles`
+still aborts; examining more than `MaxVisited` aborts), `TestBoundsEnforced`
+and threat case 29 unchanged. Reintroducing the old counting, or removing the
+traversal cap, fails the test.
+**Alternatives rejected:** raising `MaxFiles` (moves the cliff instead of
+removing it); pruning directories by analysing include globs (correct but a
+larger change to the glob matcher, and `**` patterns defeat most pruning);
+documenting "narrow the root" only (leaves a silent zero-record failure on the
+natural configuration).
+**Consequences:** a source may now examine up to 200,000 file entries before
+aborting; examining is cheap (no read) and the timeout still applies. A
+registered source that is skipped still reports only in `beme build` output,
+not in `beme doctor` — tracked separately.
+**Rollback:** move the count back before the include check.
+**Reopen:** a traversal-cost problem on real trees within the cap.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

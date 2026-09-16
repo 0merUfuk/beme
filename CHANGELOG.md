@@ -96,6 +96,10 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
   inherited sensitivity (FR-054).
 
 ### Fixed
+- Ingestion counted every file under a source root toward the 5,000-file
+  limit before applying `include`, so a narrow include over an ordinary
+  repository aborted the whole source with zero records. Only selected files
+  count now; traversal has its own 200,000-entry cap (ADR-031).
 - Purge durability: traces, observations, and canonical files are erased
   through zeroize → flush → unlink → directory flush, and a retry completes
   flushes an interrupted attempt could not; projections are compacted with

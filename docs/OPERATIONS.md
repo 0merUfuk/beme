@@ -108,6 +108,13 @@ exclude: []                         # optional
 The full contract is `schemas/source/source-descriptor.schema.json`; `make
 validate` checks the fixtures against it.
 
+`include` decides what a source contributes, and the root can be an ordinary
+repository: only files that `include` selects (and the excludes allow) count
+toward the 5,000-file source limit. Traversal is separately capped at 200,000
+file entries examined — for a larger tree, point `root` at the directory that
+holds the entries. When a source is skipped, `beme build` prints the reason
+next to the record count; check that count after registering a source.
+
 **What becomes a record.** Ingestion reads the files matched by `include` and
 normalizes Markdown entries with YAML frontmatter:
 
