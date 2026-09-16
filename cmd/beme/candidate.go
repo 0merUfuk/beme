@@ -2,13 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
-	"github.com/0merUfuk/beme/internal/learning"
 )
 
 // candidateCmd implements the §12.2 review surface:
@@ -59,7 +59,11 @@ func candidateCmd(rt *app.Runtime, args []string) {
 		}
 	}
 
-	store, err := learning.Open(rt.Config.DataDir)
+	store, err := rt.OpenLearning()
+	if errors.Is(err, app.ErrLedgerUnusable) {
+		fmt.Fprintf(os.Stderr, "policy blocked: %v\n", err)
+		os.Exit(3)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

@@ -168,3 +168,18 @@ Summary text here.
 		t.Fatalf("normalize must start at informational, got %s", rec.Authority)
 	}
 }
+
+// TestParseMarkdownBodyBoundary regresses the body off-by-one bug found by
+// the eval-runner proof: the closing "---" frontmatter fence left a leading
+// "-" on every parsed body, corrupting compact_text ("-") for all ingested
+// records.
+func TestParseMarkdownBodyBoundary(t *testing.T) {
+	content := []byte("---\nid: T-001\ntitle: \"Boundary\"\ntype: principle\nstatus: active\n---\n\nThe actual body text.\n")
+	fm, body := ingestion.ParseMarkdown(content)
+	if fm["id"] != "T-001" {
+		t.Fatalf("frontmatter id = %v", fm["id"])
+	}
+	if strings.TrimSpace(body) != "The actual body text." {
+		t.Fatalf("body must start after the closing fence with no leading dash; got %q", body)
+	}
+}

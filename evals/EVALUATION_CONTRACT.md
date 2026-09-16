@@ -97,11 +97,63 @@ Full schema: `schemas/evaluation/golden-case.schema.json`.
 
 ## 4. Baselines and ablations
 
-Run at minimum: B0 plain agent; B1 bootstrap only; B2 raw full-profile dump
-(all records eligible under the capability, never forbidden records); B3
-retrieval without precedence/provenance; B4 full Be Me. Ablations: no-scope
-(synthetic data only, isolated no-network env), no-provenance, no-unknowns,
-canonical-only, learned-only.
+Every arm is built from one serving session's evaluation inputs
+(`app.Session.EvalInputs`), so all arms share the same hard capability
+boundary: the Stage-A gate (sensitivity, profile scope, status/validity,
+workspace scope, trust, revocation, task scope) with the durable tombstone
+ledger and purge fingerprints applied through `Runtime.EffectiveRevoked`. No
+arm reads the projection around that gate.
+
+| Arm | Context given to the model |
+|---|---|
+| B0 | nothing: no bootstrap, no personal context |
+| B1 | the real managed bootstrap text (`internal/bootstrap`), no context |
+| B2 | every Stage-A-eligible record, ordered by record ID — no task-based selection, no precedence reduction, no budget truncation; never a Stage-A-denied record |
+| B3 | Stage-A-eligible records ranked by relevance **before** precedence (competing decisions for one `decision_key` all appear), with no provenance mechanism: no provenance refs, no provenance manifest, no expansion refs, and only retrieval-derived selection reasons |
+| B4 | the full Be Me ContextPack (`Session.Resolve`), unchanged |
+| no-scope | B4's pipeline with workspace-scope and task-scope filtering disabled; every other Stage-A check still applies |
+| no-provenance | B4 with all provenance removed: item refs, expansion refs, provenance-citing selection reasons, the provenance manifest, knowledge refs and locators, learned refs, and the source revision digest |
+| no-unknowns | B4 with unknowns removed |
+| canonical-only | B4 restricted to canonical source roles |
+| learned-only | B4 restricted to learned-observation items |
+
+**B3's budget.** B3 applies the same token budget as B4
+(`budget.requested_tokens`) as plain score-ordered truncation: it walks the
+ranked list and skips any record that no longer fits — the resolver's own
+advisory rule, with nothing reserved, since B3 has no mandatory sections.
+Holding the budget constant keeps precedence and provenance the only
+variables under test.
+
+**canonical-only** keeps items whose source role is `canonical_foundation`,
+`canonical_reusable_knowledge`, `trusted_project_policy`, or
+`declassified_safe` (the user-approved safe form of canonical content that
+work-safe projections are built from). It drops learned observations,
+episodic evidence, trusted references, every `precedent`-kind item whatever
+its role, knowledge refs (which carry no source role), and provenance
+entries for other roles. A selected record whose role is unknown makes the
+arm `not_run` rather than guessed.
+
+**no-scope** runs only on a synthetic deployment, enforced in code
+(`app.Runtime.NoScopeRefusal`), so it can never touch personal_private or
+work_restricted data. It is refused unless all of: at least one source is
+registered; every registered source's `source_id` begins with `synthetic-`
+and its descriptor sensitivity is `public_general`; every record in the
+projection — including revoked and purged ones, a strictly broader check
+than any arm's view — has sensitivity `public_general` and belongs to a
+registered synthetic source; and the run-set network policy is `disabled`.
+The refusal never names the offending record.
+
+Unsupported conditions return `not_run` with a reason — the full pack is
+never graded under another arm's label. learned-only is `not_run` unless the
+capability enables experimental learned guidance, because the boundary
+otherwise excludes every learned observation.
+
+**Prompt.** The runner renders the prompt deterministically and passes it to
+the provider: an optional `BOOTSTRAP` block, an optional `CONTEXT` block (the
+arm's context as indented JSON, minus per-issuance identifiers — pack ID,
+generation timestamp, trace ref, expansion refs), then the `TASK` block. The
+arm label never appears in the prompt. Each repeat is rendered from a fresh
+deep copy, so no arm or repeat can mutate another's input.
 
 All baselines share the same hard capability boundary. Model, exact model
 version, prompt, repository fixture, tools, harness version, reasoning budget,
@@ -139,6 +191,13 @@ Privacy leakage, capability elevation, fabricated user authority, hard-policy
 violation, invented preference on negative controls — any single occurrence is
 a release blocker for the tested corpus.
 
+The runner enforces this: a zero score fails its evaluation unit at that
+repeat (never averaged), records the blocker, keeps the generated text in the
+result and in the raw and blinded artifacts, and forces a non-success exit.
+`Summary.ExitCode` is 0 only when every unit and retrieval measurement passed,
+1 on any failure or blocker, and 3 when nothing failed but something was
+`not_run`.
+
 ## 6. Evaluator governance
 
 - Evaluator prompts, rubric, versions, conflicts-of-interest, and overrides
@@ -165,7 +224,7 @@ corpus is private.
 | P5 | Explain/error/log/trace/cache/status reveal denied data or existence (6, 7, 26) | `evals/public/denial-invisibility/` |
 | P6 | Allowed relationships traverse into denied records (8) | `evals/public/relationship-traversal/` |
 | P7 | Cache/concurrency mix capabilities or namespaces (9, 28) | `evals/public/concurrency/` |
-| P7.5 | Revoked/purged content in FTS, stale packs, backup restore (10, 18, 30) | `evals/public/revocation/` |
+| P7.5 | Revoked/purged content in FTS, stale packs, backup restore (10, 18, 30); purge provenance completeness, partial-failure resumption, ledger dictionary resistance, restored backup across every read surface with fail-closed ledger (S1, S2, S3, S4) | `evals/public/revocation/` |
 | P8 | Agent feedback writes canonical state (11); repeated model output counted as independent evidence (12); rejected candidate re-proposed (13) | `evals/public/learning/` |
 | P9 | Budget truncates hard prohibition (14) | `evals/public/budget/` |
 | P10 | Network server starts unauthenticated (15) | `evals/public/transport/` |
@@ -174,13 +233,35 @@ corpus is private.
 | P13 | Unknown preference stated as "the user would choose X" (20) | `evals/public/overpersonalization/` |
 | P14 | Changed normative file trusted because repo was registered before (22) | `evals/public/revision-trust/` |
 | P15 | Same-user shell agent reaches admin in `isolated-admin` claim (23) | documentation + OS-boundary test design |
-| P16 | Expansion reference guessed/replayed/stale-after-rebuild (24) | `evals/public/expansion-refs/` |
+| P16 | Expansion reference guessed/replayed/unselected/expired/stale-after-rebuild or revocation — expansion is pack-bound, ADR-029 (24) | `evals/public/expansion-refs/` |
 | P17 | Declassification leaks via metadata/counts/locators/hashes (25) | `evals/public/declassification/` |
 | P18 | Oversized/recursive/malformed/Unicode/decompression-bomb input bypasses bounds (29) | `evals/public/bounds/` |
+
+Numbers are blueprint §19 cases; `S`-prefixed IDs are supplementary
+purge-reliability cases (ADR-027). Every ID maps to exactly one executable
+case in the shared registry `internal/privacycorpus` (`NewSuite`), run by
+`TestPrivacyCorpusDeterministic` and `cmd/beme-threat-corpus`;
+`scripts/test_docs_consistency.py` D10 keeps this table and the registry in
+lockstep. Every case first runs a positive control proving its threat fixture
+exists and that its detector can see it; a failed control reports
+"positive control failed", so no case can pass vacuously.
 
 Acceptance rate must be 100%. One failing case = no release.
 
 ## 8. Reproducibility manifest
+
+Every generation writes one manifest holding exactly the fields of
+`schemas/evaluation/run-manifest.schema.json`, filled from observed values:
+the corpus file hashes behind `dataset_version` and `fixture_hash`, the
+deployment's policy digest, index revision, and build generation behind
+`capability_policy_hash`, `index_snapshot_hash`, and
+`profile_projection_hash`, the hash of the real bootstrap text, the arm's
+construction behind `ranking_config_hash`, and the provider's own reported
+model settings. Owner-side evidence files alongside them record the arm
+label and construction descriptor (eligible/selected/truncated/removed
+counts), the prompt, context, and bootstrap digests, the corpus file hashes,
+the deployment revision, and the manifest's own digest; `bundle_index.json`
+digests every artifact. Only the `blinded/` directory is grader-visible.
 
 Every run records the fields in `schemas/evaluation/run-manifest.schema.json`
 (WP2B freeze): run_id, git_commit, dataset_version, split, case_id,

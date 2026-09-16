@@ -4,8 +4,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -13,7 +15,6 @@ import (
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
-	"github.com/0merUfuk/beme/internal/storage"
 )
 
 const version = "0.1.0-alpha.1"
@@ -29,6 +30,16 @@ func main() {
 	var fs *flag.FlagSet
 	args := os.Args[1:]
 	cmd = args[0]
+	// Asking for help or the version is not a usage error: a new user's
+	// first command must not come back with exit 2.
+	switch cmd {
+	case "help", "--help", "-h":
+		usageTo(os.Stdout)
+		os.Exit(0)
+	case "version", "--version", "-v":
+		fmt.Printf("beme %s\n", version)
+		os.Exit(0)
+	}
 	fs = flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -42,6 +53,9 @@ func main() {
 		transport           string
 		experimentalLearned bool
 		exportOut           string
+		confirm             string
+		removeCanonical     bool
+		dryRun              bool
 	)
 	switch cmd {
 	case "status", "doctor", "serve", "mcp":
@@ -72,10 +86,23 @@ func main() {
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "projection", "personal", "projection profile")
 		fs.StringVar(&exportOut, "out", "-", "output path ('-' for stdout)")
-	case "source", "profile-cmd", "forget":
+	case "forget":
 		fs.BoolVar(&jsonOut, "json", false, "JSON output")
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "profile", "personal", "profile")
+	case "purge":
+		fs.BoolVar(&jsonOut, "json", false, "JSON output")
+		fs.StringVar(&configDir, "config", "", "config directory override")
+		fs.StringVar(&confirm, "confirm", "", "repeat the exact key to confirm this irreversible purge")
+		fs.BoolVar(&removeCanonical, "remove-canonical", false, "also delete the canonical source file(s)")
+		fs.BoolVar(&dryRun, "dry-run", false, "report what would be purged without changing anything")
+	case "source", "profile-cmd":
+		// no such command: registration is a file-authoring act (FR-020)
+		fmt.Fprintf(os.Stderr, `beme has no %q command: registering a source is the trust act and is
+performed by writing a descriptor under <config>/sources/ yourself.
+See "Registering a source" in docs/OPERATIONS.md.
+`, cmd)
+		os.Exit(2)
 	case "adapter", "candidate":
 		// handled directly below (need raw positional args)
 	default:
@@ -92,7 +119,7 @@ func main() {
 	case "status":
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		emitStatus(rt, jsonOut)
@@ -101,7 +128,7 @@ func main() {
 	case "build":
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		profiles := []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe}
@@ -112,7 +139,7 @@ func main() {
 		for _, p := range profiles {
 			rep, err := rt.BuildProfile(p)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error building %s: %v\\n", p, err)
+				fmt.Fprintf(os.Stderr, "error building %s: %v\n", p, err)
 				os.Exit(1)
 			}
 			reports = append(reports, *rep)
@@ -121,12 +148,15 @@ func main() {
 			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "reports": reports})
 		} else {
 			for _, r := range reports {
-				fmt.Printf("built %s: %d records from %d sources\\n", r.Profile, r.RecordsIngested, len(r.SourcesIngested))
+				fmt.Printf("built %s: %d records from %d sources\n", r.Profile, r.RecordsIngested, len(r.SourcesIngested))
 				for _, s := range r.Skipped {
-					fmt.Printf("  skipped: %s\\n", s)
+					fmt.Printf("  skipped: %s\n", s)
 				}
 				for _, s := range r.SecretRejected {
-					fmt.Printf("  secret-rejected: %s\\n", s)
+					fmt.Printf("  secret-rejected: %s\n", s)
+				}
+				if r.PurgeBlocked > 0 {
+					fmt.Printf("  purge-blocked: %d entr(ies) refused by physical-purge tombstones (not re-ingested)\n", r.PurgeBlocked)
 				}
 			}
 		}
@@ -137,7 +167,7 @@ func main() {
 		}
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		capID := capability
@@ -146,7 +176,7 @@ func main() {
 		}
 		sess, err := rt.Serve(contracts.Profile(profile), capID, false)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		defer sess.Store.Close()
@@ -168,7 +198,9 @@ func main() {
 			_ = trace
 		} else {
 			renderPackHuman(pack)
-			fmt.Printf("\\ntrace steps: %d (use explain --json for full trace)\\n", len(trace))
+			// Print the trace ID itself: it is the only handle `beme explain`
+			// accepts, and the human view has no other place it appears.
+			fmt.Printf("\ntrace: %s (%d steps) — explain with: beme explain --projection %s --trace %s\n", pack.TraceRef, len(trace), profile, pack.TraceRef)
 		}
 	case "forget":
 		// forget --profile X <record_id|source:source_id> [reason]
@@ -184,20 +216,14 @@ func main() {
 		}
 		rt, err := app.Load(configDir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		store, err := storage.Open(rt.ProjectionPath(contracts.Profile(profile)))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
+		if err := rt.Forget(contracts.Profile(profile), key, reason); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		defer store.Close()
-		if err := store.Tombstone(key, reason); err != recErrNone(err) {
-			fmt.Fprintf(os.Stderr, "error: %v\\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("tombstoned %s (logical forget; derived purge happens on next rebuild)\\n", key)
+		fmt.Printf("forgotten %s (tombstoned in the projection and the durable ledger; content stays on disk until `beme purge`)\n", key)
 	case "adapter":
 		adapterCmd(args[1:])
 	case "explain":
@@ -219,15 +245,86 @@ func main() {
 		}
 		exportCmd(rtE, profile, exportOut, jsonOut)
 	case "candidate":
-		rtC, err := app.Load(configDir)
+		// candidate keeps raw positional arguments (observation IDs), so its
+		// deployment override is extracted here instead of through the flag
+		// set: without this it would silently fall back to the operator's
+		// real deployment (isolation rule, ADR-026).
+		rest, candidateConfig, cfgErr := extractConfigFlag(args[1:])
+		if cfgErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", cfgErr)
+			os.Exit(2)
+		}
+		rtC, err := app.Load(candidateConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		candidateCmd(rtC, args[1:])
+		candidateCmd(rtC, rest)
+	case "purge":
+		// purge --confirm KEY [--remove-canonical] [--dry-run] [--json] KEY
+		rest := fs.Args()
+		if len(rest) != 1 {
+			fmt.Fprintln(os.Stderr, "usage: beme purge --confirm <key> [--remove-canonical] [--dry-run] [--json] <record-id|source:source-id>")
+			os.Exit(2)
+		}
+		rt, err := app.Load(configDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		rep, err := rt.PhysicalPurge(app.PurgeRequest{Key: rest[0], Confirm: confirm, RemoveCanonical: removeCanonical, DryRun: dryRun})
+		switch {
+		case errors.Is(err, app.ErrPurgeNotConfirmed):
+			fmt.Fprintf(os.Stderr, "policy blocked: %v\n", err)
+			os.Exit(3)
+		case errors.Is(err, app.ErrPurgeNotFound):
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(4)
+		case err != nil:
+			code := exitForReadErr(err)
+			pendingCount, pendingErr := rt.PendingPurges()
+			resumable := pendingErr == nil && pendingCount > 0
+			if jsonOut {
+				json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "error", "error": err.Error(), "resumable": resumable, "report": rep})
+			} else {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				if rep != nil && len(rep.Steps) > 0 {
+					fmt.Fprintf(os.Stderr, "partial purge of %s — steps completed before the failure:\n", rep.Key)
+					for _, st := range rep.Steps {
+						fmt.Fprintf(os.Stderr, "  %-36s %-8s %d\n", st.Step, st.Outcome, st.Count)
+					}
+				}
+				if resumable {
+					fmt.Fprintln(os.Stderr, "the purge is resumable: re-run the same command to finish the remaining cleanup")
+				}
+			}
+			os.Exit(code)
+		}
+		if jsonOut {
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "report": rep})
+			return
+		}
+		if rep.AlreadyPurged {
+			fmt.Printf("already purged: %s (nothing left to erase)\n", rep.Key)
+			return
+		}
+		mode := "purged"
+		if rep.DryRun {
+			mode = "dry run — would purge"
+		}
+		if rep.Resumed {
+			mode += " (resumed an interrupted purge)"
+		}
+		fmt.Printf("%s %d record(s) for %s\n", mode, rep.Records, rep.Key)
+		for _, st := range rep.Steps {
+			fmt.Printf("  %-36s %-8s %d\n", st.Step, st.Outcome, st.Count)
+		}
+		for _, r := range rep.Residuals {
+			fmt.Printf("  residual: %s\n", r)
+		}
 	case "serve", "mcp":
-		if transport != "stdio" {
-			fmt.Fprintf(os.Stderr, "error: only stdio transport is supported in v1 (ADR-014)\\n")
+		if err := app.ValidateTransport(transport); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(3)
 		}
 		runMCPServer(configDir, profile, capability, strconv.FormatBool(experimentalLearned))
@@ -237,10 +334,10 @@ func main() {
 	}
 }
 
-func recErrNone(err error) error { return err }
+func usage() { usageTo(os.Stderr) }
 
-func usage() {
-	fmt.Fprintf(os.Stderr, `beme %s — personal execution-context runtime
+func usageTo(w io.Writer) {
+	fmt.Fprintf(w, `beme %s — personal execution-context runtime
 
 Usage:
   beme status [--json] [--config DIR]
@@ -249,8 +346,19 @@ Usage:
   beme preview --task TEXT [--workspace PATH] [--projection P] [--json]
   beme resolve  (alias of preview)
   beme forget [--profile P] <record-id|source:source-id> [reason]
+  beme purge --confirm KEY [--remove-canonical] [--dry-run] [--json] KEY
+        physical purge (RED, irreversible): erase from projections, traces,
+        observations; leave a non-content anti-resurrection tombstone
+  beme export [--projection P] [--out PATH] [--json] [--config DIR]
+  beme explain --trace TRACE_ID [--projection P] [--json] [--config DIR]
+  beme candidate list|inspect|review [--config DIR] [--json]
+        review queue for quarantined observations (never canonical)
+  beme adapter install|remove|verify codex|claude-code
   beme serve --projection P --capability NAME --transport stdio
   beme mcp      (alias of serve)
+
+Sources are registered by writing a descriptor under <config>/sources/ —
+see "Registering a source" in docs/OPERATIONS.md.
 
 Exit codes: 0 ok · 1 failure · 2 usage · 3 policy-blocked · 4 not-found
 `, version)
@@ -277,29 +385,36 @@ func emitStatus(rt *app.Runtime, jsonOut bool) {
 		})
 		return
 	}
-	fmt.Printf("beme %s\\n", version)
-	fmt.Printf("registered sources: %d\\n", len(srcs))
+	fmt.Printf("beme %s\n", version)
+	fmt.Printf("registered sources: %d\n", len(srcs))
 	for _, s := range srcs {
-		fmt.Printf("  %-24s trust=%-14s profiles=%-12s sensitivity=%s\\n", s.SourceID, s.Trust, s.Profiles, s.Sensitivity)
+		fmt.Printf("  %-24s trust=%-14s profiles=%-12s sensitivity=%s\n", s.SourceID, s.Trust, s.Profiles, s.Sensitivity)
 	}
-	fmt.Printf("registered workspaces: %d\\n", len(rt.Registry.Workspaces))
+	fmt.Printf("registered workspaces: %d\n", len(rt.Registry.Workspaces))
 }
 
 func doctor(configDir string, jsonOut bool) {
 	rt, err := app.Load(configDir)
 	findings := []string{}
 	status := "healthy"
+	// raise keeps the most severe health state: a later, milder finding
+	// (e.g. a pending purge) never masks policy_blocked or unavailable.
+	raise := func(next string) {
+		if healthSeverity[next] > healthSeverity[status] {
+			status = next
+		}
+	}
 	if err != nil {
-		status = "unavailable"
+		raise("unavailable")
 		findings = append(findings, "config load failed: "+err.Error())
 	} else {
 		if len(rt.Sources) == 0 {
-			status = "degraded"
+			raise("degraded")
 			findings = append(findings, "no registered sources; register sources under <config>/sources/")
 		}
 		for _, s := range rt.Sources {
 			if _, err := os.Stat(s.Root); err != nil {
-				status = "degraded"
+				raise("degraded")
 				findings = append(findings, fmt.Sprintf("source %s root missing: %s", s.SourceID, s.Root))
 			}
 		}
@@ -308,16 +423,73 @@ func doctor(configDir string, jsonOut bool) {
 				findings = append(findings, fmt.Sprintf("projection %s not built yet (run: beme build --profile %s)", p, p))
 			}
 		}
+		for _, p := range []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe} {
+			pf, err := rt.ProjectionFindings(p)
+			if err != nil {
+				raise("policy_blocked")
+				findings = append(findings, fmt.Sprintf("projection %s cannot be read safely: %v", p, err))
+				continue
+			}
+			if len(pf) > 0 {
+				raise("degraded")
+			}
+			findings = append(findings, pf...)
+		}
+		if of, err := rt.ObservationFindings(); err != nil {
+			raise("policy_blocked")
+			findings = append(findings, fmt.Sprintf("observation store cannot be read safely: %v", err))
+		} else if len(of) > 0 {
+			raise("degraded")
+			findings = append(findings, of...)
+		}
+		n, pendingErr := rt.PendingPurges()
+		if pendingErr != nil {
+			raise("policy_blocked")
+			findings = append(findings, fmt.Sprintf("interrupted purges cannot be inspected: %v", pendingErr))
+		}
+		if n > 0 {
+			raise("degraded")
+			findings = append(findings, fmt.Sprintf("%d interrupted physical purge(s) pending: re-run the same `beme purge --confirm <key> <key>` command to finish the cleanup", n))
+		}
 	}
 	if jsonOut {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{"status": status, "findings": findings, "checked_at": time.Now().UTC().Format(time.RFC3339)})
 		return
 	}
-	fmt.Printf("doctor: %s\\n", status)
+	fmt.Printf("doctor: %s\n", status)
 	for _, f := range findings {
-		fmt.Printf("  - %s\\n", f)
+		fmt.Printf("  - %s\n", f)
 	}
 }
+
+// extractConfigFlag removes "--config DIR" / "--config=DIR" from raw
+// arguments and returns the remaining arguments and the directory. A flag
+// without a directory is an error: falling back to the default deployment
+// would read or write the operator's real store.
+func extractConfigFlag(args []string) (rest []string, configDir string, err error) {
+	rest = []string{}
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--config" || args[i] == "-config":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return nil, "", fmt.Errorf("--config requires a directory")
+			}
+			i++
+			configDir = args[i]
+		case strings.HasPrefix(args[i], "--config="), strings.HasPrefix(args[i], "-config="):
+			_, configDir, _ = strings.Cut(args[i], "=")
+			if strings.TrimSpace(configDir) == "" {
+				return nil, "", fmt.Errorf("--config requires a directory")
+			}
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return rest, configDir, nil
+}
+
+// healthSeverity orders doctor states (§23.1); doctor reports the most severe.
+var healthSeverity = map[string]int{"healthy": 0, "degraded": 1, "rebuild_required": 2, "policy_blocked": 3, "unavailable": 4}
 
 func renderPackHuman(pack any) {
 	b, _ := json.MarshalIndent(pack, "", "  ")
@@ -346,26 +518,26 @@ func renderPackHuman(pack any) {
 		} `json:"conflicts"`
 	}
 	json.Unmarshal(b, &p)
-	fmt.Printf("pack %s (profile=%s completeness=%s)\\n", p.PackID, p.Resolution.Profile, p.Resolution.Completeness)
-	fmt.Printf("constraints: %d\\n", len(p.Constraints))
+	fmt.Printf("pack %s (profile=%s completeness=%s)\n", p.PackID, p.Resolution.Profile, p.Resolution.Completeness)
+	fmt.Printf("constraints: %d\n", len(p.Constraints))
 	for i, c := range p.Constraints {
-		fmt.Printf("  %d. MUST: %s\\n", i+1, c.Text)
+		fmt.Printf("  %d. MUST: %s\n", i+1, c.Text)
 	}
-	fmt.Printf("guidance: %d\\n", len(p.Guidance))
+	fmt.Printf("guidance: %d\n", len(p.Guidance))
 	for i, g := range p.Guidance {
-		fmt.Printf("  %d. %s\\n", i+1, g.Text)
+		fmt.Printf("  %d. %s\n", i+1, g.Text)
 	}
-	fmt.Printf("precedents: %d\\n", len(p.Precedents))
+	fmt.Printf("precedents: %d\n", len(p.Precedents))
 	for i, pr := range p.Precedents {
-		fmt.Printf("  %d. %s\\n", i+1, pr.Text)
+		fmt.Printf("  %d. %s\n", i+1, pr.Text)
 	}
-	fmt.Printf("unknowns: %d\\n", len(p.Unknowns))
+	fmt.Printf("unknowns: %d\n", len(p.Unknowns))
 	for _, u := range p.Unknowns {
-		fmt.Printf("  ? %s\\n", u.Question)
+		fmt.Printf("  ? %s\n", u.Question)
 	}
-	fmt.Printf("conflicts: %d\\n", len(p.Conflicts))
+	fmt.Printf("conflicts: %d\n", len(p.Conflicts))
 	for _, c := range p.Conflicts {
-		fmt.Printf("  ! %s\\n", c.Description)
+		fmt.Printf("  ! %s\n", c.Description)
 	}
 	_ = strconv.Itoa
 }

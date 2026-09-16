@@ -34,6 +34,21 @@ type TraceStep struct {
 // Resolve produces a ContextPack. Deterministic: identical inputs produce
 // structurally identical packs (NFR-002).
 func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req contracts.ResolutionRequest, opts Options) (Pack, []TraceStep) {
+	return resolveWith(store, cap, tc, req, opts, policyEvaluator(opts))
+}
+
+// eligibilityFunc is the Stage-A gate applied to one record.
+type eligibilityFunc func(rec contracts.Record, cap policy.Capability, tc policy.TaskContext) policy.EligibilityResult
+
+// policyEvaluator is the serving Stage-A gate: the full policy engine.
+func policyEvaluator(opts Options) eligibilityFunc {
+	return func(rec contracts.Record, cap policy.Capability, tc policy.TaskContext) policy.EligibilityResult {
+		return opts.Policy.Evaluate(rec, cap, tc, opts.Revoked, cap.ExperimentalLearnedGuidance)
+	}
+}
+
+// resolveWith runs the two-stage pipeline with the given Stage-A gate.
+func resolveWith(store Store, cap policy.Capability, tc policy.TaskContext, req contracts.ResolutionRequest, opts Options, evaluate eligibilityFunc) (Pack, []TraceStep) {
 	trace := []TraceStep{}
 	now := opts.Now
 	if now.IsZero() {
@@ -43,18 +58,7 @@ func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req cont
 	trace = append(trace, TraceStep{Step: "capability", Outcome: fmt.Sprintf("bound profile=%s capability=%s", cap.Profile, cap.CapabilityID)})
 
 	// Stage A over every record.
-	eligible := []contracts.Record{}
-	excluded := map[string]string{}
-	for _, rec := range store.Records() {
-		res := opts.Policy.Evaluate(rec, cap, tc, opts.Revoked, cap.ExperimentalLearnedGuidance)
-		if res.Eligible {
-			eligible = append(eligible, rec)
-			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "eligible"})
-		} else {
-			excluded[rec.RecordID] = strings.Join(res.Reasons, "; ")
-			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "excluded", Reasons: res.Reasons})
-		}
-	}
+	eligible, trace := stageA(store, cap, tc, evaluate, trace)
 
 	// Stage B: facet classification (deterministic lexical).
 	facets := classifyFacets(req.Task, tc.TaskKinds)
@@ -70,6 +74,22 @@ func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req cont
 	// Budgeting (reserve mandatory first; only advisory truncates).
 	pack := buildPack(winners, conflicts, req, cap, tc, store, opts, facets, now, &trace)
 	return pack, trace
+}
+
+// stageA applies the Stage-A gate to every record, recording each outcome in
+// the trace, and returns the eligible records in store order.
+func stageA(store Store, cap policy.Capability, tc policy.TaskContext, evaluate eligibilityFunc, trace []TraceStep) ([]contracts.Record, []TraceStep) {
+	eligible := []contracts.Record{}
+	for _, rec := range store.Records() {
+		res := evaluate(rec, cap, tc)
+		if res.Eligible {
+			eligible = append(eligible, rec)
+			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "eligible"})
+		} else {
+			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "excluded", Reasons: res.Reasons})
+		}
+	}
+	return eligible, trace
 }
 
 // Options carries trusted resolver inputs.

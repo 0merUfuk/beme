@@ -31,9 +31,42 @@ never evidence of preference.
 
 ## Deletion
 
-`beme forget` tombstones (logical forget). Rebuild purges derived copies.
-Physical purge from Git history is a distinct, user-owned, irreversible
-action with an anti-resurrection tombstone only (FR-055).
+`beme forget` is a logical forget: the record is tombstoned in its projection
+and in the durable ledger under the canonical root, so it never resolves
+again — even after a rebuild, corrupt-store recovery, or a restored backup.
+A rebuild does not erase the content; the source still holds it.
+
+`beme purge --confirm <key> <key>` is the physical purge (FR-055, ADR-027):
+a distinct, user-owned, irreversible action. It erases the record — through
+every provenance ref it actually has — from both projection stores (rewriting
+the files so the bytes do not survive), from persisted traces, and from
+pending observations that restate it; with `--remove-canonical` it also
+deletes every source file those refs locate. If it fails part-way, re-running
+the same command finishes the remaining cleanup; running it again after
+completion is a no-op.
+
+After a purge with `--remove-canonical` completes, what remains is minimal: a
+keyed HMAC fingerprint of the record's identity (source ID + record ID) and of
+the purge key. Without `--remove-canonical`, the canonical source file also
+remains; the fingerprint keeps it from being re-ingested. The ledger holds no content,
+no digest of content or text, no readable IDs, and no timestamps, so a copy
+of the ledger alone cannot be used to confirm a guess about what was purged.
+The HMAC key (`ledger/purge.key`) is stored separately and excluded from Git
+by a generated `.gitignore`; back it up with the ledger but never share or
+commit it. The fingerprint blocks re-ingestion and resolution when the same
+record returns through sync, rollback, rebuild, or a backup restore;
+deliberately re-authoring the same words under a new ID is not blocked. Git
+history and external backups are outside Be Me's reach: the purge report
+lists them as residuals with the remediation.
+
+Every read surface — resolve and preview, export, explain, `beme doctor`, and
+the MCP status count and context-item expansion — applies the ledger at read
+time, so a restored pre-purge backup cannot surface purged or forgotten
+records. If the ledger or its key cannot be read, those surfaces refuse
+(CLI exit 3, MCP `policy_blocked`) rather than read unfiltered data. One
+residual: observations restored from a backup of the data dir cannot be
+matched against purged content, because the ledger holds none; review them
+with `beme candidate list` after such a restore.
 
 ## Public/private boundary
 

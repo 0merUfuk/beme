@@ -35,10 +35,10 @@ inspectable `ContextPack` objects for AI coding agents.
 surface, CLI, adapter contracts, and the learning-review pipeline are
 implemented and tested. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for the
 canonical current status and [`docs/ROADMAP.md`](docs/ROADMAP.md) for
-work-package state. Known alpha limitations (advisory-only adapter
-assurance, no live-model behavioral evaluation yet, Windows
-ported-unverified) are listed in the
-[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1).
+work-package state. Known alpha.1 limitations (advisory-only adapter
+assurance, no live-model behavioral evaluation yet) are listed in the
+[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1);
+since alpha.1 the full test suite also runs on Windows in CI (ADR-028).
 
 ```
 beme/
@@ -72,6 +72,24 @@ If your system `python3` is older than 3.11, use any Python 3.11+
 interpreter explicitly (e.g. `python3.13 -m venv .venv`). See
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full environment
 guide and the owner-gated private-evaluation workflow.
+
+## Install and first deployment
+
+```sh
+# Install the binaries (Go 1.25+):
+go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-eval ./cmd/beme-threat-corpus
+export PATH="$(go env GOPATH)/bin:$PATH"   # or set GOBIN to a directory on PATH
+
+beme doctor            # health check; it names what is missing
+```
+
+A fresh deployment has no sources: registration is a file-authoring act (it
+is the trust act — Be Me has no command that registers a source for you). See
+[**Registering a source**](docs/OPERATIONS.md#registering-a-source) in
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md), which also covers the lifecycle
+(`build`, `preview`, `forget`, `purge`, `candidate`), platform directories,
+and ledger backup and key custody. Harness/MCP setup is in
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 ## Documentation
 

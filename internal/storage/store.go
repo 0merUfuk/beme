@@ -143,7 +143,10 @@ func (s *Store) Provenance(id string) (contracts.Provenance, bool) {
 	return p, true
 }
 
-// SearchFTS runs a bounded FTS5 query over the pack-ready text.
+// SearchFTS runs a bounded FTS5 query over the pack-ready text. Tombstoned
+// records are excluded (threat case 10: revoked content must not remain
+// reachable through the FTS candidate path either). A single joined query
+// avoids nested cursor access on the single SQLite connection.
 func (s *Store) SearchFTS(query string, limit int) []string {
 	if limit <= 0 {
 		limit = 20
@@ -152,15 +155,21 @@ func (s *Store) SearchFTS(query string, limit int) []string {
 	if q == "" {
 		return nil
 	}
-	rows, err := s.db.Query(`SELECT record_id FROM records_fts WHERE records_fts MATCH ? LIMIT ?`, q, limit)
+	revoked := s.RevokedSet()
+	rows, err := s.db.Query(`SELECT f.record_id, r.source_id
+		FROM records_fts f JOIN records r ON r.record_id = f.record_id
+		WHERE records_fts MATCH ? LIMIT ?`, q, limit)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 	out := []string{}
 	for rows.Next() {
-		var id string
-		if rows.Scan(&id) == nil {
+		var id, src string
+		if rows.Scan(&id, &src) == nil {
+			if revoked[id] || revoked["source:"+src] {
+				continue // tombstoned: not a candidate
+			}
 			out = append(out, id)
 		}
 	}
