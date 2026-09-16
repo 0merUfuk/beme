@@ -162,9 +162,12 @@ func TestEraseOpensWithoutFollowingLinks(t *testing.T) {
 
 // TestEraseSurvivesEntrySwappedAfterInspection drives the actual TOCTOU
 // window: the directory entry is replaced between the inspection and the
-// open. A symlink swapped in must not be followed (the target keeps its
-// bytes), and a different regular file swapped in must be refused rather
-// than erased, because it is not the file that was inspected.
+// open, and every decision must come from the open handle. A symlink
+// swapped in must not be followed, and a name that shares its content with
+// a file outside the purge must be refused; in both cases that outside file
+// keeps its bytes. Inode identity is deliberately not asserted: a
+// filesystem may give the replacement the inode just freed, so it is not a
+// sound property to rely on.
 func TestEraseSurvivesEntrySwappedAfterInspection(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -181,15 +184,15 @@ func TestEraseSurvivesEntrySwappedAfterInspection(t *testing.T) {
 			// A swapped-in symlink must be refused at the open itself
 			// (O_NOFOLLOW / OPEN_REPARSE_POINT), not merely noticed
 			// afterwards by the identity check.
-		}, symlinkSwapError()},
-		{"a different regular file", func(t *testing.T, path, sentinel string) {
+		}, durable.ErrNotRegular},
+		{"a name sharing its content with a file outside the purge", func(t *testing.T, path, sentinel string) {
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(path, []byte("a different file"), 0o600); err != nil {
-				t.Fatal(err)
+			if err := os.Link(sentinel, path); err != nil {
+				t.Skipf("hard links unsupported here: %v", err)
 			}
-		}, durable.ErrChangedUnderfoot},
+		}, durable.ErrMultipleLinks},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -235,16 +238,6 @@ func TestEraseSurvivesEntrySwappedAfterInspection(t *testing.T) {
 	if existed, err := durable.Erase(p); err != nil || !existed {
 		t.Fatalf("unswapped erase must succeed: existed=%v err=%v", existed, err)
 	}
-}
-
-// symlinkSwapError is the error a symlink swapped in after inspection must
-// produce: on Unix the no-follow open refuses it as a non-regular file; on
-// Windows the entry itself is opened and recognized as a reparse point.
-func symlinkSwapError() error {
-	if runtime.GOOS == "windows" {
-		return durable.ErrChangedUnderfoot
-	}
-	return durable.ErrNotRegular
 }
 
 func TestEnsureDirRefusesNonDirectoryAndFlushesEveryLevel(t *testing.T) {

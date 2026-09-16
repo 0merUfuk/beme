@@ -747,7 +747,14 @@ revocation.
    build` erases restored copies and `beme doctor` reports their count
    without IDs. Zero-length observation files (what a crash between zeroize
    and unlink can leave) are treated as erased remnants.
-5. **Durable erasure.** Every file a purge removes is zeroized, flushed,
+5. **Durable erasure.** Erasure decides from the open handle: the file is
+   opened without following a final symlink (`O_NOFOLLOW`, or
+   `FILE_FLAG_OPEN_REPARSE_POINT` on Windows) and must prove from that handle
+   that it is a regular file, not a reparse point, and has no other hard
+   link, before anything is written — so an entry swapped in after inspection
+   cannot redirect the truncate. Device+inode identity is deliberately not
+   compared: a filesystem may reuse a just-freed inode, so it is not a sound
+   check. Every file a purge removes is zeroized, flushed,
    unlinked, and its parent directory flushed (`internal/durable`), and an
    already-absent file still flushes its directory, so a retry completes the
    flush an earlier attempt could not. Projections are compacted with
@@ -782,8 +789,13 @@ positive control),
 `TestEraseRefusesSymlinksAndHardLinks`, `TestFlushFailuresAreReported`,
 `TestLockSerializesHolders`, threat cases S3 and S4. Every assertion was
 proved by reintroducing the defect in a scratch copy (mutation log in PR #1).
-**Mutation coverage note:** removing the `PendingPurges()` error propagation
-is not independently detectable — the same unreadable journal directory
+**Mutation coverage note:** two checks are defense in depth and are recorded
+as such rather than claimed as mutation-proven. Removing the open handle's
+regular-file check is not detectable on Unix, where the `O_NOFOLLOW` open
+already refuses a swapped-in symlink (that path is mutation-proven); it is
+the load-bearing check on Windows, where the entry is opened as a reparse
+point, and its evidence is the same test running in Windows CI. Removing the
+`PendingPurges()` error propagation is not independently detectable — the same unreadable journal directory
 already fails `LoadLedger` closed, which every surface goes through. It is
 kept as defense in depth for callers that report pending purges without
 loading the ledger, and is recorded here rather than claimed as proven.

@@ -51,19 +51,14 @@ func openForErase(path string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
-// sameFile reports whether the open handle is the entry Lstat inspected
-// (same device and inode).
-func sameFile(info os.FileInfo, f *os.File) (bool, error) {
-	opened, err := f.Stat()
+// handleIsRegular reports whether the OPEN handle refers to a regular file,
+// decided after the no-follow open rather than from an earlier Lstat.
+func handleIsRegular(f *os.File) (bool, error) {
+	info, err := f.Stat()
 	if err != nil {
 		return false, err
 	}
-	a, aOK := info.Sys().(*syscall.Stat_t)
-	b, bOK := opened.Sys().(*syscall.Stat_t)
-	if !aOK || !bOK {
-		return true, nil // platform without stat identity: nothing to compare
-	}
-	return a.Dev == b.Dev && a.Ino == b.Ino, nil
+	return info.Mode().IsRegular(), nil
 }
 
 func linkCount(f *os.File) (uint64, error) {

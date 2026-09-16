@@ -40,9 +40,6 @@ var (
 	ErrLocked = errors.New("another Be Me maintenance operation is running")
 	// ErrNotDirectory: a path that must be a directory is something else.
 	ErrNotDirectory = errors.New("path exists and is not a directory")
-	// ErrChangedUnderfoot: the directory entry changed between inspection
-	// and opening, so the open handle is not the file that was checked.
-	ErrChangedUnderfoot = errors.New("file changed between inspection and opening")
 )
 
 var (
@@ -240,10 +237,12 @@ func EnsureDir(dir string) error {
 		return nil
 	case err == nil:
 		return fmt.Errorf("%s: %w", dir, ErrNotDirectory)
+	case errors.Is(err, os.ErrNotExist):
+		// missing: created below. Windows reports a missing INTERMEDIATE
+		// path as ENOTDIR too, so not-exist must be decided first.
 	case errors.Is(err, syscall.ENOTDIR):
-		// an ancestor exists and is not a directory
 		return fmt.Errorf("%s: %w", dir, ErrNotDirectory)
-	case !errors.Is(err, os.ErrNotExist):
+	default:
 		return err
 	}
 	// Collect the missing ancestors, outermost first: MkdirAll would create
@@ -257,10 +256,10 @@ func EnsureDir(dir string) error {
 			}
 			break
 		}
-		if errors.Is(err, syscall.ENOTDIR) {
-			return fmt.Errorf("%s: %w", p, ErrNotDirectory)
-		}
 		if !errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, syscall.ENOTDIR) {
+				return fmt.Errorf("%s: %w", p, ErrNotDirectory)
+			}
 			return err
 		}
 		missing = append([]string{p}, missing...)
@@ -306,23 +305,26 @@ func Erase(path string) (existed bool, err error) {
 	if !info.Mode().IsRegular() {
 		return true, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrNotRegular)
 	}
-	// Open without following links, then confirm the open handle is the very
-	// entry Lstat inspected: otherwise a process that swaps the name for a
-	// symlink between the two calls could redirect the zeroizing truncate at
-	// a file the caller never asked to erase (TOCTOU).
+	// Open without following a final symlink, then decide everything from the
+	// OPEN HANDLE rather than from the earlier Lstat, so a process that swaps
+	// the directory entry in between cannot redirect the zeroizing truncate
+	// (TOCTOU). Comparing device+inode against the Lstat result would not be
+	// sound — a filesystem may hand the replacement the inode just freed — so
+	// what is checked is what the handle itself proves: a regular file, not a
+	// reparse point, with no other name sharing its content.
 	runEraseRaceHook(path)
 	f, err := openForErase(path)
 	if err != nil {
 		return true, err
 	}
-	same, err := sameFile(info, f)
+	regular, err := handleIsRegular(f)
 	if err != nil {
 		f.Close()
 		return true, err
 	}
-	if !same {
+	if !regular {
 		f.Close()
-		return true, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrChangedUnderfoot)
+		return true, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrNotRegular)
 	}
 	links, err := linkCount(f)
 	if err != nil {

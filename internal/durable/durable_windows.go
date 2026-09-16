@@ -47,10 +47,10 @@ func openForErase(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
-// sameFile reports whether the open handle is a plain file rather than a
-// reparse point swapped in after inspection. Windows exposes no Lstat-side
-// file index to compare against, so identity is checked by attribute.
-func sameFile(_ os.FileInfo, f *os.File) (bool, error) {
+// handleIsRegular reports whether the OPEN handle refers to a plain file —
+// not a reparse point (a symlink or junction swapped in after inspection)
+// and not a directory.
+func handleIsRegular(f *os.File) (bool, error) {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info); err != nil {
 		return false, err
