@@ -149,15 +149,25 @@ counts, not the transcript text, in `docs/ACCEPTANCE.md`.
 ### Owner-run procedure for the evaluation gates (E5, E6)
 
 ```sh
-# Retrieval measurement on the private corpus (ADR-023; owner-gated, local)
+# Retrieval measurement on the private corpus (ADR-023; owner-gated, local).
+# No model is called: retrieval metrics come from the resolver itself.
 export BEME_PRIVATE_EVAL_DIR=/path/to/private/corpus     # never in the repo
 export BEME_EVAL_GIT_COMMIT="$(git rev-parse HEAD)"      # worktrees stamp the main checkout
 make validate-private                                     # schema check first
-go run ./cmd/beme-eval --corpus "$BEME_PRIVATE_EVAL_DIR" --arms B4   --out "$BEME_HOME/evidence" --provider mock             # retrieval metrics need no model
+go run ./cmd/beme-eval retrieval \
+  --corpus "$BEME_PRIVATE_EVAL_DIR" --config "$BEME_CONFIG_HOME" \
+  --out "$BEME_HOME/evidence" --json
 
-# Blind paired behavioral run (E6) — SPENDS MODEL USAGE, owner decision
-go run ./cmd/beme-eval --corpus "$BEME_PRIVATE_EVAL_DIR" --arms B0,B4   --provider command --provider-cmd "<your harness CLI>"   --out "$BEME_HOME/evidence"
+# Blind paired behavioral run (E6) — SPENDS MODEL USAGE, owner decision.
+# --dry-run first reports how many generations would run, executing nothing.
+go run ./cmd/beme-eval behavioral \
+  --corpus "$BEME_PRIVATE_EVAL_DIR" --config "$BEME_CONFIG_HOME" \
+  --provider command --command '<your harness CLI> --stdin' \
+  --arms B0,B4 --repeats 3 --out "$BEME_HOME/evidence" --dry-run
 ```
+
+Exit codes follow `Summary.ExitCode`: 0 passed, 1 failed, 3 not_run (for
+example no corpus given), 2 usage.
 
 Evidence bundles stay outside the repository (ADR-023). Only `blinded/` is
 grader-visible; manifests record the observed model settings, prompt hashes

@@ -53,7 +53,7 @@ func TestPurgePlanningFailsOnCorruptObservation(t *testing.T) {
 	if stepDone(rep, "derived_purge_observations") {
 		t.Fatal("observation step reported done over an uninspectable store")
 	}
-	if _, statErr := os.Stat(f.rt.LedgerPath()); !errors.Is(statErr, os.ErrNotExist) || f.rt.PendingPurges() != 0 {
+	if _, statErr := os.Stat(f.rt.LedgerPath()); !errors.Is(statErr, os.ErrNotExist) || mustPendingPurges(t, f.rt) != 0 {
 		t.Fatal("planning failure must happen before any ledger or journal write")
 	}
 	if text, _ := resolvedText(t, f.rt); !strings.Contains(text, purgeCanary) {
@@ -158,7 +158,7 @@ func TestPurgeResumeWithObservationStorageFailures(t *testing.T) {
 	if stepDone(rep, "derived_purge_observations") {
 		t.Fatal("resume reported the observation step done over an unusable store")
 	}
-	if f.rt.PendingPurges() != 1 {
+	if mustPendingPurges(t, f.rt) != 1 {
 		t.Fatal("the journal must stay pending after a failed resume")
 	}
 	if err := os.Remove(obsDir); err != nil {
@@ -241,7 +241,7 @@ func TestPurgeFailsOnUnreadableTracesAndCanonicalPaths(t *testing.T) {
 		if err == nil || stepDone(rep, "canonical_source_removed") {
 			t.Fatalf("an uninspectable canonical path must abort the purge; rep=%+v err=%v", rep, err)
 		}
-		if f.rt.PendingPurges() != 1 {
+		if mustPendingPurges(t, f.rt) != 1 {
 			t.Fatal("the failed canonical stage must leave a resumable journal")
 		}
 		rep, err = f.rt.PhysicalPurge(purgeReq("rec_can-001"))

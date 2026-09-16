@@ -1283,7 +1283,7 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 		if _, err := rt.PhysicalPurge(req); !errors.Is(err, injected) {
 			return errf("interrupted purge: want injected failure, got %v", err)
 		}
-		if n := rt.PendingPurges(); n != 1 {
+		if n, perr := rt.PendingPurges(); perr != nil || n != 1 {
 			return errf("interrupted purge must leave one pending journal, got %d", n)
 		}
 		if ok, err := personalResolves(ds); err != nil || ok {
@@ -1294,8 +1294,9 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 		if err != nil {
 			return err
 		}
-		if !rep.Resumed || rt.PendingPurges() != 0 {
-			return errf("second run must resume and finish (resumed=%v pending=%d)", rep.Resumed, rt.PendingPurges())
+		pendingAfter, perr := rt.PendingPurges()
+		if !rep.Resumed || perr != nil || pendingAfter != 0 {
+			return errf("second run must resume and finish (resumed=%v pending=%d err=%v)", rep.Resumed, pendingAfter, perr)
 		}
 		if hits := filesContaining(rt.Config.DataDir, PersonalText); len(hits) > 0 {
 			return errf("resumed purge left content in %d data file(s)", len(hits))

@@ -111,16 +111,18 @@ func TestEraseRefusesSymlinksAndHardLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link.md")
-	if err := os.Symlink(target, link); err == nil {
-		if _, err := durable.Erase(link); !errors.Is(err, durable.ErrNotRegular) {
-			t.Fatalf("symlink must be refused; got %v", err)
-		}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+	if _, err := durable.Erase(link); !errors.Is(err, durable.ErrNotRegular) {
+		t.Fatalf("symlink must be refused; got %v", err)
 	}
 	hard := filepath.Join(dir, "hard.md")
-	if err := os.Link(target, hard); err == nil {
-		if _, err := durable.Erase(hard); !errors.Is(err, durable.ErrMultipleLinks) {
-			t.Fatalf("hard-linked file must be refused; got %v", err)
-		}
+	if err := os.Link(target, hard); err != nil {
+		t.Skipf("hard links unsupported here: %v", err)
+	}
+	if _, err := durable.Erase(hard); !errors.Is(err, durable.ErrMultipleLinks) {
+		t.Fatalf("hard-linked file must be refused; got %v", err)
 	}
 	if data, _ := os.ReadFile(target); string(data) != "keep me" {
 		t.Fatalf("refused erase modified shared content: %q", data)

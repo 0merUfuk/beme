@@ -484,7 +484,7 @@ alone).
    (operator-owned configuration, never inside the data dir). `forget`
    writes the store tombstone and a ledger revocation; resolution and
    rebuild merge both. An unreadable ledger fails closed.
-2. **Ledger minimality.** Purge entries are `hmac-sha256` fingerprints under
+4. **Ledger minimality.** Purge entries are `hmac-sha256` fingerprints under
    a random 32-byte per-deployment key, over record identity
    (source ID + record ID) and over the purge key — nothing else. No content
    or text digests, no plain IDs, no timestamps or reasons; entries are
@@ -494,12 +494,12 @@ alone).
    pending journals so a Git-tracked canonical root never commits them.
    Purge entries without a readable key fail resolution, rebuild, and purge
    closed (`ErrPurgeKeyMissing`).
-3. **Provenance.** Projection purge removes the union of the record
+5. **Provenance.** Projection purge removes the union of the record
    payload's `ProvenanceRefs`, the refs recorded in the purge plan, and every
    provenance row with the record's `(source_id, source_record_id)`. No ID is
    derived by convention. Canonical removal follows every locator of every
    ref.
-4. **Idempotent, resumable execution.** Order: ledger fingerprints → journal
+6. **Idempotent, resumable execution.** Order: ledger fingerprints → journal
    → per-store purge + compact (`secure_delete`, FTS `optimize`, `VACUUM`,
    WAL truncate) → persisted traces → restating observations → canonical
    files (`--remove-canonical`, root-contained) → journal removal. The
@@ -510,7 +510,7 @@ alone).
    `already_purged` (exit 0). `beme doctor` reports pending purges.
    `PurgeRequest.FailAt` is a verification hook (never set by the CLI or
    MCP) that injects failures at every stage in tests.
-5. **Durability boundary.** The ledger, the purge key, and the journal are
+7. **Durability boundary.** The ledger, the purge key, and the journal are
    written by durable replacement: temp file → fsync (`F_FULLFSYNC` on macOS)
    → rename followed by an fsync of the parent directory on Unix; on Windows,
    which has no directory fsync, `MoveFileExW` with
@@ -521,7 +521,7 @@ alone).
    perform (volatile drive caches, some network or virtualized filesystems).
    The first revision only fsynced the file and described the ordering more
    strongly than the implementation supported.
-6. **Inspection failures abort.** A projection, trace directory, observation
+8. **Inspection failures abort.** A projection, trace directory, observation
    store (unreadable directory, unreadable or corrupt observation file), or
    canonical path that cannot be inspected fails the purge — during planning,
    before anything is written, or during execution with the journal left for
@@ -704,13 +704,30 @@ revocation.
 1. **Enforcement state is two files that prove each other.** `purge.key`
    (schema 3) holds the key, a `key_id` derived from it, the `generation` of
    the last committed ledger write, and `committed`; `tombstones.json`
-   (schema 3) holds the same `key_id` and its own `generation`. Loading
-   fails closed when: the ledger is missing while the key is committed (or
-   is a legacy key, which only ever existed alongside a ledger); the key is
-   missing or malformed while the ledger needs it; `key_id` differs; the
-   ledger's generation is below the generation the key records (partial
-   rollback or restore); a pending journal exists without a ledger; or an
-   entry is not exactly `hmac-sha256:` plus 64 lowercase hex characters.
+   (schema 3) holds the same `key_id`, its own `generation`, and a `mac`
+   authenticating its entry set. Loading fails closed when: the ledger is
+   missing while the key is committed (or is a legacy key, which only ever
+   existed alongside a ledger); the key is missing or malformed while the
+   ledger needs it; `key_id` differs; the ledger's generation is below the
+   generation the key records (partial rollback or restore); an entry is not
+   exactly `hmac-sha256:` plus 64 lowercase hex characters; or the `mac`
+   does not match the entries present.
+2. **The entry set is authenticated, not just the file shape.** `mac` is an
+   HMAC under the purge key over the schema, the key binding, the
+   generation, and every revocation, purge and observation entry in a
+   canonical order, written atomically with the ledger. Deleting or adding
+   entries in place — which leaves `key_id`, `generation` and every
+   remaining entry valid — is therefore detected, where shape and generation
+   checks alone accepted it. Someone who holds the purge key can recompute
+   the tag; that is the same boundary as deleting both files, which is
+   documented below as locally undetectable.
+3. **A pending journal must be explained by the ledger.** A journal is
+   written only after the purge's fingerprints are in the ledger, so a
+   journal alongside a ledger that holds no purge fingerprints (or with no
+   usable key) is a partial restore that dropped enforcement, and fails
+   closed — not only the case where the ledger file is absent. A journal
+   directory that cannot be read is an error on every surface that reports
+   pending purges, never "none pending".
 2. **Write protocol.** Create the key uncommitted → write the ledger at the
    next generation with the key ID → rewrite the key as committed at that
    generation. A crash after step 1 (key uncommitted, no ledger) is
@@ -744,8 +761,12 @@ revocation.
    (`flock` / `LockFileEx`, two-minute bounded wait, git-ignored), so
    concurrent operations cannot lose each other's ledger updates and a build
    cannot re-ingest what a purge is erasing.
-**Evidence:** `TestLedgerIntegrityFailsClosedOnEverySurface` (eight partial
-states × twelve surfaces, each with a positive control),
+**Evidence:** `TestLedgerIntegrityFailsClosedOnEverySurface` (thirteen
+damaged or partially restored states — missing ledger, missing key, rolled
+back, foreign key, malformed entry, entries edited in place, a revocation
+dropped, a journal without a ledger, a journal beside a purge-free ledger,
+an unreadable journal directory — each against twelve surfaces, each with a
+positive control),
 `TestInterruptedFirstLedgerWriteRecovers`,
 `TestCrashBeforeKeyCommitKeepsEnforcement`,
 `TestLedgerRemovedTogetherIsUndetectable`,
@@ -761,6 +782,11 @@ states × twelve surfaces, each with a positive control),
 `TestEraseRefusesSymlinksAndHardLinks`, `TestFlushFailuresAreReported`,
 `TestLockSerializesHolders`, threat cases S3 and S4. Every assertion was
 proved by reintroducing the defect in a scratch copy (mutation log in PR #1).
+**Mutation coverage note:** removing the `PendingPurges()` error propagation
+is not independently detectable — the same unreadable journal directory
+already fails `LoadLedger` closed, which every surface goes through. It is
+kept as defense in depth for callers that report pending purges without
+loading the ledger, and is recorded here rather than claimed as proven.
 **Alternatives rejected:** a single file holding both key and ledger (a
 leaked or committed copy would carry its own key); a monotonic counter in a
 third file (the same asymmetry problem with one more file to lose);

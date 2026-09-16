@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,9 @@ type Ledger struct {
 	Purges []string `json:"purges"`
 	// Observations are keyed fingerprints of purged observation IDs.
 	Observations []string `json:"observations"`
+	// MAC authenticates the entry set under the purge key, so an edit that
+	// drops or adds entries is detected (ADR-030 §2).
+	MAC string `json:"mac,omitempty"`
 
 	key     []byte
 	keyFile *purgeKeyFile
@@ -172,11 +176,11 @@ func (rt *Runtime) LoadLedger() (*Ledger, error) {
 	}
 
 	data, err := os.ReadFile(rt.LedgerPath())
+	pending, perr := rt.pendingJournals()
+	if perr != nil {
+		return nil, unusable("pending purge journals uninspectable: %v", perr)
+	}
 	if errors.Is(err, os.ErrNotExist) {
-		pending, perr := rt.pendingJournals()
-		if perr != nil {
-			return nil, unusable("pending purge journals uninspectable: %v", perr)
-		}
 		switch {
 		case pending > 0:
 			return nil, unusable("ledger/tombstones.json is missing but %d pending purge journal(s) exist: restore the ledger from the same backup as ledger/pending/", pending)
@@ -202,6 +206,7 @@ func (rt *Runtime) LoadLedger() (*Ledger, error) {
 		Revocations   []LedgerRevocation `json:"revocations"`
 		Purges        []string           `json:"purges"`
 		Observations  []string           `json:"observations"`
+		MAC           string             `json:"mac"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, unusable("corrupt: %v", err)
@@ -213,6 +218,13 @@ func (rt *Runtime) LoadLedger() (*Ledger, error) {
 		}
 	}
 	committedKey := kerr == nil && !kf.legacy && kf.Committed
+	// A pending journal is written only after the purge's fingerprints are
+	// in the ledger, so a ledger that holds none cannot explain it: that is
+	// a partial restore (e.g. a pre-purge ledger over a live journal), and
+	// the enforcement it recorded is gone.
+	if pending > 0 && (len(l.Purges) == 0 || l.key == nil) {
+		return nil, unusable("%d pending purge journal(s) exist but ledger/tombstones.json holds no purge fingerprints: it was replaced by an older copy — restore the ledger and key from the same backup as ledger/pending/", pending)
+	}
 
 	switch raw.SchemaVersion {
 	case ledgerSchemaVersion:
@@ -231,7 +243,13 @@ func (rt *Runtime) LoadLedger() (*Ledger, error) {
 		if raw.Generation < kf.Generation {
 			return nil, unusable("ledger/tombstones.json (generation %d) is older than ledger/purge.key records (generation %d): it was rolled back or partially restored — restore both files from the same backup", raw.Generation, kf.Generation)
 		}
-		l.KeyID, l.Generation = raw.KeyID, raw.Generation
+		l.KeyID, l.Generation, l.MAC = raw.KeyID, raw.Generation, raw.MAC
+		if raw.MAC == "" {
+			return nil, unusable("corrupt: ledger carries no authentication tag")
+		}
+		if !hmac.Equal([]byte(raw.MAC), []byte(l.contentMAC())) {
+			return nil, unusable("ledger/tombstones.json does not match its authentication tag: entries were added or removed after it was written — restore the ledger and key from the same backup")
+		}
 	case "2", "1":
 		if len(l.Observations) > 0 {
 			return nil, unusable("corrupt: schema %s cannot hold observation entries", raw.SchemaVersion)
@@ -404,6 +422,7 @@ func (rt *Runtime) saveLedger(l *Ledger) error {
 	if l.Observations == nil {
 		l.Observations = []string{}
 	}
+	l.MAC = l.contentMAC()
 	data, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
 		return err
@@ -437,6 +456,31 @@ func (rt *Runtime) lock() (*durable.Lock, error) {
 		return nil, fmt.Errorf("maintenance lock: %w", err)
 	}
 	return lk, nil
+}
+
+// contentMAC authenticates the whole entry set: schema, key binding,
+// generation, and every revocation, purge and observation entry, in a
+// canonical order. It is computed under the purge key, so an edit that drops
+// entries is detected unless the editor also holds the key — the same
+// boundary as removing both files, which ADR-030 documents as undetectable.
+func (l *Ledger) contentMAC() string {
+	parts := []string{"ledger", ledgerSchemaVersion, l.KeyID, strconv.FormatUint(l.Generation, 10)}
+	revs := make([]string, 0, len(l.Revocations))
+	for _, r := range l.Revocations {
+		revs = append(revs, r.Key+"\x1f"+r.Profile+"\x1f"+r.At)
+	}
+	sort.Strings(revs)
+	parts = append(parts, strconv.Itoa(len(revs)))
+	parts = append(parts, revs...)
+	purges := append([]string{}, l.Purges...)
+	sort.Strings(purges)
+	parts = append(parts, strconv.Itoa(len(purges)))
+	parts = append(parts, purges...)
+	obs := append([]string{}, l.Observations...)
+	sort.Strings(obs)
+	parts = append(parts, strconv.Itoa(len(obs)))
+	parts = append(parts, obs...)
+	return l.mac(parts...)
 }
 
 func (l *Ledger) mac(parts ...string) string {

@@ -24,7 +24,8 @@ Missing `purge.key`, `pending/`, and `.lock` rules are added to an existing
 
 **Back up and restore both ledger files together** (ADR-030). They prove each
 other: the key records the generation of the last committed ledger write, and
-the ledger records which key it belongs to. Restoring one without the other,
+the ledger records which key it belongs to and carries an authentication tag
+over its entries, so an edit that drops or adds tombstones is detected. Restoring one without the other,
 restoring an older ledger over a newer key, or pairing a ledger with a
 different key blocks every surface with an error naming both files — including
 `beme build`, so a deployment stays unusable until they match. Removing both

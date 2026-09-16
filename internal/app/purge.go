@@ -147,11 +147,11 @@ func (rt *Runtime) journalPath(key string) string {
 	return filepath.Join(rt.pendingDir(), hex.EncodeToString(sum[:12])+".json")
 }
 
-// PendingPurges counts interrupted purges awaiting a resuming run.
-func (rt *Runtime) PendingPurges() int {
-	n, _ := rt.pendingJournals()
-	return n
-}
+// PendingPurges counts interrupted purges awaiting a resuming run. An
+// uninspectable journal directory is an error, never "none pending": doctor
+// and the CLI must not report a clean deployment over state they could not
+// read.
+func (rt *Runtime) PendingPurges() (int, error) { return rt.pendingJournals() }
 
 func (rt *Runtime) loadJournal(key string) (*purgeJournal, bool, error) {
 	data, err := os.ReadFile(rt.journalPath(key))

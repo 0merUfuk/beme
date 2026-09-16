@@ -269,7 +269,8 @@ See "Registering a source" in docs/OPERATIONS.md.
 			os.Exit(4)
 		case err != nil:
 			code := exitForReadErr(err)
-			resumable := rt.PendingPurges() > 0
+			pendingCount, pendingErr := rt.PendingPurges()
+			resumable := pendingErr == nil && pendingCount > 0
 			if jsonOut {
 				json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "error", "error": err.Error(), "resumable": resumable, "report": rep})
 			} else {
@@ -426,7 +427,12 @@ func doctor(configDir string, jsonOut bool) {
 			raise("degraded")
 			findings = append(findings, of...)
 		}
-		if n := rt.PendingPurges(); n > 0 {
+		n, pendingErr := rt.PendingPurges()
+		if pendingErr != nil {
+			raise("policy_blocked")
+			findings = append(findings, fmt.Sprintf("interrupted purges cannot be inspected: %v", pendingErr))
+		}
+		if n > 0 {
 			raise("degraded")
 			findings = append(findings, fmt.Sprintf("%d interrupted physical purge(s) pending: re-run the same `beme purge --confirm <key> <key>` command to finish the cleanup", n))
 		}

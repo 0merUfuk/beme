@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -89,6 +90,63 @@ func TestLedgerIntegrityFailsClosedOnEverySurface(t *testing.T) {
 			if err := os.Remove(rt.PurgeKeyPath()); err != nil {
 				t.Fatal(err)
 			}
+		}},
+		{"entries deleted with the key and generation intact", func(t *testing.T, rt *app.Runtime) {
+			rewriteLedger(t, rt, func(doc map[string]any) { doc["purges"] = []string{} })
+		}},
+		{"well-formed entry added to the ledger", func(t *testing.T, rt *app.Runtime) {
+			// the right shape but not under this ledger's key: an entry set
+			// that was edited after the ledger was written
+			rewriteLedger(t, rt, func(doc map[string]any) {
+				doc["observations"] = []string{"hmac-sha256:" + strings.Repeat("ab", 32)}
+			})
+		}},
+		{"revocation removed from the ledger", func(t *testing.T, rt *app.Runtime) {
+			if err := rt.Forget(contracts.ProfilePersonal, "rec_keep-001", "recorded, then dropped"); err != nil {
+				t.Fatal(err)
+			}
+			rewriteLedger(t, rt, func(doc map[string]any) { doc["revocations"] = []any{} })
+		}},
+		{"pending journal with a pre-purge ledger restored over it", func(t *testing.T, rt *app.Runtime) {
+			pending := filepath.Join(filepath.Dir(rt.LedgerPath()), "pending", "0123456789abcdef01234567.json")
+			if err := os.MkdirAll(filepath.Dir(pending), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(pending, []byte(`{"schema_version":"1","records":[],"traces":[],"observations":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// a schema-2 ledger with no purges, exactly what restoring a
+			// pre-purge backup of the canonical root leaves behind
+			legacy, _ := json.Marshal(map[string]any{"schema_version": "2", "revocations": []any{}, "purges": []string{}})
+			if err := os.WriteFile(rt.LedgerPath(), legacy, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(rt.PurgeKeyPath()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"pending journal with a purge-free schema-3 ledger", func(t *testing.T, rt *app.Runtime) {
+			pending := filepath.Join(filepath.Dir(rt.LedgerPath()), "pending", "89abcdef0123456789abcdef.json")
+			if err := os.MkdirAll(filepath.Dir(pending), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(pending, []byte(`{"schema_version":"1","records":[],"traces":[],"observations":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rewriteLedger(t, rt, func(doc map[string]any) { doc["purges"] = []string{} })
+		}},
+		{"pending journal directory unreadable", func(t *testing.T, rt *app.Runtime) {
+			if runtime.GOOS == "windows" {
+				t.Skip("directory permissions do not block reads on Windows")
+			}
+			pending := filepath.Join(filepath.Dir(rt.LedgerPath()), "pending")
+			if err := os.MkdirAll(pending, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(pending, 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(pending, 0o700) })
 		}},
 		{"pending journal without ledger or key", func(t *testing.T, rt *app.Runtime) {
 			pending := filepath.Join(filepath.Dir(rt.LedgerPath()), "pending", "0123456789abcdef01234567.json")
@@ -280,7 +338,14 @@ func TestLearningSurfacesRequireVerifiedLedger(t *testing.T) {
 	if _, err := f.rt.OpenLearning(); !errors.Is(err, app.ErrLedgerUnusable) {
 		t.Fatalf("learning surfaces must fail closed on a corrupt ledger; got %v", err)
 	}
-	if _, err := learning.Open(f.rt.Config.DataDir); err != nil {
-		t.Fatal("the raw store (purge inspection only) stays openable")
+	// The raw store stays openable for purge inspection — and still holds the
+	// observation, which is why the filtered surface must be the one callers
+	// use: an unverifiable ledger must not silently downgrade to raw reads.
+	raw, err := learning.Open(f.rt.Config.DataDir)
+	if err != nil {
+		t.Fatalf("the raw store (purge inspection only) stays openable: %v", err)
+	}
+	if all, err := raw.ListAll(); err != nil || len(all) != 1 {
+		t.Fatalf("fixture: the raw store must still hold the observation the filtered surface refuses to serve: %d %v", len(all), err)
 	}
 }

@@ -107,6 +107,17 @@ func TestMaintenanceLockTimesOut(t *testing.T) {
 	}
 }
 
+// mustPendingPurges fails the test when the journal directory cannot be
+// inspected: a guard whose error is swallowed would report "none pending".
+func mustPendingPurges(t *testing.T, rt *Runtime) int {
+	t.Helper()
+	n, err := rt.PendingPurges()
+	if err != nil {
+		t.Fatalf("pending purges uninspectable: %v", err)
+	}
+	return n
+}
+
 type flushLog struct {
 	dirs  []string
 	files []string
@@ -226,7 +237,7 @@ func TestPurgeRetryCompletesOutstandingFlushes(t *testing.T) {
 			if !errors.Is(err, injected) {
 				t.Fatalf("purge must fail on the %s flush; got %v", class, err)
 			}
-			if rt.PendingPurges() != 1 {
+			if mustPendingPurges(t, rt) != 1 {
 				t.Fatal("a purge whose flush failed must stay pending")
 			}
 			flushed := false
@@ -246,7 +257,7 @@ func TestPurgeRetryCompletesOutstandingFlushes(t *testing.T) {
 			if _, err := rt.PhysicalPurge(req); err != nil {
 				t.Fatalf("retry must complete: %v", err)
 			}
-			if storeHolds(t, rt, needle) || rt.PendingPurges() != 0 {
+			if storeHolds(t, rt, needle) || mustPendingPurges(t, rt) != 0 {
 				t.Fatal("retry did not complete the purge")
 			}
 		})
@@ -278,7 +289,7 @@ func TestPurgeRefusesToEraseHardLinkedCanonicalFile(t *testing.T) {
 			t.Fatalf("hard-linked content must be left intact at %s: %v", p, err)
 		}
 	}
-	if rt.PendingPurges() != 0 || storeHolds(t, rt, "Durability boundary canary statement") {
+	if mustPendingPurges(t, rt) != 0 || storeHolds(t, rt, "Durability boundary canary statement") {
 		t.Fatal("derived erasure must still complete")
 	}
 }

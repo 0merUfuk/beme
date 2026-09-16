@@ -160,6 +160,17 @@ func restoreStore(t *testing.T, dir, storePath string) {
 	}
 }
 
+// mustPendingPurges fails the test when the journal directory cannot be
+// inspected: a guard whose error is swallowed would report "none pending".
+func mustPendingPurges(t *testing.T, rt *app.Runtime) int {
+	t.Helper()
+	n, err := rt.PendingPurges()
+	if err != nil {
+		t.Fatalf("pending purges uninspectable: %v", err)
+	}
+	return n
+}
+
 func purgeReq(key string) app.PurgeRequest {
 	return app.PurgeRequest{Key: key, Confirm: key, RemoveCanonical: true}
 }
@@ -210,7 +221,7 @@ func TestPhysicalPurgeDryRunChangesNothing(t *testing.T) {
 			t.Fatalf("dry run wrote %s", filepath.Base(p))
 		}
 	}
-	if f.rt.PendingPurges() != 0 {
+	if mustPendingPurges(t, f.rt) != 0 {
 		t.Fatal("dry run left a pending journal")
 	}
 	if _, err := os.Stat(f.sourceFile); err != nil {
@@ -386,7 +397,7 @@ func assertFullyPurged(t *testing.T, f *purgeFixture, sc derivedScene) {
 	if _, err := os.Stat(f.sourceFile); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("canonical source file must be removed")
 	}
-	if rt.PendingPurges() != 0 {
+	if mustPendingPurges(t, rt) != 0 {
 		t.Fatal("a completed purge must leave no pending journal")
 	}
 	text, _ := resolvedText(t, rt)
@@ -467,7 +478,7 @@ func TestPhysicalPurgeResumesAfterFailureAtEveryStage(t *testing.T) {
 			if _, err := f.rt.PhysicalPurge(req); !errors.Is(err, errInjected) {
 				t.Fatalf("first run: want injected failure at %s, got %v", c.stage, err)
 			}
-			if got := f.rt.PendingPurges(); got != c.pending {
+			if got := mustPendingPurges(t, f.rt); got != c.pending {
 				t.Fatalf("pending journals after failure at %s: got %d, want %d", c.stage, got, c.pending)
 			}
 			switch c.name {

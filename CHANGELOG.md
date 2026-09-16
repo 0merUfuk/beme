@@ -7,9 +7,12 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 ### Added
 - Verified enforcement state (ADR-030): `ledger/purge.key` and
   `ledger/tombstones.json` carry a key ID and a generation and prove each
-  other. A missing, mismatched, rolled-back, or malformed file fails every
-  surface closed with an error naming both files; an interrupted first write
-  recovers; legacy bare-hex keys and schema-2 ledgers migrate in place.
+  other, and the ledger carries an authentication tag over its entry set, so
+  tombstones edited out in place are detected. A missing, mismatched,
+  rolled-back, tampered, or malformed file fails every surface closed with an
+  error naming both files; a pending purge journal that the ledger cannot
+  explain fails closed too; an interrupted first write recovers; legacy
+  bare-hex keys and schema-2 ledgers migrate in place.
 - Observation anti-resurrection: a purge tombstones the observation IDs it
   erases, so copies restored from a data-dir backup stay hidden on list,
   inspect, review, family counts, feedback dedup, and the rejection
