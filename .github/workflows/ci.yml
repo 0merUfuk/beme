@@ -64,6 +64,7 @@ jobs:
   installed-binary-smoke:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
@@ -115,8 +116,8 @@ jobs:
           beme status --json --config "$root/cfg"
           beme preview --task "installed binary smoke" --json --config "$root/cfg" | grep -q '"pack_id"'
           beme candidate list --json --config "$root/cfg"
-          beme forget rec_smoke-001 "smoke" --config "$root/cfg"
-          beme purge --confirm rec_smoke-001 --dry-run rec_smoke-001 --config "$root/cfg"
+          beme forget --config "$root/cfg" rec_smoke-001 "smoke"
+          beme purge --config "$root/cfg" --confirm rec_smoke-001 --dry-run rec_smoke-001
           beme-threat-corpus --repo "$GITHUB_WORKSPACE"
           beme-bench --seed "$GITHUB_WORKSPACE/testdata/synthetic/records.json" --scales 1 --iterations 2 --warmup 1 --build-runs 1 --out - > /dev/null
       - name: Smoke the installed binaries outside the repository (pwsh)
@@ -160,8 +161,8 @@ jobs:
           $pack = beme preview --task "installed binary smoke" --json --config "$root\cfg"
           if ($pack -notmatch '"pack_id"') { throw "preview produced no pack" }
           beme candidate list --json --config "$root\cfg"
-          beme forget rec_smoke-001 "smoke" --config "$root\cfg"
-          beme purge --confirm rec_smoke-001 --dry-run rec_smoke-001 --config "$root\cfg"
+          beme forget --config "$root\cfg" rec_smoke-001 "smoke"
+          beme purge --config "$root\cfg" --confirm rec_smoke-001 --dry-run rec_smoke-001
           beme-threat-corpus --repo "$env:GITHUB_WORKSPACE"
           beme-bench --seed "$env:GITHUB_WORKSPACE/testdata/synthetic/records.json" --scales 1 --iterations 2 --warmup 1 --build-runs 1 --out - | Out-Null
 
