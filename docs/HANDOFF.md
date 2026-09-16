@@ -51,7 +51,13 @@ requires `--seed`. Diagnostics keep the most severe doctor state, map error
 classes to exit codes, and `beme candidate --config` no longer falls back to
 the operator's real deployment. Added: `installed-binary-smoke` CI job on
 three OSes and [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md)
-(procedure, rollback, draft notes — unpublished). Owner-gated work and the
+(procedure, rollback, draft notes — unpublished). An independent
+fresh-checkout test (public docs only, isolated HOME) then failed the docs,
+not the runtime: installing the CLI and registering a source were
+undocumented. Both are now documented (README install section, OPERATIONS
+"Registering a source" with descriptor and entry formats), the two dead
+cross-references are fixed, and the CLI no longer advertises a `source`
+command it does not implement or hide four commands it does. Owner-gated work and the
 consolidated approval request are in [ACCEPTANCE.md](ACCEPTANCE.md) §7a.
 
 **Rev 13 — release-blocking correctness and privacy gaps (owner review; PR

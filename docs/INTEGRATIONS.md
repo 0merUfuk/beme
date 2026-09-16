@@ -90,18 +90,46 @@ canonical personal knowledge.
 # 1. Isolated deployment with synthetic sources (nothing of yours is read)
 export BEME_HOME="$(mktemp -d)"
 export BEME_CONFIG_HOME="$BEME_HOME/cfg" BEME_DATA_HOME="$BEME_HOME/data" BEME_CACHE_HOME="$BEME_HOME/cache"
-mkdir -p "$BEME_CONFIG_HOME/sources"
-# write one synthetic source descriptor (shape: docs/OPERATIONS.md) pointing at
-# entry files you author for this run — never at personal knowledge
-go install ./cmd/beme && beme build --profile personal
+# (descriptor and entry shapes: docs/OPERATIONS.md "Registering a source")
+mkdir -p "$BEME_CONFIG_HOME/sources" "$BEME_HOME/src/entries"
+cat > "$BEME_HOME/src/entries/SYN-001.md" <<'ENTRY'
+---
+id: SYN-001
+title: "Synthetic preference"
+type: preference
+status: active
+---
+
+Prefer small, reviewable changes over large rewrites.
+ENTRY
+cat > "$BEME_CONFIG_HOME/sources/syn.yaml" <<DESC
+schema_version: "1"
+source_id: synthetic-predecision
+type: directory
+root: $BEME_HOME/src
+purpose: [reusable_knowledge]
+trust: canonical
+instruction_semantics: registered_files_only
+authority_ceiling: default
+sensitivity: personal_private
+profiles_allowed: [personal]
+ingestion_mode: index_content
+include: ["entries/**/*.md"]
+DESC
+go install ./cmd/beme
+export PATH="$(go env GOPATH)/bin:$PATH"
+beme build --profile personal
 
 # 2. Register the server in an ISOLATED harness config home
 export CLAUDE_CONFIG_DIR="$BEME_HOME/claude"          # Codex: CODEX_HOME
 claude mcp add beme -- "$(go env GOPATH)/bin/beme" serve   --projection personal --capability cap_predecision
 claude mcp get beme                                    # expect: Connected
 
-# 3. One live session per task, with the managed bootstrap block installed
-beme adapter install claude-code
+# 3. One live session per task, with the managed bootstrap block installed.
+#    `adapter install` resolves ~/.claude/CLAUDE.md through the OS home
+#    directory, so run it with HOME pointed at the isolated deployment —
+#    otherwise it edits your real harness instruction file.
+HOME="$BEME_HOME" beme adapter install claude-code
 #    run three tasks that each require a material decision the synthetic
 #    corpus has an opinion about, plus one negative-control task the corpus
 #    says nothing about

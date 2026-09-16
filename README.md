@@ -73,6 +73,24 @@ interpreter explicitly (e.g. `python3.13 -m venv .venv`). See
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full environment
 guide and the owner-gated private-evaluation workflow.
 
+## Install and first deployment
+
+```sh
+# Install the binaries (Go 1.25+):
+go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-eval ./cmd/beme-threat-corpus
+export PATH="$(go env GOPATH)/bin:$PATH"   # or set GOBIN to a directory on PATH
+
+beme doctor            # health check; it names what is missing
+```
+
+A fresh deployment has no sources: registration is a file-authoring act (it
+is the trust act — Be Me has no command that registers a source for you). See
+[**Registering a source**](docs/OPERATIONS.md#registering-a-source) in
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md), which also covers the lifecycle
+(`build`, `preview`, `forget`, `purge`, `candidate`), platform directories,
+and ledger backup and key custody. Harness/MCP setup is in
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+
 ## Documentation
 
 Start at [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md). Read order and

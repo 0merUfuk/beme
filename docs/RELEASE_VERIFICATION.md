@@ -39,10 +39,11 @@ Then the installed-binary smoke in an isolated deployment (the
 export BEME_HOME="$(mktemp -d)"
 export BEME_CONFIG_HOME="$BEME_HOME/cfg" BEME_DATA_HOME="$BEME_HOME/data" BEME_CACHE_HOME="$BEME_HOME/cache"
 go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-threat-corpus ./cmd/beme-eval
+export PATH="$(go env GOPATH)/bin:$PATH"
 cd "$BEME_HOME"   # run from outside the repository
 beme doctor --json --config "$BEME_CONFIG_HOME"
-# register a synthetic source, then: build → status → preview → candidate list
-# → forget → purge --dry-run  (see docs/OPERATIONS.md)
+# register a synthetic source (docs/OPERATIONS.md "Registering a source"),
+# then: build → status → preview → candidate list → forget → purge --dry-run
 ```
 
 ## 3. Rollback

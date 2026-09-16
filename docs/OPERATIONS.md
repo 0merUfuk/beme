@@ -74,10 +74,64 @@ the table above; each already ends in `beme`):
 <cache>/traces/                          # persisted resolver traces (explain)
 ```
 
+## Registering a source
+
+Registration is the trust act (FR-020): Be Me ingests a directory only after
+you have written a descriptor for it by hand. **There is no `beme source
+register` command** — you create one descriptor file per source under
+`<config>/sources/` (`.yaml` or `.json`; `<config>` is the directory from the
+table above, or whatever `--config` / `BEME_CONFIG_HOME` points at).
+
+```yaml
+# <config>/sources/my-notes.yaml
+schema_version: "1"
+source_id: my-notes                 # stable identifier; used in record IDs
+type: directory                     # directory | git_repository
+root: /absolute/path/to/knowledge   # absolute path to the source tree
+purpose: [reusable_knowledge]
+trust: canonical                    # canonical | trusted | untrusted
+instruction_semantics: registered_files_only
+authority_ceiling: default
+sensitivity: personal_private       # personal_private | work_shareable | public_general
+profiles_allowed: [personal]        # personal and/or work-safe
+ingestion_mode: index_content       # index_content | reference_only
+include: ["entries/**/*.md"]        # globs, relative to root
+exclude: []                         # optional
+```
+
+The full contract is `schemas/source/source-descriptor.schema.json`; `make
+validate` checks the fixtures against it.
+
+**What becomes a record.** Ingestion reads the files matched by `include` and
+normalizes Markdown entries with YAML frontmatter:
+
+```markdown
+---
+id: PREF-001                 # required — a file without it is skipped
+title: "Small reviewable changes"
+type: preference             # preference | decision | constraint | precedent | knowledge
+status: active               # only active entries are ingested
+---
+
+Keep changes small and reviewable.
+```
+
+The first meaningful body line becomes the record statement. Files without
+frontmatter, without `id`, or whose `status` is not active are skipped
+silently — `beme build` reports how many records each source contributed, so
+compare that count with what you expect. Then:
+
+```sh
+beme build --profile personal     # ingest; re-run after editing sources
+beme status                       # what is registered
+```
+
 ## Lifecycle
 
 ```sh
 beme doctor                       # health: sources, projections, findings
+beme export --projection personal # visible records + provenance as JSON
+beme explain --trace TRACE_ID     # why a pack selected what it did
 beme build --profile all         # rebuild projections from registered sources
 beme status                       # registered sources + workspaces
 beme preview --task "..." --workspace "$PWD"   # human pack preview
