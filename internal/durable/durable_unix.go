@@ -4,7 +4,9 @@ package durable
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -22,14 +24,46 @@ func syncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
 	if err := d.Sync(); err != nil {
 		if errors.Is(err, syscall.ENOTTY) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
-			return unix.Fsync(int(d.Fd()))
+			err = unix.Fsync(int(d.Fd()))
 		}
-		return err
+		if err != nil {
+			d.Close()
+			return err
+		}
 	}
-	return nil
+	// A Close error can report a deferred write failure, so it is not
+	// discarded: the flush is only complete once the handle closes cleanly.
+	return d.Close()
+}
+
+// openForErase opens a regular file for writing without following a final
+// symlink (O_NOFOLLOW), so the name cannot be redirected after inspection.
+func openForErase(path string) (*os.File, error) {
+	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EMLINK) {
+			return nil, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrNotRegular)
+		}
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+
+// sameFile reports whether the open handle is the entry Lstat inspected
+// (same device and inode).
+func sameFile(info os.FileInfo, f *os.File) (bool, error) {
+	opened, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	a, aOK := info.Sys().(*syscall.Stat_t)
+	b, bOK := opened.Sys().(*syscall.Stat_t)
+	if !aOK || !bOK {
+		return true, nil // platform without stat identity: nothing to compare
+	}
+	return a.Dev == b.Dev && a.Ino == b.Ino, nil
 }
 
 func linkCount(f *os.File) (uint64, error) {

@@ -343,14 +343,23 @@ func (rt *Runtime) ensureLedgerDir() error {
 
 // mergeIgnoreRules appends each rule not already present. Rules compare after
 // trimming a leading or trailing "/", so "/purge.key" and "pending" count as
-// present; unrelated lines are preserved byte for byte.
+// present; unrelated lines are preserved byte for byte. A directory-only
+// pattern (trailing "/") never satisfies a rule for a file: "/.lock/" ignores
+// a directory named .lock, not the maintenance lock file.
 func mergeIgnoreRules(existing string, rules []string) (string, bool) {
 	norm := func(r string) string { return strings.Trim(strings.TrimSpace(r), "/") }
+	dirOnly := func(r string) bool { return strings.HasSuffix(strings.TrimSpace(r), "/") }
 	have := map[string]bool{}
 	for _, line := range strings.Split(existing, "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
-			have[norm(t)] = true
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		for _, want := range rules {
+			if norm(t) == norm(want) && (!dirOnly(t) || dirOnly(want)) {
+				have[norm(want)] = true
+			}
 		}
 	}
 	out := existing

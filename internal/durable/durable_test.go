@@ -127,6 +127,157 @@ func TestEraseRefusesSymlinksAndHardLinks(t *testing.T) {
 	}
 }
 
+// TestEraseOpensWithoutFollowingLinks pins the TOCTOU defense: erasing a
+// name that is a symlink when it is opened fails without touching the
+// target, even though a regular file of the same name would erase fine.
+func TestEraseOpensWithoutFollowingLinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	if err := os.WriteFile(target, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	swapped := filepath.Join(dir, "swapped.md")
+	if err := os.Symlink(target, swapped); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+	if _, err := durable.Erase(swapped); err == nil {
+		t.Fatal("erasing through a symlink must fail")
+	}
+	if data, _ := os.ReadFile(target); string(data) != "keep me" {
+		t.Fatalf("symlink target was modified: %q", data)
+	}
+	// positive control: the same call erases a real file at that name
+	if err := os.Remove(swapped); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(swapped, []byte("erase me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if existed, err := durable.Erase(swapped); err != nil || !existed {
+		t.Fatalf("a regular file at the same name must erase: existed=%v err=%v", existed, err)
+	}
+}
+
+// TestEraseSurvivesEntrySwappedAfterInspection drives the actual TOCTOU
+// window: the directory entry is replaced between the inspection and the
+// open. A symlink swapped in must not be followed (the target keeps its
+// bytes), and a different regular file swapped in must be refused rather
+// than erased, because it is not the file that was inspected.
+func TestEraseSurvivesEntrySwappedAfterInspection(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		swapIn  func(t *testing.T, path, sentinel string)
+		wantErr error
+	}{
+		{"symlink to a file outside the purge", func(t *testing.T, path, sentinel string) {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(sentinel, path); err != nil {
+				t.Skipf("symlinks unsupported here: %v", err)
+			}
+			// A swapped-in symlink must be refused at the open itself
+			// (O_NOFOLLOW / OPEN_REPARSE_POINT), not merely noticed
+			// afterwards by the identity check.
+		}, symlinkSwapError()},
+		{"a different regular file", func(t *testing.T, path, sentinel string) {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("a different file"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, durable.ErrChangedUnderfoot},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sentinel := filepath.Join(dir, "sentinel.md")
+			const keep = "bytes that must survive"
+			if err := os.WriteFile(sentinel, []byte(keep), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "target.md")
+			if err := os.WriteFile(target, []byte("to erase"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			swapped := false
+			restore := durable.SetEraseRaceHook(func(path string) {
+				if swapped || path != target {
+					return
+				}
+				swapped = true
+				c.swapIn(t, path, sentinel)
+			})
+			_, err := durable.Erase(target)
+			restore()
+			if !swapped {
+				t.Fatal("fixture: the entry was never swapped")
+			}
+			if err == nil {
+				t.Fatal("erasing an entry that changed after inspection must fail")
+			}
+			if c.wantErr != nil && !errors.Is(err, c.wantErr) {
+				t.Fatalf("error = %v, want %v", err, c.wantErr)
+			}
+			if data, readErr := os.ReadFile(sentinel); readErr != nil || string(data) != keep {
+				t.Fatalf("the file outside the purge was modified: %q %v", data, readErr)
+			}
+		})
+	}
+	// positive control: with no swap the same call erases normally.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "plain.md")
+	if err := os.WriteFile(p, []byte("to erase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if existed, err := durable.Erase(p); err != nil || !existed {
+		t.Fatalf("unswapped erase must succeed: existed=%v err=%v", existed, err)
+	}
+}
+
+// symlinkSwapError is the error a symlink swapped in after inspection must
+// produce: on Unix the no-follow open refuses it as a non-regular file; on
+// Windows the entry itself is opened and recognized as a reparse point.
+func symlinkSwapError() error {
+	if runtime.GOOS == "windows" {
+		return durable.ErrChangedUnderfoot
+	}
+	return durable.ErrNotRegular
+}
+
+func TestEnsureDirRefusesNonDirectoryAndFlushesEveryLevel(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "afile")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := durable.EnsureDir(file); !errors.Is(err, durable.ErrNotDirectory) {
+		t.Fatalf("an existing non-directory must be refused; got %v", err)
+	}
+	if err := durable.EnsureDir(filepath.Join(file, "under")); !errors.Is(err, durable.ErrNotDirectory) {
+		t.Fatalf("a non-directory ancestor must be refused; got %v", err)
+	}
+	var flushed []string
+	restore := durable.SetFlushHooks(func(d string) error {
+		flushed = append(flushed, d)
+		return durable.PlatformDirFlush(d)
+	}, nil)
+	defer restore()
+	deep := filepath.Join(dir, "a", "b", "c")
+	if err := durable.EnsureDir(deep); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{dir, filepath.Join(dir, "a"), filepath.Join(dir, "a", "b")} {
+		found := false
+		for _, d := range flushed {
+			found = found || d == want
+		}
+		if !found {
+			t.Errorf("containing directory %s of a newly created entry was not flushed (flushed: %v)", want, flushed)
+		}
+	}
+}
+
 func TestSyncDirOnRealDirectory(t *testing.T) {
 	if err := durable.PlatformDirFlush(t.TempDir()); err != nil {
 		t.Fatalf("directory flush must work on this platform: %v", err)

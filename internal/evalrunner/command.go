@@ -71,6 +71,9 @@ func (c *CommandProvider) Generate(req GenerationRequest) (GenerationResult, err
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.Argv[0], c.Argv[1:]...)
+	// The context kill reaches the direct child only; WaitDelay bounds the
+	// wait for inherited stdout/stderr descriptors a grandchild may hold.
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	stdout := &cappedBuffer{limit: limit}
 	stderr := &cappedBuffer{limit: 8 << 10}

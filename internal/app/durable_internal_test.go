@@ -99,7 +99,8 @@ func TestMergeIgnoreRules(t *testing.T) {
 	}{
 		{"empty", "", "purge.key\npending/\n.lock\n", true},
 		{"unrelated rules without trailing newline", "custom-rule\n*.bak", "custom-rule\n*.bak\npurge.key\npending/\n.lock\n", true},
-		{"anchored equivalents present", "/purge.key\npending\n/.lock/\n", "/purge.key\npending\n/.lock/\n", false},
+		{"anchored equivalents present", "/purge.key\npending\n.lock\n", "/purge.key\npending\n.lock\n", false},
+		{"directory-only pattern does not ignore the lock file", "purge.key\npending/\n/.lock/\n", "purge.key\npending/\n/.lock/\n.lock\n", true},
 		{"partial", "# keep\npurge.key\n", "# keep\npurge.key\npending/\n.lock\n", true},
 		{"crlf file", "custom\r\n", "custom\r\npurge.key\npending/\n.lock\n", true},
 		{"commented rule is not a rule", "# purge.key\n", "# purge.key\npurge.key\npending/\n.lock\n", true},

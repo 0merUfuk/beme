@@ -75,7 +75,7 @@ func main() {
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "projection", "personal", "projection profile")
 		fs.StringVar(&exportOut, "out", "-", "output path ('-' for stdout)")
-	case "source", "profile-cmd", "forget":
+	case "forget":
 		fs.BoolVar(&jsonOut, "json", false, "JSON output")
 		fs.StringVar(&configDir, "config", "", "config directory override")
 		fs.StringVar(&profile, "profile", "personal", "profile")
@@ -85,6 +85,13 @@ func main() {
 		fs.StringVar(&confirm, "confirm", "", "repeat the exact key to confirm this irreversible purge")
 		fs.BoolVar(&removeCanonical, "remove-canonical", false, "also delete the canonical source file(s)")
 		fs.BoolVar(&dryRun, "dry-run", false, "report what would be purged without changing anything")
+	case "source", "profile-cmd":
+		// no such command: registration is a file-authoring act (FR-020)
+		fmt.Fprintf(os.Stderr, `beme has no %q command: registering a source is the trust act and is
+performed by writing a descriptor under <config>/sources/ yourself.
+See "Registering a source" in docs/OPERATIONS.md.
+`, cmd)
+		os.Exit(2)
 	case "adapter", "candidate":
 		// handled directly below (need raw positional args)
 	default:
@@ -229,7 +236,11 @@ func main() {
 		// deployment override is extracted here instead of through the flag
 		// set: without this it would silently fall back to the operator's
 		// real deployment (isolation rule, ADR-026).
-		rest, candidateConfig := extractConfigFlag(args[1:])
+		rest, candidateConfig, cfgErr := extractConfigFlag(args[1:])
+		if cfgErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", cfgErr)
+			os.Exit(2)
+		}
 		rtC, err := app.Load(candidateConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -322,8 +333,16 @@ Usage:
   beme purge --confirm KEY [--remove-canonical] [--dry-run] [--json] KEY
         physical purge (RED, irreversible): erase from projections, traces,
         observations; leave a non-content anti-resurrection tombstone
+  beme export [--projection P] [--out PATH] [--json] [--config DIR]
+  beme explain --trace TRACE_ID [--projection P] [--json] [--config DIR]
+  beme candidate list|inspect|review [--config DIR] [--json]
+        review queue for quarantined observations (never canonical)
+  beme adapter install|remove|verify codex|claude-code
   beme serve --projection P --capability NAME --transport stdio
   beme mcp      (alias of serve)
+
+Sources are registered by writing a descriptor under <config>/sources/ —
+see "Registering a source" in docs/OPERATIONS.md.
 
 Exit codes: 0 ok · 1 failure · 2 usage · 3 policy-blocked · 4 not-found
 `, version)
@@ -423,23 +442,29 @@ func doctor(configDir string, jsonOut bool) {
 }
 
 // extractConfigFlag removes "--config DIR" / "--config=DIR" from raw
-// arguments and returns the remaining arguments and the directory.
-func extractConfigFlag(args []string) (rest []string, configDir string) {
+// arguments and returns the remaining arguments and the directory. A flag
+// without a directory is an error: falling back to the default deployment
+// would read or write the operator's real store.
+func extractConfigFlag(args []string) (rest []string, configDir string, err error) {
 	rest = []string{}
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--config" || args[i] == "-config":
-			if i+1 < len(args) {
-				i++
-				configDir = args[i]
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return nil, "", fmt.Errorf("--config requires a directory")
 			}
+			i++
+			configDir = args[i]
 		case strings.HasPrefix(args[i], "--config="), strings.HasPrefix(args[i], "-config="):
 			_, configDir, _ = strings.Cut(args[i], "=")
+			if strings.TrimSpace(configDir) == "" {
+				return nil, "", fmt.Errorf("--config requires a directory")
+			}
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return rest, configDir
+	return rest, configDir, nil
 }
 
 // healthSeverity orders doctor states (§23.1); doctor reports the most severe.

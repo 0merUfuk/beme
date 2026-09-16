@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -37,6 +38,11 @@ var (
 	ErrMultipleLinks = errors.New("file has other hard links")
 	// ErrLocked: another maintenance operation holds the lock.
 	ErrLocked = errors.New("another Be Me maintenance operation is running")
+	// ErrNotDirectory: a path that must be a directory is something else.
+	ErrNotDirectory = errors.New("path exists and is not a directory")
+	// ErrChangedUnderfoot: the directory entry changed between inspection
+	// and opening, so the open handle is not the file that was checked.
+	ErrChangedUnderfoot = errors.New("file changed between inspection and opening")
 )
 
 var (
@@ -69,6 +75,35 @@ func SetFlushHooks(dir func(string) error, file func(*os.File) error) (restore f
 // PlatformDirFlush is the real directory flush for this platform, for hooks
 // that wrap it.
 func PlatformDirFlush(dir string) error { return syncDir(dir) }
+
+// eraseRaceHook runs between Erase's inspection of a path and its open. It
+// is a verification hook: tests use it to replace the entry in exactly the
+// window a hostile process would need, so the no-follow open and the
+// identity check are exercised rather than assumed. Production never sets it.
+var eraseRaceHook func(path string)
+
+// SetEraseRaceHook installs the between-inspect-and-open hook and returns a
+// function restoring the previous one.
+func SetEraseRaceHook(fn func(path string)) (restore func()) {
+	hookMu.Lock()
+	prev := eraseRaceHook
+	eraseRaceHook = fn
+	hookMu.Unlock()
+	return func() {
+		hookMu.Lock()
+		eraseRaceHook = prev
+		hookMu.Unlock()
+	}
+}
+
+func runEraseRaceHook(path string) {
+	hookMu.RLock()
+	fn := eraseRaceHook
+	hookMu.RUnlock()
+	if fn != nil {
+		fn(path)
+	}
+}
 
 func doFlushDir(dir string) error {
 	hookMu.RLock()
@@ -176,7 +211,11 @@ func CreateExclusive(path string, data []byte, perm os.FileMode) error {
 	}
 	fail := func(err error) error {
 		f.Close()
-		os.Remove(path)
+		// A leftover partial file would make the next exclusive create fail
+		// with EEXIST, so a failed cleanup is reported, not discarded.
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return errors.Join(err, fmt.Errorf("remove partial %s: %w", filepath.Base(path), rmErr))
+		}
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
@@ -186,23 +225,60 @@ func CreateExclusive(path string, data []byte, perm os.FileMode) error {
 		return fail(fmt.Errorf("flush %s: %w", filepath.Base(path), err))
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(path)
-		return err
+		return fail(err)
 	}
 	return SyncDir(filepath.Dir(path))
 }
 
-// EnsureDir creates dir if needed and flushes its parent so the new entry
-// survives a crash.
+// EnsureDir creates dir if needed and flushes the containing directory of
+// every entry it creates, so a crash cannot lose one of them. An existing
+// path that is not a directory is an error, never a silent success.
 func EnsureDir(dir string) error {
-	ok, err := Exists(dir)
-	if err != nil || ok {
+	info, err := os.Lstat(dir)
+	switch {
+	case err == nil && info.IsDir():
+		return nil
+	case err == nil:
+		return fmt.Errorf("%s: %w", dir, ErrNotDirectory)
+	case errors.Is(err, syscall.ENOTDIR):
+		// an ancestor exists and is not a directory
+		return fmt.Errorf("%s: %w", dir, ErrNotDirectory)
+	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	// Collect the missing ancestors, outermost first: MkdirAll would create
+	// them all at once and leave only the innermost parent flushed.
+	missing := []string{}
+	for p := filepath.Clean(dir); ; {
+		info, err := os.Lstat(p)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("%s: %w", p, ErrNotDirectory)
+			}
+			break
+		}
+		if errors.Is(err, syscall.ENOTDIR) {
+			return fmt.Errorf("%s: %w", p, ErrNotDirectory)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		missing = append([]string{p}, missing...)
+		parent := filepath.Dir(p)
+		if parent == p {
+			break
+		}
+		p = parent
 	}
-	return SyncDir(filepath.Dir(dir))
+	for _, p := range missing {
+		if err := os.Mkdir(p, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if err := SyncDir(filepath.Dir(p)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Remove unlinks path (absent is fine) and flushes the parent directory —
@@ -230,9 +306,23 @@ func Erase(path string) (existed bool, err error) {
 	if !info.Mode().IsRegular() {
 		return true, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrNotRegular)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	// Open without following links, then confirm the open handle is the very
+	// entry Lstat inspected: otherwise a process that swaps the name for a
+	// symlink between the two calls could redirect the zeroizing truncate at
+	// a file the caller never asked to erase (TOCTOU).
+	runEraseRaceHook(path)
+	f, err := openForErase(path)
 	if err != nil {
 		return true, err
+	}
+	same, err := sameFile(info, f)
+	if err != nil {
+		f.Close()
+		return true, err
+	}
+	if !same {
+		f.Close()
+		return true, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrChangedUnderfoot)
 	}
 	links, err := linkCount(f)
 	if err != nil {

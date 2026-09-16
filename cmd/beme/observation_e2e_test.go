@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -61,8 +62,8 @@ func TestRestoredObservationHiddenOnCLI(t *testing.T) {
 			t.Fatalf("candidate %s must refuse a restored purged observation without content: %d %s %s", name, code, out, stderr)
 		}
 	}
-	if _, err := os.ReadFile(obsFile); err != nil {
-		t.Fatal("review must not have rewritten or removed the hidden file")
+	if after, err := os.ReadFile(obsFile); err != nil || !bytes.Equal(after, obs) {
+		t.Fatalf("a refused review must leave the hidden observation byte-identical: err=%v changed=%v", err, !bytes.Equal(after, obs))
 	}
 	out, _, _ = runBeme(t, bin, "doctor", "--json", "--config", cfg)
 	var doc struct {
@@ -77,6 +78,18 @@ func TestRestoredObservationHiddenOnCLI(t *testing.T) {
 	}
 	if _, err := os.Stat(obsFile); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("build must erase the restored purged observation")
+	}
+
+	// A --config flag without a directory must be a usage error, never a
+	// silent fallback to the operator's real deployment.
+	for _, args := range [][]string{
+		{"candidate", "list", "--config"},
+		{"candidate", "list", "--config="},
+	} {
+		out, stderr, code := runBeme(t, bin, args...)
+		if code != 2 || !strings.Contains(stderr, "--config requires a directory") {
+			t.Fatalf("%v must exit 2 with a usage error; got %d %s %s", args, code, out, stderr)
+		}
 	}
 
 	if err := os.Remove(rt.LedgerPath()); err != nil {

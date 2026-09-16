@@ -684,14 +684,26 @@ func TestPurgeLedgerIsKeyedAndContentFree(t *testing.T) {
 	if _, _, err := resolvePersonal(g.rt); !errors.Is(err, app.ErrPurgeKeyMissing) {
 		t.Fatalf("ledger without its key must fail closed; got %v", err)
 	}
+	// A committed key file for a DIFFERENT key: well-formed and current, so
+	// the rejection can only come from the ledger's key binding.
 	foreign := make([]byte, 32)
 	rand.Read(foreign)
-	if err := os.WriteFile(g.rt.PurgeKeyPath(), []byte(hex.EncodeToString(foreign)), 0o600); err != nil {
+	foreignID := sha256.Sum256(append([]byte("beme-purge-key-id\x00"), foreign...))
+	foreignKeyFile, err := json.Marshal(map[string]any{
+		"schema_version": "3",
+		"key":            hex.EncodeToString(foreign),
+		"key_id":         hex.EncodeToString(foreignID[:16]),
+		"generation":     1,
+		"committed":      true,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	// A different key cannot be substituted: the ledger is bound to its key.
+	if err := os.WriteFile(g.rt.PurgeKeyPath(), foreignKeyFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := resolvePersonal(g.rt); !errors.Is(err, app.ErrLedgerUnusable) {
-		t.Fatalf("a ledger paired with a foreign key must fail closed; got %v", err)
+		t.Fatalf("a ledger paired with another deployment's key must fail closed; got %v", err)
 	}
 	copyFile(t, f.rt.PurgeKeyPath(), g.rt.PurgeKeyPath())
 	if text, _ := resolvedText(t, g.rt); strings.Contains(text, purgeCanary) {
