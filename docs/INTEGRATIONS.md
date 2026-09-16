@@ -6,7 +6,21 @@
 
 Stdio only in v1 (ADR-014). Each serving process binds one immutable
 capability and one projection store; requests may narrow, never widen
-(FR-010/011).
+(FR-010/011). `--capability` is a free-form label you choose (for example
+`cap_daily`); it names the capability bound to that process and appears in
+traces, so pick something you will recognize.
+
+Smoke-check the server without installing a harness — it completes the stdio
+handshake and exits, with no model call:
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  | beme serve --projection personal --capability cap_smoke --transport stdio
+```
+
+A JSON-RPC result naming `beme` and its version means the handshake
+completed. The server reads stdio until its input closes, so a piped command
+like this one exits on its own; an interactive session needs stdin held open.
 
 Expansion is pack-bound (ADR-029): pass the `pack_id` of a pack returned by
 `beme.resolve_context` in the same server session and the `record_id` of an
@@ -43,10 +57,13 @@ never silently edited outside the managed block.
 before every material decision with measured 100% pre-decision use
 (FR-045/046). No surface is labeled assured in v1.
 
-### Verification levels (installed harnesses, 2026-09-15)
+### Verification levels (installed harnesses, re-run 2026-09-16)
 
 Four levels are tracked separately; a higher level is never inferred from a
-lower one.
+lower one. The table below was re-run at the final head against installed
+Claude Code 2.1.271 and Codex 0.154.0 in isolated config homes, with no model
+calls: `TestAdapterInstallRemoveByteExact`, `TestClaudeCodeHarnessIntegration`,
+`TestCodexHarnessIntegration` and `TestMCPClientEndToEnd` all pass.
 
 | Harness (installed) | MCP protocol | Config lifecycle | Harness connection | Pre-decision use |
 |---|---|---|---|---|

@@ -53,11 +53,18 @@ beme doctor --json --config "$BEME_CONFIG_HOME"
 - **After a tag:** delete the pre-release tag and its GitHub release; a
   published tag is never rewritten. Users pin the previous version
   (`go install github.com/0merUfuk/beme/cmd/beme@<previous tag>`).
-- **Data:** no migration runs on upgrade. Downgrading past the ledger
-  schema-3 change (ADR-030) makes a schema-3 `ledger/tombstones.json`
-  unreadable to the older binary, which fails closed rather than ignoring
-  tombstones — restore the canonical root from backup (ledger and key
-  together) if you must run an older binary.
+- **Data:** no migration runs on upgrade, and **downgrading to a binary older
+  than the schema-3 ledger (ADR-030) is unsupported.** The older binary
+  cannot read `ledger/tombstones.json` and fails closed — which is the
+  correct behavior, because there is no downgrade path that preserves the
+  purge and revocation state recorded since the upgrade. Do not "fix" it by
+  restoring an older ledger: the newest `ledger/tombstones.json` and
+  `ledger/purge.key` are the enforcement state and must be kept together and
+  kept newest. Pairing a newer key with an older ledger fails closed by
+  design, and the older ledger is missing tombstones the deployment has
+  enforced. If you must run an older binary, point it at a separate
+  deployment (its own `--config`, data and cache), never at a canonical root
+  whose ledger has been upgraded.
 - **Deployment:** `beme adapter remove <harness>` restores harness
   instruction files; projections are derived and can be deleted and rebuilt.
 
@@ -98,7 +105,10 @@ beme doctor --json --config "$BEME_CONFIG_HOME"
 >
 > **Upgrade notes**
 > - Legacy `purge.key`/schema-2 ledgers keep working and migrate in place on
->   the next ledger write.
+>   the next ledger write. Downgrading afterwards to a pre-schema-3 binary is
+>   unsupported: it cannot read the upgraded ledger and fails closed, and no
+>   downgrade path preserves the purge and revocation state recorded since.
+>   Keep `ledger/tombstones.json` and `ledger/purge.key` together and newest.
 > - `beme build` and learning writes now need a writable canonical root (the
 >   ledger directory and its lock live there).
 > - MCP `beme.get_context_item` requires `pack_id` (since alpha.1).

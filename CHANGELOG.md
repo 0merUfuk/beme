@@ -5,6 +5,11 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 ## [Unreleased]
 
 ### Added
+- **Upgrade/downgrade:** legacy keys and schema-2 ledgers migrate in place on
+  the next ledger write. Downgrading to a pre-schema-3 binary afterwards is
+  unsupported — it fails closed on the upgraded ledger, and no downgrade
+  preserves the purge and revocation state recorded since. Keep
+  `ledger/tombstones.json` and `ledger/purge.key` together and newest.
 - Verified enforcement state (ADR-030): `ledger/purge.key` and
   `ledger/tombstones.json` carry a key ID and a generation and prove each
   other, and the ledger carries an authentication tag over its entry set, so

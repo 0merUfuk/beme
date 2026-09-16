@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,16 @@ func main() {
 	var fs *flag.FlagSet
 	args := os.Args[1:]
 	cmd = args[0]
+	// Asking for help or the version is not a usage error: a new user's
+	// first command must not come back with exit 2.
+	switch cmd {
+	case "help", "--help", "-h":
+		usageTo(os.Stdout)
+		os.Exit(0)
+	case "version", "--version", "-v":
+		fmt.Printf("beme %s\n", version)
+		os.Exit(0)
+	}
 	fs = flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -321,8 +332,10 @@ See "Registering a source" in docs/OPERATIONS.md.
 	}
 }
 
-func usage() {
-	fmt.Fprintf(os.Stderr, `beme %s — personal execution-context runtime
+func usage() { usageTo(os.Stderr) }
+
+func usageTo(w io.Writer) {
+	fmt.Fprintf(w, `beme %s — personal execution-context runtime
 
 Usage:
   beme status [--json] [--config DIR]

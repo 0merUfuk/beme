@@ -67,6 +67,26 @@ func diagnosticsDeployment(t *testing.T) (string, *app.Runtime) {
 	return cfg, rt
 }
 
+// TestHelpAndVersionExitZero: asking for help or the version is not a usage
+// error. It is a new user's first command, and the documented exit-code
+// contract reserves 2 for actual misuse.
+func TestHelpAndVersionExitZero(t *testing.T) {
+	bin := buildBemeBinary(t, "beme-help")
+	for _, args := range [][]string{{"help"}, {"--help"}, {"-h"}, {"version"}, {"--version"}, {"-v"}} {
+		stdout, stderr, code := runBeme(t, bin, args...)
+		if code != 0 {
+			t.Errorf("%v exited %d, want 0 (stderr: %s)", args, code, stderr)
+		}
+		if !strings.Contains(stdout, "beme "+version) {
+			t.Errorf("%v must print the version on stdout; got %q", args, stdout)
+		}
+	}
+	// a genuine misuse still exits 2
+	if _, _, code := runBeme(t, bin, "no-such-command"); code != 2 {
+		t.Errorf("an unknown command must exit 2; got %d", code)
+	}
+}
+
 // TestDoctorKeepsMostSevereStatus: an interrupted purge (degraded) must not
 // mask an unusable ledger (policy_blocked). Doctor is a diagnostic: it exits 0
 // and reports the state in its output.

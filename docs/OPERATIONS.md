@@ -27,8 +27,13 @@ other: the key records the generation of the last committed ledger write, and
 the ledger records which key it belongs to and carries an authentication tag
 over its entries, so an edit that drops or adds tombstones is detected. Restoring one without the other,
 restoring an older ledger over a newer key, or pairing a ledger with a
-different key blocks every surface with an error naming both files — including
-`beme build`, so a deployment stays unusable until they match. Removing both
+different key blocks every read and maintenance surface — `preview`/`resolve`,
+`export`, `explain`, `candidate`, `forget`, `purge`, `build`, and the MCP
+tools — with an error naming both files (CLI exit 3; `build` and `forget`
+exit 1; MCP `policy_blocked`), so a deployment stays unusable until they
+match. Two commands stay available on purpose: `beme doctor` runs and reports
+`policy_blocked` (exit 0) so you can diagnose it, and `beme status` reports
+registration metadata only and is not ledger-gated. Removing both
 files and every pending journal *together* is indistinguishable from a fresh
 deployment: Be Me cannot detect that locally, which is why the canonical root
 belongs in your backup set. An interrupted first purge (key created, ledger
@@ -110,15 +115,24 @@ normalizes Markdown entries with YAML frontmatter:
 ---
 id: PREF-001                 # required — a file without it is skipped
 title: "Small reviewable changes"
-type: preference             # preference | decision | constraint | precedent | knowledge
-status: active               # only active entries are ingested
+type: preference             # see the mapped kinds below
+status: active               # only `deprecated` is skipped
 ---
 
 Keep changes small and reviewable.
 ```
 
-The first meaningful body line becomes the record statement. Files without
-frontmatter, without `id`, or whose `status` is not active are skipped
+The first meaningful body line becomes the record statement.
+
+`type` is mapped to a record kind: `preference`, `principle`, `heuristic`,
+`pattern`, `workflow`, `failure-mode` (or `failure_mode`), `fact`, and
+`precedent`/`decision` (both become a precedent). **Any other value —
+including `constraint` and `knowledge` — is ingested as
+`unmapped_reference`:** the entry is still indexed, but it carries no mapped
+kind, so it appears under a pack's guidance rather than its constraints, and
+`constraints: 0` is reported. Of the `status` values only `deprecated` is
+skipped; every other value, including `draft`, is treated as `active` and
+ingested. Files without frontmatter and files without `id` are skipped
 silently — `beme build` reports how many records each source contributed, so
 compare that count with what you expect. Then:
 
@@ -126,6 +140,32 @@ compare that count with what you expect. Then:
 beme build --profile personal     # ingest; re-run after editing sources
 beme status                       # what is registered
 ```
+
+## Registering a workspace (optional)
+
+Workspace personalization (`beme preview --workspace PATH`, and the MCP
+`workspace_hint`) resolves a path against the trusted registry only — an
+unregistered path simply gets no project personalization, and an ambiguous
+match fails closed (FR-014/022). Like sources, workspaces are registered by
+writing a file yourself, one per workspace, under `<config>/policies/`
+(`.yaml` or `.json`):
+
+```yaml
+# <config>/policies/my-project.yaml
+schema_version: "1"
+workspace_id: my-project
+canonical_roots: ["/absolute/path/to/checkout"]   # real paths; symlinks never match
+expected_remote_identity: null                     # or the repository URL
+fingerprint: ""                                    # optional identity marker
+worktree_ids: []
+sensitivity_namespace: personal_private
+bound_project_policy: []
+authority_ceiling: default
+```
+
+The full contract is `schemas/policy/workspace.schema.json`. `beme status`
+reports how many workspaces are registered. Nothing else is required: if you
+never register one, every command still works without project scoping.
 
 ## Lifecycle
 
@@ -142,7 +182,10 @@ beme purge --confirm rec_xxx --dry-run rec_xxx            # show what a purge wo
 beme purge --confirm rec_xxx --remove-canonical rec_xxx   # RED: irreversible physical purge
 beme adapter install codex        # managed bootstrap block
 
-# Learning review (batch, low-friction):
+# Learning review (batch, low-friction). Observations arrive ONLY from agents
+# calling the MCP tool `beme.report_feedback` against a running `beme serve`
+# (docs/INTEGRATIONS.md); no CLI command creates one, so a fresh deployment's
+# queue stays empty until a harness session reports feedback.
 beme candidate list                       # quarantined observations pending review
 beme candidate inspect obs_xxxxxxxx
 beme candidate review obs_xxxxxxxx --action reject --note "reason"
