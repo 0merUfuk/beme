@@ -484,7 +484,7 @@ alone).
    (operator-owned configuration, never inside the data dir). `forget`
    writes the store tombstone and a ledger revocation; resolution and
    rebuild merge both. An unreadable ledger fails closed.
-4. **Ledger minimality.** Purge entries are `hmac-sha256` fingerprints under
+2. **Ledger minimality.** Purge entries are `hmac-sha256` fingerprints under
    a random 32-byte per-deployment key, over record identity
    (source ID + record ID) and over the purge key — nothing else. No content
    or text digests, no plain IDs, no timestamps or reasons; entries are
@@ -494,12 +494,12 @@ alone).
    pending journals so a Git-tracked canonical root never commits them.
    Purge entries without a readable key fail resolution, rebuild, and purge
    closed (`ErrPurgeKeyMissing`).
-5. **Provenance.** Projection purge removes the union of the record
+3. **Provenance.** Projection purge removes the union of the record
    payload's `ProvenanceRefs`, the refs recorded in the purge plan, and every
    provenance row with the record's `(source_id, source_record_id)`. No ID is
    derived by convention. Canonical removal follows every locator of every
    ref.
-6. **Idempotent, resumable execution.** Order: ledger fingerprints → journal
+4. **Idempotent, resumable execution.** Order: ledger fingerprints → journal
    → per-store purge + compact (`secure_delete`, FTS `optimize`, `VACUUM`,
    WAL truncate) → persisted traces → restating observations → canonical
    files (`--remove-canonical`, root-contained) → journal removal. The
@@ -510,7 +510,7 @@ alone).
    `already_purged` (exit 0). `beme doctor` reports pending purges.
    `PurgeRequest.FailAt` is a verification hook (never set by the CLI or
    MCP) that injects failures at every stage in tests.
-7. **Durability boundary.** The ledger, the purge key, and the journal are
+5. **Durability boundary.** The ledger, the purge key, and the journal are
    written by durable replacement: temp file → fsync (`F_FULLFSYNC` on macOS)
    → rename followed by an fsync of the parent directory on Unix; on Windows,
    which has no directory fsync, `MoveFileExW` with
@@ -521,7 +521,7 @@ alone).
    perform (volatile drive caches, some network or virtualized filesystems).
    The first revision only fsynced the file and described the ordering more
    strongly than the implementation supported.
-8. **Inspection failures abort.** A projection, trace directory, observation
+6. **Inspection failures abort.** A projection, trace directory, observation
    store (unreadable directory, unreadable or corrupt observation file), or
    canonical path that cannot be inspected fails the purge — during planning,
    before anything is written, or during execution with the journal left for
@@ -728,17 +728,17 @@ revocation.
    closed — not only the case where the ledger file is absent. A journal
    directory that cannot be read is an error on every surface that reports
    pending purges, never "none pending".
-2. **Write protocol.** Create the key uncommitted → write the ledger at the
+4. **Write protocol.** Create the key uncommitted → write the ledger at the
    next generation with the key ID → rewrite the key as committed at that
    generation. A crash after step 1 (key uncommitted, no ledger) is
    recognizable, loads as clean, and reuses the key, so an interrupted first
    initialization does not brick the deployment. A crash after step 2 leaves
    a ledger newer than the key, which loads and enforces normally.
-3. **Legacy compatibility.** A bare-hex key with a schema-2 ledger keeps
+5. **Legacy compatibility.** A bare-hex key with a schema-2 ledger keeps
    enforcing and migrates on the next ledger write with the same key bytes,
    so existing fingerprints keep matching. After migration, restoring the
    pre-migration ledger over the committed key fails closed.
-4. **Observation tombstones.** A purge records `hmac-sha256` fingerprints of
+6. **Observation tombstones.** A purge records `hmac-sha256` fingerprints of
    the observation IDs it erases. Deployment surfaces open the store through
    `Runtime.OpenLearning`, which fails closed on an unverifiable ledger and
    hides purged IDs from list, list-all, inspect, review, family counts,
@@ -747,14 +747,22 @@ revocation.
    build` erases restored copies and `beme doctor` reports their count
    without IDs. Zero-length observation files (what a crash between zeroize
    and unlink can leave) are treated as erased remnants.
-5. **Durable erasure.** Erasure decides from the open handle: the file is
+7. **Durable erasure.** Erasure decides from the open handle: the file is
    opened without following a final symlink (`O_NOFOLLOW`, or
    `FILE_FLAG_OPEN_REPARSE_POINT` on Windows) and must prove from that handle
    that it is a regular file, not a reparse point, and has no other hard
    link, before anything is written — so an entry swapped in after inspection
    cannot redirect the truncate. Device+inode identity is deliberately not
    compared: a filesystem may reuse a just-freed inode, so it is not a sound
-   check. Every file a purge removes is zeroized, flushed,
+   check. Removal is bound to that same handle: while it is still open the
+   name is re-checked against it (device+inode on Unix, volume serial plus
+   file index on Windows) and the unlink is skipped when the name no longer
+   refers to it, so a file a writer created at that name after the open is
+   not deleted in its place. **Residual:** between that re-check and the
+   unlink there remains a window that cannot be closed without holding a
+   lock on the parent directory, which Be Me does not own for canonical
+   roots that are edited independently of it. Every file a purge removes is
+   zeroized, flushed,
    unlinked, and its parent directory flushed (`internal/durable`), and an
    already-absent file still flushes its directory, so a retry completes the
    flush an earlier attempt could not. Projections are compacted with
@@ -763,7 +771,7 @@ revocation.
    crossed the boundary. A canonical file with other hard links is reported
    as a residual instead of being zeroized, because its content is shared
    with names the purge was not asked to remove.
-6. **Maintenance lock.** `forget`, `purge`, `build`, and learning writes take
+8. **Maintenance lock.** `forget`, `purge`, `build`, and learning writes take
    an exclusive inter-process lock at `<canonical_root>/ledger/.lock`
    (`flock` / `LockFileEx`, two-minute bounded wait, git-ignored), so
    concurrent operations cannot lose each other's ledger updates and a build

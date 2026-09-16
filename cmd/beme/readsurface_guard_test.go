@@ -106,6 +106,37 @@ func scanDirectReads(root string, dirs ...string) ([]string, error) {
 				}
 				guarded[name] = fns
 			}
+			// Identifiers the file declares itself (variables, parameters,
+			// fields, receivers). A package name that is shadowed locally is
+			// no longer a package qualifier, so it must not exempt a call.
+			shadowed := map[string]bool{}
+			ast.Inspect(file, func(n ast.Node) bool {
+				switch d := n.(type) {
+				case *ast.ValueSpec:
+					for _, id := range d.Names {
+						shadowed[id.Name] = true
+					}
+				case *ast.AssignStmt:
+					if d.Tok == token.DEFINE {
+						for _, lhs := range d.Lhs {
+							if id, ok := lhs.(*ast.Ident); ok {
+								shadowed[id.Name] = true
+							}
+						}
+					}
+				case *ast.Field:
+					for _, id := range d.Names {
+						shadowed[id.Name] = true
+					}
+				case *ast.RangeStmt:
+					for _, e := range []ast.Expr{d.Key, d.Value} {
+						if id, ok := e.(*ast.Ident); ok {
+							shadowed[id.Name] = true
+						}
+					}
+				}
+				return true
+			})
 			report := func(pos token.Pos, what string) {
 				violations = append(violations, rel+":"+strconv.Itoa(fset.Position(pos).Line)+": "+what)
 			}
@@ -128,7 +159,7 @@ func scanDirectReads(root string, dirs ...string) ([]string, error) {
 				if guardedMethods[sel.Sel.Name] {
 					// skip package-qualified functions (strings.Count, …):
 					// only method calls on a value can be a raw store read
-					if id, ok := sel.X.(*ast.Ident); ok && imported[id.Name] {
+					if id, ok := sel.X.(*ast.Ident); ok && imported[id.Name] && !shadowed[id.Name] {
 						return true
 					}
 					report(call.Pos(), "."+sel.Sel.Name+"() reads raw state outside the ledger filter")
@@ -179,12 +210,14 @@ func TestReadSurfaceGuardCatchesEvasions(t *testing.T) {
 	write("dotimport", "package main\n\nimport . \"github.com/0merUfuk/beme/internal/storage\"\n\nfunc i(p string) { _, _ = Open(p) }\n")
 	write("compliant", "package main\n\nfunc j(rt R) { _, _ = rt.OpenLearning() }\n\ntype R struct{ OpenLearning func() (int, error) }\n")
 	write("stdlib", "package main\n\nimport \"strings\"\n\nfunc k(s string) int { return strings.Count(s, \"x\") }\n")
+	// a local identifier shadowing an import name is not a package qualifier
+	write("shadowed", "package main\n\nimport \"strings\"\n\nfunc l(store S3) int {\n\tstrings := store\n\treturn strings.Count()\n}\n\ntype S3 struct{ Count func() int }\n\nvar _ = strings.TrimSpace\n")
 
 	violations, err := scanDirectReads(root, "cmd")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"cmd/plain/", "cmd/aliased/", "cmd/multiline/", "cmd/dotimport/"} {
+	for _, want := range []string{"cmd/plain/", "cmd/aliased/", "cmd/multiline/", "cmd/dotimport/", "cmd/shadowed/"} {
 		found := false
 		for _, v := range violations {
 			found = found || strings.HasPrefix(v, want)

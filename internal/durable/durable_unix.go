@@ -29,8 +29,8 @@ func syncDir(dir string) error {
 			err = unix.Fsync(int(d.Fd()))
 		}
 		if err != nil {
-			d.Close()
-			return err
+			// a Close failure can itself report a deferred write error
+			return errors.Join(err, d.Close())
 		}
 	}
 	// A Close error can report a deferred write failure, so it is not
@@ -59,6 +59,30 @@ func handleIsRegular(f *os.File) (bool, error) {
 		return false, err
 	}
 	return info.Mode().IsRegular(), nil
+}
+
+// nameRefersTo reports whether path still names the open file (same device
+// and inode). Unlike comparing an Lstat taken BEFORE the open, this compares
+// against the handle that was actually zeroized, so a replacement cannot be
+// unlinked in its place.
+func nameRefersTo(path string, f *os.File) (bool, error) {
+	onDisk, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	opened, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	a, aOK := onDisk.Sys().(*syscall.Stat_t)
+	b, bOK := opened.Sys().(*syscall.Stat_t)
+	if !aOK || !bOK {
+		return true, nil
+	}
+	return a.Dev == b.Dev && a.Ino == b.Ino, nil
 }
 
 func linkCount(f *os.File) (uint64, error) {

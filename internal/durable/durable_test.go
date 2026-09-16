@@ -240,6 +240,56 @@ func TestEraseSurvivesEntrySwappedAfterInspection(t *testing.T) {
 	}
 }
 
+// TestEraseDoesNotUnlinkAReplacementFile: if the name stops referring to the
+// file that was opened and zeroized — a writer replaced it while the purge
+// held the handle — the replacement must not be unlinked. POSIX has no
+// unlink-this-inode call, so the name is re-checked against the open handle
+// immediately before the unlink; this drives exactly that window.
+func TestEraseDoesNotUnlinkAReplacementFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	if err := os.WriteFile(target, []byte("to erase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const replacement = "a file someone else created"
+	swapped := false
+	restore := durable.SetEraseUnlinkHook(func(path string) {
+		if swapped || path != target {
+			return
+		}
+		swapped = true
+		if err := os.Remove(path); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(path, []byte(replacement), 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	_, err := durable.Erase(target)
+	restore()
+	if !swapped {
+		t.Fatal("fixture: the entry was never replaced")
+	}
+	if !errors.Is(err, durable.ErrChangedUnderfoot) {
+		t.Fatalf("erase must refuse to unlink a replacement; got %v", err)
+	}
+	if data, readErr := os.ReadFile(target); readErr != nil || string(data) != replacement {
+		t.Fatalf("the replacement file was unlinked or modified: %q %v", data, readErr)
+	}
+	// positive control: with no replacement the same call erases the file.
+	plain := filepath.Join(dir, "plain.md")
+	if err := os.WriteFile(plain, []byte("to erase"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if existed, err := durable.Erase(plain); err != nil || !existed {
+		t.Fatalf("unreplaced erase must succeed: existed=%v err=%v", existed, err)
+	}
+	if _, err := os.Stat(plain); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unreplaced erase left the file behind")
+	}
+}
+
 func TestEnsureDirRefusesNonDirectoryAndFlushesEveryLevel(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "afile")

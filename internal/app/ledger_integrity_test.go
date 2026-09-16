@@ -139,6 +139,9 @@ func TestLedgerIntegrityFailsClosedOnEverySurface(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				t.Skip("directory permissions do not block reads on Windows")
 			}
+			if os.Geteuid() == 0 {
+				t.Skip("root bypasses directory permissions")
+			}
 			pending := filepath.Join(filepath.Dir(rt.LedgerPath()), "pending")
 			if err := os.MkdirAll(pending, 0o700); err != nil {
 				t.Fatal(err)

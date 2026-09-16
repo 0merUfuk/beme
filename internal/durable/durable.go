@@ -40,6 +40,9 @@ var (
 	ErrLocked = errors.New("another Be Me maintenance operation is running")
 	// ErrNotDirectory: a path that must be a directory is something else.
 	ErrNotDirectory = errors.New("path exists and is not a directory")
+	// ErrChangedUnderfoot: the name stopped referring to the file that was
+	// opened and zeroized, so it was not unlinked.
+	ErrChangedUnderfoot = errors.New("directory entry was replaced during erasure")
 )
 
 var (
@@ -90,6 +93,34 @@ func SetEraseRaceHook(fn func(path string)) (restore func()) {
 		hookMu.Lock()
 		eraseRaceHook = prev
 		hookMu.Unlock()
+	}
+}
+
+// eraseUnlinkHook runs after the content is zeroized and flushed, just
+// before the name is re-checked and unlinked. Tests use it to replace the
+// directory entry in that window; production never sets it.
+var eraseUnlinkHook func(path string)
+
+// SetEraseUnlinkHook installs the between-zeroize-and-unlink hook and
+// returns a function restoring the previous one.
+func SetEraseUnlinkHook(fn func(path string)) (restore func()) {
+	hookMu.Lock()
+	prev := eraseUnlinkHook
+	eraseUnlinkHook = fn
+	hookMu.Unlock()
+	return func() {
+		hookMu.Lock()
+		eraseUnlinkHook = prev
+		hookMu.Unlock()
+	}
+}
+
+func runEraseUnlinkHook(path string) {
+	hookMu.RLock()
+	fn := eraseUnlinkHook
+	hookMu.RUnlock()
+	if fn != nil {
+		fn(path)
 	}
 }
 
@@ -343,8 +374,23 @@ func Erase(path string) (existed bool, err error) {
 		f.Close()
 		return true, fmt.Errorf("flush %s: %w", filepath.Base(path), err)
 	}
+	// Bind the unlink to the file just zeroized: if the name now refers to
+	// something else (a writer replaced it after the open), removing it would
+	// delete a file the caller never asked to erase. POSIX has no
+	// unlink-this-inode primitive, so the name is re-checked against the open
+	// handle immediately before the unlink; the residual window between that
+	// check and the unlink is documented in ADR-030.
+	runEraseUnlinkHook(path)
+	bound, err := nameRefersTo(path, f)
+	if err != nil {
+		f.Close()
+		return true, err
+	}
 	if err := f.Close(); err != nil {
 		return true, err
+	}
+	if !bound {
+		return true, fmt.Errorf("erase %s: %w", filepath.Base(path), ErrChangedUnderfoot)
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return true, err
