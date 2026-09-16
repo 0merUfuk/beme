@@ -84,14 +84,16 @@ every review thread is answered with evidence and resolved. Nothing is
 tagged or published, and no real user data was touched — every destructive
 test ran on disposable synthetic deployments. What remains is owner-gated
 only, listed as five decisions in [ACCEPTANCE.md](ACCEPTANCE.md) §7a
-"Consolidated approval request". P3 was re-run independently at `9a9a6fa`:
-the core install-to-deployment path is improvisation-free and all eight
-findings from that run are fixed at the final head (harness-free MCP smoke
-check, `--capability` semantics, observation provenance, the real kind and
-status mapping rules, the corrected ledger-gating claim, workspace
-registration, and `--help`/`--version` exiting 0). Certifying a full
-zero-improvisation onboarding run needs one more independent pass; nothing
-else engineering-side is open.
+"Consolidated approval request". P3 ran twice independently. Pass 1
+(`9a9a6fa`) found the core install-to-deployment path improvisation-free with
+eight remaining findings; all were fixed. Pass 2 (`7654d6c`) confirmed seven
+of them — `--help`/`--version` exit 0, the whole core path with zero
+improvisations, observation provenance, the real kind and status mapping
+rules and their consequences, the mismatched-ledger surface matrix with both
+stated exceptions, and workspace registration. The eighth, a harness-free MCP
+smoke command that lost a stdin race as written, is fixed and verified by
+direct execution. Certifying a full zero-improvisation run needs one more
+independent pass; nothing else engineering-side is open.
 
 ## 1. Status
 

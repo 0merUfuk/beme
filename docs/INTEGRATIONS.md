@@ -14,13 +14,16 @@ Smoke-check the server without installing a harness — it completes the stdio
 handshake and exits, with no model call:
 
 ```sh
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+{ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'
+  sleep 2; } \
   | beme serve --projection personal --capability cap_smoke --transport stdio
 ```
 
 A JSON-RPC result naming `beme` and its version means the handshake
-completed. The server reads stdio until its input closes, so a piped command
-like this one exits on its own; an interactive session needs stdin held open.
+completed, and the command exits 0. The `sleep` is required: the server shuts
+down as soon as its input closes, so piping `printf` alone closes stdin before
+the reply is written and the command fails with `mcp server exited: server is
+closing: EOF` (exit 1). An interactive session likewise needs stdin held open.
 
 Expansion is pack-bound (ADR-029): pass the `pack_id` of a pack returned by
 `beme.resolve_context` in the same server session and the `record_id` of an
@@ -47,6 +50,10 @@ Tool surface (ADR-009, contract-tested):
 | Claude Code | 1 | user-level `CLAUDE.md` managed block + MCP + hooks where supported | advisory |
 | Hermes | 2 | `AGENTS.md` block + `.agents/skills/beme` + MCP | advisory |
 | Cursor | 2 | `AGENTS.md` block + `.cursor/rules/beme.mdc` + MCP | advisory |
+
+The `adapter` subcommand manages the bootstrap block for the harnesses whose
+instruction files it knows: `codex` or `claude-code`. The other rows describe the
+documented contract; register those manually.
 
 `adapter install|remove|verify <harness>` manages the bootstrap block
 (marker-delimited; unrelated config preserved; idempotent). MCP registration
