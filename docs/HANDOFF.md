@@ -75,6 +75,17 @@ multi-segment tails match. The benchmark refuses unsafe work dirs. Existing
 ledger `.gitignore` files gain the required rules. All CodeRabbit review
 comments were dispositioned in the PR description.
 
+**Continuation state (rev 14, for whoever picks this up):** branch
+`feat/eval-runner-and-privacy-corpus`, code head `f691a29`, CI run
+[35051853082](https://github.com/0merUfuk/beme/actions/runs/35051853082)
+green on all seven checks. PR #1 is open and unmerged by owner instruction;
+every review thread is answered with evidence and resolved. Nothing is
+tagged or published, and no real user data was touched — every destructive
+test ran on disposable synthetic deployments. What remains is owner-gated
+only, listed as five decisions in [ACCEPTANCE.md](ACCEPTANCE.md) §7a
+"Consolidated approval request"; the one engineering task left is re-running
+the fresh-checkout documentation test (P3) now that its defects are fixed.
+
 ## 1. Status
 
 **Current (rev 13):** PR #1 is open against `main`, unmerged at the owner's
