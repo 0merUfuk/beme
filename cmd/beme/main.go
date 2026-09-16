@@ -198,7 +198,9 @@ See "Registering a source" in docs/OPERATIONS.md.
 			_ = trace
 		} else {
 			renderPackHuman(pack)
-			fmt.Printf("\ntrace steps: %d (use explain --json for full trace)\n", len(trace))
+			// Print the trace ID itself: it is the only handle `beme explain`
+			// accepts, and the human view has no other place it appears.
+			fmt.Printf("\ntrace: %s (%d steps) — explain with: beme explain --projection %s --trace %s\n", pack.TraceRef, len(trace), profile, pack.TraceRef)
 		}
 	case "forget":
 		// forget --profile X <record_id|source:source_id> [reason]

@@ -87,6 +87,33 @@ func TestHelpAndVersionExitZero(t *testing.T) {
 	}
 }
 
+// TestPreviewPrintsTheTraceExplainAccepts: the human preview must print the
+// trace ID `beme explain` needs, and explaining with exactly that ID must work
+// (an onboarding pass found no documented way to obtain it).
+func TestPreviewPrintsTheTraceExplainAccepts(t *testing.T) {
+	bin := buildBemeBinary(t, "beme-trace")
+	cfg, _ := diagnosticsDeployment(t)
+	if _, stderr, code := runBeme(t, bin, "build", "--profile", "personal", "--config", cfg); code != 0 {
+		t.Fatalf("build: %d %s", code, stderr)
+	}
+	out, stderr, code := runBeme(t, bin, "preview", "--task", "diagnostics fixture", "--config", cfg)
+	if code != 0 {
+		t.Fatalf("preview: %d %s", code, stderr)
+	}
+	var traceID string
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, "trace: "); ok {
+			traceID, _, _ = strings.Cut(rest, " ")
+		}
+	}
+	if !strings.HasPrefix(traceID, "trace_") {
+		t.Fatalf("human preview must print the trace ID; output:\n%s", out)
+	}
+	if out, stderr, code := runBeme(t, bin, "explain", "--projection", "personal", "--trace", traceID, "--config", cfg); code != 0 || out == "" {
+		t.Fatalf("explain with the printed trace ID must succeed: %d %s %s", code, out, stderr)
+	}
+}
+
 // TestDoctorKeepsMostSevereStatus: an interrupted purge (degraded) must not
 // mask an unusable ledger (policy_blocked). Doctor is a diagnostic: it exits 0
 // and reports the state in its output.

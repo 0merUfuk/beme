@@ -172,7 +172,9 @@ never register one, every command still works without project scoping.
 ```sh
 beme doctor                       # health: sources, projections, findings
 beme export --projection personal # visible records + provenance as JSON
-beme explain --trace TRACE_ID     # why a pack selected what it did
+beme explain --trace TRACE_ID     # why a pack selected what it did; TRACE_ID is printed
+                                  # on the last line of `beme preview` ("trace: …") and is
+                                  # the `trace_ref` field of `beme preview --json`
 beme build --profile all         # rebuild projections from registered sources
 beme status                       # registered sources + workspaces
 beme preview --task "..." --workspace "$PWD"   # human pack preview
