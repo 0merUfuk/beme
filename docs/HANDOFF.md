@@ -76,24 +76,15 @@ ledger `.gitignore` files gain the required rules. All CodeRabbit review
 comments were dispositioned in the PR description.
 
 **Continuation state (rev 14, for whoever picks this up):** branch
-`feat/eval-runner-and-privacy-corpus`, code head `419fb18`, CI run
-[35052381926](https://github.com/0merUfuk/beme/actions/runs/35052381926)
-green on all seven checks (this docs commit has its own run, linked in
-PR #1). PR #1 is open and unmerged by owner instruction;
-every review thread is answered with evidence and resolved. Nothing is
-tagged or published, and no real user data was touched — every destructive
-test ran on disposable synthetic deployments. What remains is owner-gated
-only, listed as five decisions in [ACCEPTANCE.md](ACCEPTANCE.md) §7a
-"Consolidated approval request". P3 ran twice independently. Pass 1
-(`9a9a6fa`) found the core install-to-deployment path improvisation-free with
-eight remaining findings; all were fixed. Pass 2 (`7654d6c`) confirmed seven
-of them — `--help`/`--version` exit 0, the whole core path with zero
-improvisations, observation provenance, the real kind and status mapping
-rules and their consequences, the mismatched-ledger surface matrix with both
-stated exceptions, and workspace registration. The eighth, a harness-free MCP
-smoke command that lost a stdin race as written, is fixed and verified by
-direct execution. Certifying a full zero-improvisation run needs one more
-independent pass; nothing else engineering-side is open.
+`feat/eval-runner-and-privacy-corpus`. The last commit that changes product
+code is `c2ae7b9`; it has green three-platform CI (run [35126605518](https://github.com/0merUfuk/beme/actions/runs/35126605518)) and
+passed the fresh-checkout onboarding test (P3) with zero improvisations,
+performed by an independent agent on that exact commit. Later commits are
+evidence-only (documentation). PR #1 is open and unmerged by owner
+instruction; every review thread is answered and resolved. Nothing is tagged
+or published, and no real user data was touched. What remains is owner-gated
+only — the decisions in [ACCEPTANCE.md](ACCEPTANCE.md) §7a "Consolidated
+approval request"; no engineering item is open.
 
 ## 1. Status
 
