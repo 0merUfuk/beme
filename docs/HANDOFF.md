@@ -76,9 +76,10 @@ ledger `.gitignore` files gain the required rules. All CodeRabbit review
 comments were dispositioned in the PR description.
 
 **Continuation state (rev 14, for whoever picks this up):** branch
-`feat/eval-runner-and-privacy-corpus`, code head `f691a29`, CI run
-[35051853082](https://github.com/0merUfuk/beme/actions/runs/35051853082)
-green on all seven checks. PR #1 is open and unmerged by owner instruction;
+`feat/eval-runner-and-privacy-corpus`, code head `419fb18`, CI run
+[35052381926](https://github.com/0merUfuk/beme/actions/runs/35052381926)
+green on all seven checks (this docs commit has its own run, linked in
+PR #1). PR #1 is open and unmerged by owner instruction;
 every review thread is answered with evidence and resolved. Nothing is
 tagged or published, and no real user data was touched — every destructive
 test ran on disposable synthetic deployments. What remains is owner-gated
