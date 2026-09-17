@@ -112,8 +112,10 @@ validate` checks the fixtures against it.
 repository: only files that `include` selects (and the excludes allow) count
 toward the 5,000-file source limit. Traversal is separately capped at 200,000
 file entries examined — for a larger tree, point `root` at the directory that
-holds the entries. When a source is skipped, `beme build` prints the reason
-next to the record count; check that count after registering a source.
+holds the entries. A registered source that fails to ingest (missing
+root, a limit exceeded, an unsupported type) makes `beme build` name it and
+exit 1 — the other sources still build and serve — and `beme doctor` stays
+`degraded` with that source named until a build ingests it.
 
 **What becomes a record.** Ingestion reads the files matched by `include` and
 normalizes Markdown entries with YAML frontmatter:
@@ -173,6 +175,27 @@ authority_ceiling: default
 The full contract is `schemas/policy/workspace.schema.json`. `beme status`
 reports how many workspaces are registered. Nothing else is required: if you
 never register one, every command still works without project scoping.
+
+## What a pack contains
+
+A pack is retrieved for the task, not a dump of everything registered:
+
+- **Always:** constraints (trusted project policy, and default-authority
+  directives or principles marked high criticality) and principles that carry
+  no scope restriction — they apply to every task.
+- **Only with evidence for this task:** preferences, heuristics, patterns,
+  workflows, failure modes, facts, precedents and learned observations. The
+  evidence is a matching task or workspace scope, a named technology, or a
+  content word the task and the entry share (common words such as "should",
+  "use" or "best" do not count).
+- **When nothing in your knowledge addresses the task,** the pack says so: an
+  unknown "No recorded preference, precedent or guidance addresses this task".
+  Treat any choice you make then as an assumption, not as your recorded
+  preference.
+
+`beme explain` lists every entry left out as "not relevant to task". Matching
+is on words, so an entry phrased very differently from a task can be missed;
+give entries titles that name their topic.
 
 ## Lifecycle
 
