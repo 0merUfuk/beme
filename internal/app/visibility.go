@@ -9,6 +9,7 @@ package app
 // the purge key cannot be read.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -253,8 +254,23 @@ func (rt *Runtime) ProjectionFindings(profile contracts.Profile) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
+	findings := []string{}
 	if restored {
-		return []string{fmt.Sprintf("projection %s is out of date with the tombstone ledger: rebuild required (run: beme build --profile %s)", profile, profile)}, nil
+		findings = append(findings, fmt.Sprintf("projection %s is out of date with the tombstone ledger: rebuild required (run: beme build --profile %s)", profile, profile))
 	}
-	return nil, nil
+	// Sources that failed at the last build: the projection serves without
+	// them, so the deployment is not healthy until they ingest.
+	if raw, ok := store.GetMeta(buildFailuresMetaKey); ok && raw != "" && raw != "null" {
+		var failed []SourceFailure
+		if err := json.Unmarshal([]byte(raw), &failed); err != nil {
+			return nil, fmt.Errorf("projection %s build report unreadable: %w", profile, err)
+		}
+		for _, f := range failed {
+			findings = append(findings, fmt.Sprintf("source %s was not ingested into projection %s at the last build: %s (fix the source, then run: beme build --profile %s)", f.SourceID, profile, f.Reason, profile))
+		}
+	}
+	if len(findings) == 0 {
+		return nil, nil
+	}
+	return findings, nil
 }
