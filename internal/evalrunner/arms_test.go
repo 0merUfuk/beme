@@ -156,8 +156,10 @@ func contextBlock(t *testing.T, prompt string) string {
 }
 
 var (
-	wantEligible = []string{fx.RecDecisionLoser, fx.RecDecisionWinner, fx.RecFoundation, fx.RecIrrelevantLong1, fx.RecIrrelevantLong2, fx.RecIrrelevantShort, fx.RecLearned, fx.RecPrecedent, fx.RecScopedAlpha}
-	wantB4       = []string{fx.RecDecisionWinner, fx.RecFoundation, fx.RecIrrelevantShort, fx.RecScopedAlpha, fx.RecPrecedent, fx.RecLearned}
+	wantEligible = []string{fx.RecDecisionLoser, fx.RecDecisionWinner, fx.RecFoundation, fx.RecLong1, fx.RecLong2, fx.RecIrrelevantShort, fx.RecLearned, fx.RecPrecedent, fx.RecScopedAlpha}
+	// B4 retrieves: the irrelevant record is eligible (B2 carries it) but not
+	// selected; the long relevant records reach budgeting and are truncated.
+	wantB4       = []string{fx.RecDecisionWinner, fx.RecFoundation, fx.RecScopedAlpha, fx.RecPrecedent, fx.RecLearned}
 	stageADenied = []string{fx.RecScopedBeta, fx.RecTaskScoped, fx.RecRevoked, fx.RecDeprecated}
 )
 
@@ -319,7 +321,7 @@ func TestArmsReceiveExactlyTheirConstruction(t *testing.T) {
 		if !sort.StringsAreSorted(got) {
 			t.Fatalf("B2 must not be task-ordered: %v", got)
 		}
-		for _, id := range []string{fx.RecDecisionWinner, fx.RecDecisionLoser, fx.RecIrrelevantLong1, fx.RecIrrelevantLong2, fx.RecIrrelevantShort} {
+		for _, id := range []string{fx.RecDecisionWinner, fx.RecDecisionLoser, fx.RecLong1, fx.RecLong2, fx.RecIrrelevantShort} {
 			if !strings.Contains(req.Prompt, fx.Marker(id)) {
 				t.Fatalf("B2 prompt lacks %s", id)
 			}
@@ -329,7 +331,7 @@ func TestArmsReceiveExactlyTheirConstruction(t *testing.T) {
 				t.Fatalf("B2 item %s must be untruncated (%d vs %d bytes)", it.RecordID, len(it.Text), len(texts[it.RecordID]))
 			}
 		}
-		if len(texts[fx.RecIrrelevantLong1]) < 12000 {
+		if len(texts[fx.RecLong1]) < 12000 {
 			t.Fatal("control: long record must exceed the B4 budget")
 		}
 	})
@@ -339,7 +341,7 @@ func TestArmsReceiveExactlyTheirConstruction(t *testing.T) {
 		got := ids(req.Context.Records)
 		want := []string{}
 		for _, id := range candidateIDs(r.in) {
-			if id != fx.RecIrrelevantLong1 && id != fx.RecIrrelevantLong2 {
+			if id != fx.RecLong1 && id != fx.RecLong2 {
 				want = append(want, id)
 			}
 		}
@@ -433,7 +435,7 @@ func TestArmsReceiveExactlyTheirConstruction(t *testing.T) {
 
 	t.Run("canonical-only", func(t *testing.T) {
 		req := r.request(t, evalrunner.ArmAblCanonOnly)
-		want := []string{fx.RecDecisionWinner, fx.RecFoundation, fx.RecIrrelevantShort, fx.RecScopedAlpha}
+		want := []string{fx.RecDecisionWinner, fx.RecFoundation, fx.RecScopedAlpha}
 		if !sameSet(ids(req.Context.Items()), want) || len(req.Context.Pack.Precedents) != 0 || req.Context.Pack.LearnedExperimental != nil {
 			t.Fatalf("canonical-only must drop learned and precedent items: %v", ids(req.Context.Items()))
 		}

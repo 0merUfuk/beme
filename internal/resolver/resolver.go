@@ -67,6 +67,15 @@ func resolveWith(store Store, cap policy.Capability, tc policy.TaskContext, req 
 	// Retrieval scoring: relevance to task text + facet + decision_key.
 	scored := scoreCandidates(eligible, req, facets, tc)
 
+	// Retrieval: advisory records need task evidence; constraints and
+	// globally applicable principles always apply (relevance.go).
+	scored, excluded := retainRelevant(scored, req, facets, tc)
+	// One step per record, like Stage A, so explain shows each exclusion and
+	// read surfaces can drop steps naming records that are no longer visible.
+	for _, id := range excluded {
+		trace = append(trace, TraceStep{Step: "relevance", RecordID: id, Outcome: "not relevant to task"})
+	}
+
 	// Precedence resolution per decision_key group.
 	groups := groupByDecisionKey(scored)
 	winners, conflicts := resolvePrecedence(groups, tc, trace)
@@ -151,7 +160,7 @@ type scoredRecord struct {
 }
 
 func scoreCandidates(recs []contracts.Record, req contracts.ResolutionRequest, facets []string, tc policy.TaskContext) []scoredRecord {
-	taskLower := strings.ToLower(req.Task)
+	taskTokens := contentTokens(req.Task)
 	out := make([]scoredRecord, 0, len(recs))
 	for _, rec := range recs {
 		s := 0.0
@@ -165,13 +174,8 @@ func scoreCandidates(recs []contracts.Record, req contracts.ResolutionRequest, f
 				}
 			}
 		}
-		// lexical overlap
-		text := strings.ToLower(rec.Title + " " + rec.Statement + " " + rec.CompactText + " " + rec.Key)
-		for _, w := range strings.FieldsFunc(taskLower, func(r rune) bool { return !unicodeIsWord(r) }) {
-			if len(w) > 3 && strings.Contains(text, w) {
-				s += 0.5
-			}
-		}
+		// lexical overlap on normalized content words (relevance.go)
+		s += 0.5 * float64(contentOverlap(taskTokens, recordText(rec)))
 		// workspace specificity
 		if len(rec.Scope.WorkspaceIDs) > 0 {
 			s += 1

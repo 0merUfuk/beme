@@ -5,8 +5,8 @@
 //
 //   - two competing decisions share one decision_key (the more task-relevant
 //     one loses precedence);
-//   - irrelevant records, two of them long enough that B4's token budget
-//     must truncate them;
+//   - an irrelevant record B4's retrieval must drop (B2 keeps every eligible
+//     record), and two long relevant records B4's token budget must truncate;
 //   - canonical foundation, canonical knowledge, episodic precedent, and
 //     learned-observation evidence;
 //   - a workspace-scoped record out of scope for the task, a task-scoped
@@ -48,8 +48,8 @@ const (
 	RecPrecedent       = "rec_syn_precedent"
 	RecLearned         = "rec_syn_learned"
 	RecIrrelevantShort = "rec_syn_irrelevant_short"
-	RecIrrelevantLong1 = "rec_syn_irrelevant_long_1"
-	RecIrrelevantLong2 = "rec_syn_irrelevant_long_2"
+	RecLong1           = "rec_syn_long_1"
+	RecLong2           = "rec_syn_long_2"
 	RecScopedAlpha     = "rec_syn_scoped_alpha"
 	RecScopedBeta      = "rec_syn_scoped_beta"
 	RecTaskScoped      = "rec_syn_task_scoped_deploy"
@@ -143,7 +143,7 @@ func Build(base string, opts Options) (*Deployment, error) {
 	}
 
 	long := func(id string) string {
-		return Marker(id) + " " + strings.Repeat("knitting yarn gauge swatch notes. ", 420)
+		return Marker(id) + " " + strings.Repeat("local batch tool storage notes. ", 420)
 	}
 	canon := func(id, text string) recSpec {
 		return recSpec{id: id, source: "synthetic-knowledge", text: text, kind: contracts.KindHeuristic, role: contracts.RoleCanonicalKnowledge, trust: contracts.TrustCanonical, confidence: contracts.ConfidenceValidated}
@@ -158,10 +158,10 @@ func Build(base string, opts Options) (*Deployment, error) {
 		{id: RecPrecedent, source: "synthetic-episodes", kind: contracts.KindPrecedent, role: contracts.RoleEpisodicEvidence, trust: contracts.TrustReference, confidence: contracts.ConfidenceObserved,
 			text: Marker(RecPrecedent) + " an earlier batch job shipped with a file-backed store"},
 		{id: RecLearned, source: "synthetic-observations", kind: contracts.KindPattern, role: contracts.RoleLearnedObservation, trust: contracts.TrustQuarantined, confidence: contracts.ConfidenceObserved,
-			text: Marker(RecLearned) + " the owner usually documents a migration path"},
+			text: Marker(RecLearned) + " the owner usually documents the storage engine choice for a batch tool"},
 		canon(RecIrrelevantShort, Marker(RecIrrelevantShort)+" water tomato seedlings at dawn"),
-		canon(RecIrrelevantLong1, long(RecIrrelevantLong1)),
-		canon(RecIrrelevantLong2, long(RecIrrelevantLong2)),
+		canon(RecLong1, long(RecLong1)),
+		canon(RecLong2, long(RecLong2)),
 		func() recSpec {
 			r := canon(RecScopedAlpha, Marker(RecScopedAlpha)+" alpha keeps its data in one file")
 			r.workspaces = []string{WorkspaceAlpha}

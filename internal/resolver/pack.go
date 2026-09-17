@@ -381,8 +381,22 @@ func deriveUnknowns(winners []scoredRecord, req contracts.ResolutionRequest, tc 
 			unknowns = append(unknowns, Unknown{Question: pr.question, WhyMaterial: pr.why, SuggestedEscalation: &esc})
 		}
 	}
+	// No retained record is task evidence: say so, so an agent does not read
+	// always-applicable principles or an empty pack as the owner's choice.
+	if !hasAdvisoryEvidence(winners) {
+		esc := "proceed_with_assumption"
+		unknowns = append(unknowns, Unknown{
+			Question:            NoEvidenceQuestion,
+			WhyMaterial:         "No approved personal preference, precedent or guidance matched this task; any preference stated for it would be an assumption, not the owner's recorded choice",
+			SuggestedEscalation: &esc,
+		})
+	}
 	return unknowns
 }
+
+// NoEvidenceQuestion is the unknown a pack carries when no advisory record
+// supports the task.
+const NoEvidenceQuestion = "No recorded preference, precedent or guidance addresses this task"
 
 func evidenceCovers(winners []scoredRecord, pattern string) bool {
 	for _, w := range winners {
