@@ -136,6 +136,7 @@ See "Registering a source" in docs/OPERATIONS.md.
 			profiles = []contracts.Profile{contracts.Profile(profile)}
 		}
 		reports := []app.BuildReport{}
+		failedSources := 0
 		for _, p := range profiles {
 			rep, err := rt.BuildProfile(p)
 			if err != nil {
@@ -143,9 +144,14 @@ See "Registering a source" in docs/OPERATIONS.md.
 				os.Exit(1)
 			}
 			reports = append(reports, *rep)
+			failedSources += len(rep.Failed)
+		}
+		buildStatus := "ok"
+		if failedSources > 0 {
+			buildStatus = "source_failures"
 		}
 		if jsonOut {
-			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "ok", "reports": reports})
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"status": buildStatus, "reports": reports})
 		} else {
 			for _, r := range reports {
 				fmt.Printf("built %s: %d records from %d sources\n", r.Profile, r.RecordsIngested, len(r.SourcesIngested))
@@ -159,6 +165,17 @@ See "Registering a source" in docs/OPERATIONS.md.
 					fmt.Printf("  purge-blocked: %d entr(ies) refused by physical-purge tombstones (not re-ingested)\n", r.PurgeBlocked)
 				}
 			}
+		}
+		// A registered source that did not ingest is a failed build, not a
+		// footnote: report it on stderr and exit non-zero (the projection
+		// still serves the sources that did ingest).
+		for _, r := range reports {
+			for _, f := range r.Failed {
+				fmt.Fprintf(os.Stderr, "error: source %s was not ingested into %s: %s\n", f.SourceID, r.Profile, f.Reason)
+			}
+		}
+		if failedSources > 0 {
+			os.Exit(1)
 		}
 	case "preview", "resolve":
 		if task == "" {
@@ -421,6 +438,14 @@ func doctor(configDir string, jsonOut bool) {
 		for _, p := range []string{"personal", "work-safe"} {
 			if _, err := os.Stat(rt.ProjectionPath(contracts.Profile(p))); err != nil {
 				findings = append(findings, fmt.Sprintf("projection %s not built yet (run: beme build --profile %s)", p, p))
+				// Unbuilt is only a problem when a source is registered for it.
+				for _, s := range rt.Sources {
+					for _, allowed := range s.ProfilesAllowed {
+						if string(allowed) == p {
+							raise("degraded")
+						}
+					}
+				}
 			}
 		}
 		for _, p := range []contracts.Profile{contracts.ProfilePersonal, contracts.ProfileWorkSafe} {

@@ -192,7 +192,7 @@ func TestManifestsRecordObservedValues(t *testing.T) {
 	if evs["B4"].ContextSHA == evs["B1"].ContextSHA || manifests["B0"]["ranking_config_hash"] == manifests["B4"]["ranking_config_hash"] {
 		t.Fatal("context digest and ranking config must reflect each arm's construction")
 	}
-	if c := evs["B4"].Construction; c.Source != "session_resolve" || c.Eligible != 9 || c.Selected != 6 || c.Truncated != 2 || c.BudgetTokens != 3000 {
+	if c := evs["B4"].Construction; c.Source != "session_resolve" || c.Eligible != 9 || c.Selected != 5 || c.Truncated != 2 || c.BudgetTokens != 3000 {
 		t.Fatalf("B4 construction descriptor: %+v", c)
 	}
 

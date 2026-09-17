@@ -96,6 +96,20 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
   inherited sensitivity (FR-054).
 
 ### Fixed
+- Packs contained every eligible record whatever the task, and reported
+  nothing when none applied. Stage B now retrieves (ADR-032): constraints and
+  unscoped principles always apply; other records need task evidence; each
+  exclusion is traced; and a pack with no supporting evidence carries the
+  unknown "No recorded preference, precedent or guidance addresses this task".
+- A registered source that failed to ingest only printed a "skipped" line:
+  `beme build` exited 0 and `beme doctor` reported healthy. `beme build` now
+  names failed sources and exits 1, the failures are persisted, and `beme
+  doctor` stays degraded until they ingest; an unbuilt projection with a
+  registered source is degraded too.
+- Ingestion counted every file under a source root toward the 5,000-file
+  limit before applying `include`, so a narrow include over an ordinary
+  repository aborted the whole source with zero records. Only selected files
+  count now; traversal has its own 200,000-entry cap (ADR-031).
 - Purge durability: traces, observations, and canonical files are erased
   through zeroize → flush → unlink → directory flush, and a retry completes
   flushes an interrupted attempt could not; projections are compacted with

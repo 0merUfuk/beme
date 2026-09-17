@@ -339,14 +339,14 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 			return err
 		}
 		defer sWork.Store.Close()
-		pP, err := sPersonal.ResolveOnly("task", "")
+		pP, err := sPersonal.ResolveOnly("private working sessions", "")
 		if err != nil {
 			return err
 		}
 		if !containsPersonalText(pP) {
 			return precondition(false, "personal session must see its own content")
 		}
-		pW, err := sWork.ResolveOnly("task", "")
+		pW, err := sWork.ResolveOnly("private working sessions", "")
 		if err != nil {
 			return err
 		}
@@ -885,7 +885,7 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 		selected := packRecordIDs(pack)
 		eligibleUnselected := ""
 		for _, st := range trace {
-			if st.Step == "stage_a" && st.Outcome == "eligible" && !selected[st.RecordID] {
+			if st.Step == "stage_a" && st.Outcome == "eligible" && !selected[st.RecordID] && st.RecordID == "rec_dk-loser" {
 				eligibleUnselected = st.RecordID
 			}
 		}
@@ -1448,7 +1448,7 @@ func NewSuite(base string, opts Options) (*Suite, error) {
 			return err
 		}
 		defer sess.Store.Close()
-		after, err := sess.ResolveOnly("private working sessions", "")
+		after, err := sess.ResolveOnly("private working sessions and a measured need for complexity", "")
 		if err != nil {
 			return err
 		}

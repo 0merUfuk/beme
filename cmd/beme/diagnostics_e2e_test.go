@@ -114,6 +114,56 @@ func TestPreviewPrintsTheTraceExplainAccepts(t *testing.T) {
 	}
 }
 
+// TestIngestionFailureIsNeverReportedHealthy drives the real binary: a
+// registered source that cannot ingest makes `beme build` exit non-zero and
+// name it, and `beme doctor` stays degraded until a build ingests it. An
+// unbuilt projection that has a registered source is not healthy either.
+func TestIngestionFailureIsNeverReportedHealthy(t *testing.T) {
+	bin := buildBemeBinary(t, "beme-ingest-fail")
+	cfg, _ := diagnosticsDeployment(t)
+	doctorStatus := func() (string, string) {
+		out, _, _ := runBeme(t, bin, "doctor", "--json", "--config", cfg)
+		var doc struct {
+			Status   string   `json:"status"`
+			Findings []string `json:"findings"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("doctor --json: %v %s", err, out)
+		}
+		return doc.Status, strings.Join(doc.Findings, "\n")
+	}
+
+	if status, _ := doctorStatus(); status != "degraded" {
+		t.Fatalf("a registered source with an unbuilt projection must not be healthy; got %s", status)
+	}
+
+	broken := filepath.Join(cfg, "sources", "broken.yaml")
+	desc := "schema_version: \"1\"\nsource_id: broken-src\ntype: directory\nroot: " + filepath.ToSlash(filepath.Join(t.TempDir(), "missing")) + "\npurpose: [reusable_knowledge]\ntrust: canonical\ninstruction_semantics: registered_files_only\nauthority_ceiling: default\nsensitivity: personal_private\nprofiles_allowed: [personal]\ningestion_mode: index_content\ninclude: [\"entries/**/*.md\"]\n"
+	if err := os.WriteFile(broken, []byte(desc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := runBeme(t, bin, "build", "--profile", "personal", "--config", cfg)
+	if code != 1 || !strings.Contains(stderr, "source broken-src was not ingested") {
+		t.Fatalf("a build with a failed source must exit 1 and name it: %d stdout=%s stderr=%s", code, out, stderr)
+	}
+	if !strings.Contains(out, "built personal: 1 records") {
+		t.Fatalf("positive control: the healthy source must still ingest: %s", out)
+	}
+	if status, findings := doctorStatus(); status != "degraded" || !strings.Contains(findings, "source broken-src was not ingested") {
+		t.Fatalf("doctor must stay degraded and name the failed source; got %s: %s", status, findings)
+	}
+
+	if err := os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := runBeme(t, bin, "build", "--profile", "personal", "--config", cfg); code != 0 {
+		t.Fatalf("a clean build must exit 0: %d %s", code, stderr)
+	}
+	if status, findings := doctorStatus(); status != "healthy" {
+		t.Fatalf("after a clean build doctor must be healthy; got %s: %s", status, findings)
+	}
+}
+
 // TestDoctorKeepsMostSevereStatus: an interrupted purge (degraded) must not
 // mask an unusable ledger (policy_blocked). Doctor is a diagnostic: it exits 0
 // and reports the state in its output.

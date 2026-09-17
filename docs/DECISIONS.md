@@ -844,6 +844,112 @@ field is lowered, so a rollback needs a ledger rewrite).
 requirement to detect wholesale removal of enforcement state, or key custody
 moving to an OS keychain.
 
+## ADR-031 — The source-size limit counts selected files; traversal has its own cap
+
+**Date:** 2026-09-17
+**Status:** accepted
+**Context:** the ingestion walker counted every file it examined toward
+`MaxFiles` (5,000) before applying the descriptor's include patterns. A source
+whose root is an ordinary repository and whose `include` selects a handful of
+entry files therefore aborted with "file count limit exceeded" as soon as the
+repository held more than 5,000 files anywhere, and contributed zero records.
+Reproduced against a real personal knowledge repository: root at the
+repository, `include: ["knowledge/entries/*.md"]` selecting 8 files, 0 records
+ingested; the same files ingested when the root was narrowed to the entries
+directory.
+**Decision:** `MaxFiles` bounds the files a source contributes — only files
+that pass the hard excludes, the descriptor excludes and the include patterns
+count. Traversal itself is bounded separately by `MaxVisited` (default
+200,000 file entries examined), so a narrow include over a very large tree
+stays bounded, and the per-file size, total size, depth and timeout limits are
+unchanged.
+**Evidence:** `TestNarrowIncludeUnderLargeTree` (a narrow include under a tree
+exceeding `MaxFiles` ingests its matches; selecting more than `MaxFiles`
+still aborts; examining more than `MaxVisited` aborts), `TestBoundsEnforced`
+and threat case 29 unchanged. Reintroducing the old counting, or removing the
+traversal cap, fails the test.
+**Alternatives rejected:** raising `MaxFiles` (moves the cliff instead of
+removing it); pruning directories by analysing include globs (correct but a
+larger change to the glob matcher, and `**` patterns defeat most pruning);
+documenting "narrow the root" only (leaves a silent zero-record failure on the
+natural configuration).
+**Consequences:** a source may now examine up to 200,000 file entries before
+aborting; examining is cheap (no read) and the timeout still applies.
+**Diagnostics (same change):** a limit or any other ingestion error used to
+appear only as a "skipped" line while `beme build` exited 0 and `beme doctor`
+reported healthy. A source registered for a profile that does not ingest is
+now a *failure*: `beme build` names it on stderr and exits 1 (the sources that
+did ingest still serve), the failure list is persisted in the projection
+(`build_source_failures` meta), and `beme doctor` reports each failed source
+as degraded until a build ingests it. An unbuilt projection that has a
+registered source is degraded as well. Evidence:
+`TestFailedSourceIsReportedAndKeepsDoctorUnhealthy` (missing root and an
+oversized file; persisted across processes; cleared by a clean build),
+`TestIngestionFailureIsNeverReportedHealthy` (real binary).
+**Rollback:** move the count back before the include check.
+**Reopen:** a traversal-cost problem on real trees within the cap.
+
+## ADR-032 — Stage B retrieves: advisory records need task evidence, and absence is reported
+
+**Date:** 2026-09-17
+**Status:** accepted
+**Context:** ARCHITECTURE §2 specifies Stage B as retrieval — "retrieve
+eligible candidates… rank by relevance… budget advisory records… compute
+unknowns" — and FR-034 requires task-material unknowns. The resolver instead
+scored eligible records and emitted *every* one of them. Reproduced with a
+two-record synthetic source: a question neither record addresses ("which
+database should the billing service use") returned both, with
+`completeness=complete` and no unknown, so an agent reading the pack could
+take unrelated personal guidance as context for the decision. With a small
+personal corpus every pack contained every entry.
+**Decision:**
+1. Records that always apply are never filtered by relevance: mandatory
+   constraints (trusted project policy; default-authority directives or
+   principles with high criticality) and globally applicable principles
+   (foundation-role records; principles with no task, workspace, path or
+   technology restriction).
+2. Every other record is advisory and enters the pack only with task
+   evidence: a task or workspace scope (Stage A already proved those match),
+   a named technology, or at least one shared content word. Content words
+   are whole normalized words — lower-cased, English function words and
+   generic request words ("should", "use", "choose", "best", …) removed,
+   inflections folded by a light stem — never substrings, so ubiquitous words
+   cannot create relevance. There is no score threshold.
+3. A record sharing a `decision_key` with a relevant record is retained: it
+   is an alternative for the same decision, so precedence and conflict
+   reporting still see it.
+4. Every relevance exclusion is a trace step (`relevance`, per record), so
+   `beme explain` shows what was left out and why.
+5. When no advisory record remains, the pack carries the unknown "No
+   recorded preference, precedent or guidance addresses this task" with
+   `proceed_with_assumption`, so absence of evidence is stated instead of
+   implied by an empty or principles-only pack.
+**Evidence:** `TestRetrievalDropsIrrelevantAdvisoryKeepsMandatoryAndPrinciples`,
+`TestRetrievalKeepsRelevantAdvisoryWithoutNoEvidenceUnknown` (including
+inflection matching), `TestGenericWordsDoNotCreateRelevance`,
+`TestScopedAndDecisionAlternativesAreRetained`; existing precedence, budget,
+determinism and unknowns tests unchanged. Evaluation arms: B2 still receives
+every eligible record; B4 now drops the fixture's irrelevant record, and its
+budget control uses long *relevant* records. Threat cases 9, 24 and S4 now
+resolve tasks about their own fixtures instead of relying on
+include-everything. Each rule was proved by reintroducing the old behavior
+(mutation log in the PR).
+**Alternatives rejected:** a numeric score cutoff (arbitrary, and it would
+also cut mandatory or scoped context that scores low); top-k selection (hides
+required context when many records apply, pads with irrelevant ones when few
+do); embeddings or model-based relevance (network and model dependency in a
+local, deterministic resolver).
+**Consequences:** retrieval is lexical — an entry phrased with different words
+than the task can be missed, and one shared topical word (for example
+"service") is enough to make an advisory record relevant. Unscoped principles
+appear in every pack by design; a principle that only applies to one domain
+should carry a task scope. The no-evidence unknown appears on many ordinary
+tasks, which is the honest state for a small corpus.
+**Rollback:** return `scored` unchanged from `retainRelevant` and drop the
+no-evidence unknown.
+**Reopen:** measured recall loss on the evaluation corpus (E5), or a need for
+semantic retrieval.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

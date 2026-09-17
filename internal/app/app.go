@@ -241,13 +241,16 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 			report.Skipped = append(report.Skipped, sd.SourceID+": profile not allowed")
 			continue
 		}
+		// From here the source is registered for this profile: anything that
+		// stops it contributing is a failure, reported and persisted so the
+		// deployment cannot look healthy over a source it never ingested.
 		if sd.Type != "git_repository" && sd.Type != "directory" {
-			report.Skipped = append(report.Skipped, sd.SourceID+": non-filesystem source (contract only in v1)")
+			report.fail(sd.SourceID, "non-filesystem source (contract only in v1)")
 			continue
 		}
 		files, err := walker.Walk(sd.Root, sd.Include, sd.Exclude)
 		if err != nil {
-			report.Skipped = append(report.Skipped, sd.SourceID+": "+err.Error())
+			report.fail(sd.SourceID, err.Error())
 			continue
 		}
 		recs := []contracts.Record{}
@@ -298,6 +301,14 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 	if err := store.SetMeta("build_generation", newOpaqueToken()); err != nil {
 		return nil, err
 	}
+	// The last build's source failures, read back by doctor.
+	failures, err := json.Marshal(report.Failed)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.SetMeta(buildFailuresMetaKey, string(failures)); err != nil {
+		return nil, err
+	}
 	report.SourcesIngested = ingestedIDs
 	return report, nil
 }
@@ -314,6 +325,24 @@ type BuildReport struct {
 	// PurgedObservationsErased counts restored copies of purged observation
 	// files the build erased.
 	PurgedObservationsErased int `json:"purged_observations_erased,omitempty"`
+	// Failed lists sources registered for this profile that contributed
+	// nothing because ingestion failed. A build with failures is persisted
+	// (the other sources still serve), reported, and makes doctor degraded
+	// until a build succeeds for every registered source.
+	Failed []SourceFailure `json:"failed,omitempty"`
+}
+
+// SourceFailure is one registered source that did not ingest.
+type SourceFailure struct {
+	SourceID string `json:"source_id"`
+	Reason   string `json:"reason"`
+}
+
+const buildFailuresMetaKey = "build_source_failures"
+
+func (r *BuildReport) fail(sourceID, reason string) {
+	r.Failed = append(r.Failed, SourceFailure{SourceID: sourceID, Reason: reason})
+	r.Skipped = append(r.Skipped, sourceID+": "+reason)
 }
 
 // Serve opens a projection store read-only and binds one immutable
