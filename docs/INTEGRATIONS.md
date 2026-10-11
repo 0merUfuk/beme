@@ -46,10 +46,10 @@ Tool surface (ADR-009, contract-tested):
 
 | Harness | Tier | Mechanism | Assurance (v1) |
 |---|---|---|---|
-| Codex | 1 | user-level `AGENTS.md` managed block + MCP + skill | advisory |
-| Claude Code | 1 | user-level `CLAUDE.md` managed block + MCP + hooks where supported | advisory |
-| Hermes | 2 | `AGENTS.md` block + `.agents/skills/beme` + MCP | advisory |
-| Cursor | 2 | `AGENTS.md` block + `.cursor/rules/beme.mdc` + MCP | advisory |
+| Codex | 1 | managed user-level `AGENTS.md` block; printed manual MCP example; optional manual skill template | advisory |
+| Claude Code | 1 | managed user-level `CLAUDE.md` block; printed manual MCP example; separate opt-in brain hooks | advisory |
+| Hermes | 2 | manual bootstrap/skill/MCP contract; no managed installer | advisory |
+| Cursor | 2 | manual bootstrap/rule/MCP contract; no managed installer | advisory |
 
 The `adapter` subcommand manages the bootstrap block for the harnesses whose
 instruction files it knows: `codex` or `claude-code`. The other rows describe the
@@ -59,6 +59,11 @@ documented contract; register those manually.
 (marker-delimited; unrelated config preserved; idempotent). MCP registration
 is printed for the operator to add — harness config files are user-owned and
 never silently edited outside the managed block.
+
+The V1 installer does not install/discover skills or print/configure prompt
+hooks. Optional templates and manual integration contracts must not be read as
+installer effects. The separate brain-hook installer is explicit and independent
+of `adapter install`.
 
 `assured` labeling requires a verified harness boundary resolving context
 before every material decision with measured 100% pre-decision use

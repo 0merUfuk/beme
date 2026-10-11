@@ -24,6 +24,7 @@ documentation test (2026-09-14), which FAILED the documentation gate:
 Exits 1 on any violation (CI gate).
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,10 +42,16 @@ PHASE_LIES = [
     r"gated behind WP2B", r"Blocked on user", r"Not authorized until WP2B",
     r"once WP4 implements it",
 ]
-scan_files = [ROOT / "README.md"] + sorted(
-    f for directory in ("docs", "examples", "evals")
-    for f in (ROOT / directory).rglob("*.md")
-)
+# Git's public inventory includes adapters/templates without opening ignored
+# private planning files or a developer's untracked notes. Final checks run
+# after intended new public paths are staged, and again in clean-checkout CI.
+tracked = subprocess.run(["git", "ls-files", "-z", "--", "*.md"], cwd=ROOT,
+                         check=True, capture_output=True, text=True)
+public_docs = [ROOT / path for path in tracked.stdout.split("\0") if path]
+if not public_docs:
+    raise SystemExit("documentation checks require the tracked public checkout")
+# Conditional agent guardrails and the changelog are not current phase prose.
+scan_files = [f for f in public_docs if f.name not in {"AGENTS.md", "CHANGELOG.md"}]
 violations = []
 for f in scan_files:
     text = f.read_text()
@@ -114,7 +121,7 @@ check("D4 validation bootstrap documented (venv, deps, version, commands)", not 
 
 # --- D5: relative link integrity
 broken = []
-doc_files = [ROOT / "AGENTS.md", *scan_files]
+doc_files = public_docs
 for f in doc_files:
     base = f.parent
     text = f.read_text()
@@ -328,6 +335,30 @@ for f in scan_files:
     for m in re.finditer(r"\$\(\s*mktemp\s+-d\s*\)", f.read_text()):
         d22.append(f"{f.relative_to(ROOT)} uses an implicit temporary root")
 check("D22 temporary recipes avoid implicit mktemp roots", not d22, "; ".join(d22))
+
+# --- D23: literal managed-adapter commands must target an implemented harness.
+adapter_source = (ROOT / "cmd" / "beme" / "adapter.go").read_text()
+target_function = re.search(r"^func targetFile\(.*?^}", adapter_source, re.M | re.S)
+supported = set(re.findall(r'^\s*case "([^"]+)":', target_function.group(0), re.M)) if target_function else set()
+d23 = [] if supported else ["managed adapter target inventory is unavailable"]
+for f in public_docs:
+    if f.name == "DECISIONS.md":
+        continue
+    for m in re.finditer(r'\bbeme(?:\s+brain)?\s+adapter\s+(?:install|remove|verify)\s+[\"\x27]?([A-Za-z][A-Za-z0-9_-]*)\b', f.read_text()):
+        if m.group(1) not in supported:
+            d23.append(f"{f.relative_to(ROOT)} advertises unsupported managed target {m.group(1)!r}")
+check("D23 documented managed-adapter targets exist", not d23, "; ".join(d23))
+
+# --- D24: design contracts/manual templates are not installer side effects.
+d24 = []
+for harness, boundary in (("cursor", "no managed installer"),
+                          ("hermes", "no managed installer"),
+                          ("codex", "does not install skills"),
+                          ("claude-code", "does not print prompt hooks")):
+    text = (ROOT / "adapters" / harness / "README.md").read_text().lower()
+    if boundary not in " ".join(text.split()):
+        d24.append(f"{harness} must distinguish {boundary}")
+check("D24 adapter guides state the actual installer boundary", not d24, "; ".join(d24))
 
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]

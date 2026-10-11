@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 21 — 2026-10-11
+**Revision:** 22 — 2026-10-11
 **Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
 publication preparation follows ADR-041. The separately authorized local rollout
 verified installed CLI and fresh configured MCP connections, not model use.
@@ -160,6 +160,26 @@ pairs as the release artifact matrix, with actual source-install and archive
 execution. A workflow regression binds those matrices and requires explicit
 native targets. It does not replace the tag-bound release gates or the owner
 merge boundary.
+
+**Native/docs follow-up at `0d86f0c`:** run
+[38167202919](https://github.com/0merUfuk/beme/actions/runs/38167202919)
+passed all five native source/archive targets, Linux/macOS full suites and the
+privacy scan. Windows full Go failed only the new delete-pending fixture's
+precondition: its initial exclusive create returned no error. The log did not
+report failures in the original twelve-event or permanent-ACL controls. Correct
+the fixture's established native state rather than weakening either invariant;
+that failed run remains RED evidence, not release acceptance.
+
+The independent reader also found an unsupported managed Cursor command in a
+secondary guide. Parent traced the shared target selector and replayed all four
+adapter names with the exact-source binary in disposable homes. Codex/Claude
+write only their instruction block and print the manual MCP example; they do
+not install skills or print prompt hooks. Cursor/Hermes refuse without writing.
+All adapter guides now distinguish these effects from manual contracts, and
+the docs gate scans the complete Git-tracked Markdown inventory, including
+adapters/templates. This corrects instructions, not adds another installer.
+Native fixture acceptance and corrected-revision fresh-reader acceptance remain
+required before publication.
 
 **Local installation:** the earlier accepted snapshot was installed through
 existing entrypoints with rollback copies. Installed CLI, a synthetic

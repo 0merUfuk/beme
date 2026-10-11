@@ -128,6 +128,10 @@ Live-model benefit and assured harness use remain unmeasured.
   never the owner bundle. Continuation/examples follow current implementation
   status, and documented temporary allocations respect the chosen scratch root;
   documentation regressions guard these fresh-reader findings.
+- Adapter guides no longer advertise a managed Cursor/Hermes installer or
+  automatic skill/prompt-hook effects the V1 CLI does not implement. The docs
+  gate includes tracked adapter/template guides and checks literal targets
+  against the CLI's actual selector.
 - Evaluation artifact names are now portable wire identifiers rather than host
   path spellings; malformed identifiers still fail closed. Immutable-bundle
   output protection recognizes filesystem aliases, including alternate casing.

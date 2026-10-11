@@ -1,9 +1,14 @@
-# Be Me — Hermes Adapter (Tier 2, documented)
+# Be Me — Hermes Integration (Tier 2, manual contract)
 
-Contract (blueprint §13.5), fixture-tested before being called supported:
+There is **no managed installer** for Hermes in this version. The managed CLI
+targets only Codex and Claude Code; see
+[the current integration boundary](../../docs/INTEGRATIONS.md#harness-adapters).
+The following describes proposed manual integration surfaces, not automatic
+installation or verified harness/model behavior (blueprint §13.5):
 
-- `AGENTS.md` bootstrap block (project-level) and `.agents/skills/beme`
-  skill for portable project integration.
+- An `AGENTS.md` bootstrap pointer at project level and a portable skill
+  template. Skill discovery/location must be verified against the installed
+  Hermes version; Be Me neither installs nor guarantees discovery of a skill.
 - Do NOT create `.hermes.md` merely for Be Me if it would shadow an existing
   project-context source.
 - `SOUL.md` stays limited to global identity/behavior with at most a tiny
@@ -13,5 +18,5 @@ Contract (blueprint §13.5), fixture-tested before being called supported:
 - Hermes memory is not the Be Me source of truth (ADR-003).
 
 MCP registration identical in shape to the Codex adapter (stdio,
-capability-bound). The Hermes MCP config is user-owned; the adapter
-installs only its managed bootstrap block.
+capability-bound). Hermes configuration and any manual bootstrap/skill edits
+are user-owned. This CLI does not edit them or verify a Hermes installation.
