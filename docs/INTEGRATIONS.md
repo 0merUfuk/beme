@@ -178,6 +178,8 @@ counts, not the transcript text, in `docs/ACCEPTANCE.md`.
 export BEME_PRIVATE_EVAL_DIR=/path/to/private/corpus     # never in the repo
 export BEME_EVAL_GIT_COMMIT="$(git rev-parse HEAD)"      # worktrees stamp the main checkout
 make validate-private                                     # schema check first
+# Use an owner-approved frozen CORPUS/split-manifest.json (or --split-manifest FILE).
+# Existing private freeze formats are not silently migrated; see EVALUATION_USAGE.md.
 go run ./cmd/beme-eval retrieval \
   --corpus "$BEME_PRIVATE_EVAL_DIR" --config "$BEME_CONFIG_HOME" \
   --out "$BEME_HOME/evidence" --json
@@ -190,12 +192,37 @@ go run ./cmd/beme-eval behavioral \
   --arms B0,B4 --repeats 3 --out "$BEME_HOME/evidence" --dry-run
 ```
 
-Exit codes follow `Summary.ExitCode`: 0 passed, 1 failed, 3 not_run (for
-example no corpus given), 2 usage.
+Exit codes: 0 requested retrieval/paired gates passed, 1 failed/invalid,
+3 not_run or grading_pending, 2 usage. Successful command generation is
+grading_pending, not a behavioral pass; import complete independent blinded
+grades with `grade-template` / `grade-import` before evaluating paired gates.
+Synthetic supplied ratings remain benefit not_run. See
+[EVALUATION_USAGE.md](EVALUATION_USAGE.md) for the full protocol.
 
 Evidence bundles stay outside the repository (ADR-023). Only `blinded/` is
-grader-visible; manifests record the observed model settings, prompt hashes
-and corpus revisions.
+grader-visible (plus an empty grade template); manifests record provider-declared
+model settings and actual prompt/corpus hashes. Network/provider declarations
+are not observed isolation. B3/B4 is a bundled pipeline contrast.
+
+## Second-brain integration (V2, ADR-033–035)
+
+`beme brain hooks` prints the `SessionStart`, `PreCompact` and `SessionEnd`
+fragment. `beme brain install-hooks --settings FILE --dry-run` previews an
+idempotent merge; `--remove` removes the managed brain commands. User/project
+settings are changed only by an explicit installer invocation. This source
+integration installs nothing and changes no harness approval policy.
+
+`SessionStart` calls `brain session-start --format claude-hook`; the other
+events call `brain doctor --quiet`. Hook-less adapters use
+`brain adapter install codex|claude-code`, with independent managed markers,
+to request `brain briefing --mode normal --doctor --record-session` at start and `brain doctor --quiet` at
+end. Plain `brain briefing` performs no writes. CLI capture and project
+registration do not add MCP tools or V1 source authority.
+
+Assurance is **advisory**: real-binary hook JSON tests do not prove a harness
+invokes the command or a model uses the content. No live harness/model test
+was run for this candidate. `make brain-live` can spend quota starting at
+stage 2; it is not part of public validation. Details: [`BRAIN.md`](BRAIN.md).
 
 ## Rifja (ADR-019)
 

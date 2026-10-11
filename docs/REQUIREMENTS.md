@@ -4,11 +4,37 @@
 > No requirement is "implemented" because a row exists; evidence links are the
 > production-code entry criteria. Update the Evidence column as work advances.
 
+**Integration qualification (2026-10-09):** existing rows describe implemented
+mechanisms and their listed tests, not whole-product acceptance. Independent
+audits reopened runtime/evaluation and brain correctness work, including
+false-success behavioral verdicts, restore, deduplication and scope failures.
+The combined source now includes the audit regressions and corrections
+(ADR-036–038). Independent review then reopened six adjacent brain findings and
+evaluator evidence/blinding integrity. The bounded corrective pass (ADR-039–040)
+adds exact regression and lifecycle evidence. Its final bounded review found
+one remaining BFR-006 overlapping-publication defect. Corrective cycle 2 changes
+only that accounting protocol and focused regressions; parent independent
+source-bound rechecks now pass. See HANDOFF §1 for exact
+synthetic gates. Installed use and human decision benefit remain unmeasured.
+
+**Corrective evidence (ADR-039–040):** FR-073/074 use
+`TestFinalBoundedBacklogKeepsLatestRecapture`,
+`TestCorrectionRecaptureStopsPendingRetirement`,
+`TestCorrectionCommittedMergeReceiptsSurviveManyRecaptures` and the unresolved
+retry-capacity test. FR-075/086 use `TestFinalOldGlobalOpenNeverBroadcastsIDs` and
+`TestCorrectionAllGlobalWarningPathsWithholdUnsupportedIDs`. FR-084 uses the
+actual generated chain in `TestBrainExplicitWrapperSurvivesGeneratedChain`.
+NFR-009 adds `TestFinalRepeatedRecapturesPublicLifecycleReadable` (800 real
+recaptures) and `TestCorrectionWriterRefusesUnreadableOutputWithoutReplacingLive`.
+NFR-001 evidence includes the evaluator semantic matrix, original grader controls
+and content-only reviewer-packet test; local engineering acceptance is complete,
+not installed-harness or human-benefit acceptance.
+
 **Legend:** Status — `defined` (contract only) · `planned` (design exists, no
 code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence).
 
 **Status counts** (derived from the rows below; CI-checked by
-`scripts/test_docs_consistency.py` D7): 63 rows — 59 implemented · 0 partial · 2 not-applicable-v1 · 2 active.
+`scripts/test_docs_consistency.py` D7): 83 rows — 77 implemented · 2 partial · 2 not-applicable-v1 · 2 active.
 
 ## Core and ownership
 
@@ -37,11 +63,11 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | ID | Requirement (summary) | Owner WP | Verification method | Evidence | Status |
 |---|---|---|---|---|---|
 | FR-020 | Only registered roots ingested | WP4 | Unregistered-root ingestion test | `internal/app` loads only `<config>/sources/`; walker walks registered roots only| implemented |
-| FR-021 | Ingestion never executes repository code/hooks/packages/macros/generated commands | WP4 | No-exec ingestion test (threat case 16) | Ingestion is pure file reading; zero `os/exec` imports in `internal/` (grep-verified)| implemented |
+| FR-021 | Ingestion never executes repository code/hooks/packages/macros/generated commands | WP4 | No-exec ingestion test (threat case 16) | Ingestion is pure file reading; no `os/exec` import in `internal/ingestion`. The explicit evaluator command provider is separate from ingestion.| implemented |
 | FR-022 | Real-path and symlink checks prevent escape from registered roots | WP4 | Symlink-escape fixtures | `TestSymlinkEscapeSkipped` + real-path containment in walker| implemented |
 | FR-023 | Secret/never-ingest paths and patterns excluded before indexing | WP4 | Secret-pattern fixtures (threat case 17) | `TestSecretScanBlocksCredentials` + `TestHardExcludesNeverIngested`| implemented |
 | FR-024 | Every derived item retains revision, locator, hash, transformation, trust ceiling, sensitivity | WP4 | Provenance round-trip test | Provenance records locator/revision/hash/transformation; `TestPutAndFetchRecords`| implemented |
-| FR-025 | Missing/moved/revoked/changed sources produce explicit stale/unavailable state | WP4 | Stale-state fixtures | doctor reports missing sources/roots as degraded with remediation; empty projection → stale_projection degradation (`Serve` + `doctor`)| implemented |
+| FR-025 | Missing/moved/revoked/changed sources produce explicit stale/unavailable state | WP4 | Stale-state fixtures | doctor reports missing sources/roots as degraded with remediation; `Session.Health` rereads failed-source metadata; partial packs incomplete, empty projections unavailable, missing/corrupt health stale (`TestPartialBuildDegradationSurvivesServingAndRecovery`)| implemented |
 | FR-026 | Source deletion/revocation invalidates derived indexes, caches, observations, authorized expansion refs | WP4/WP9 | Revoke lifecycle test (threat cases 10, 18, 24) | `Store.Tombstone` + durable ledger applied on every read and learning surface (ADR-027, ADR-030); `TestRevocationTombstone`, `TestForgetSurvivesRestoreAndCorruptRecovery`, `TestExpandItemIsPackBound` (expansion refused after revocation or rebuild), `TestRestoredObservationBackupStaysHidden` and `TestRestoredObservationHiddenOnCLI` (purged observations restored from a backup stay hidden and are erased by build); threat cases 10, 18, and 24 executed| implemented |
 
 ## Resolver and pack
@@ -50,13 +76,13 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 |---|---|---|---|---|---|
 | FR-030 | Policy/scope eligibility runs before retrieval and ranking | WP5 | Two-stage ordering test; eligibility-first trace assertions | `internal/policy` Stage-A runs before retrieval in `resolver.Resolve`; ADR-007| implemented |
 | FR-031 | Precedence is lexicographic by tier, not a single relevance score | WP5 | Precedence fixtures; deterministic tie-break tests | `resolvePrecedence` lexicographic tiers + stable ID tie-break; `TestProjectPolicyOutranksPersonalPreference`| implemented |
-| FR-032 | Resolver supports multiple task facets | WP5 | Multi-facet fixtures | `classifyFacets` multi-facet; facets echoed in pack| implemented |
+| FR-032 | Resolver supports multiple task facets | WP5 | Multi-facet fixtures | shared request derivation before Stage A; CLI/MCP/evaluation parity (`TestNaturalTaskFacetsReachScopedSource`, `TestRetrievalEvidenceBindsRiskAndHarness`)| implemented |
 | FR-033 | Resolver preserves resolved/shadowed/unresolved/stale-suspected/scope-separated conflict states | WP5 | Conflict-state fixtures | shadowed conflicts preserved in pack (`TestProjectPolicyOutranksPersonalPreference`); states enumerated in schema| implemented |
 | FR-034 | Resolver reports task-material unknowns and source/retrieval incompleteness | WP5 | Unknowns fixtures; completeness states | `deriveUnknowns` + `TestUnknownsNeverInvented` negative control| implemented |
 | FR-035 | Mandatory constraints/conflicts/unknowns/degradations never silently removed by budgeting | WP5 | Budget-truncation regression (threat case 14) | `TestMandatoryContentNotBudgetDropped` → incomplete + degradation, never silent omission| implemented |
-| FR-036 | ContextPack is versioned JSON with deterministic ordering and trace digest | WP5 | Pack snapshot stability tests | `TestDeterministicPacks` structural identity; pack schema versioned with trace_ref| implemented |
+| FR-036 | ContextPack is versioned JSON with deterministic ordering and trace digest | WP5 | Pack snapshot stability tests | `TestDeterministicPacks`, `TestParentMultiSourceProvenanceDeterminism`; real generated personal/work-safe/cache-failure schema test `TestGeneratedRuntimePackSchema`| implemented |
 | FR-037 | Harness renderers derive from the same canonical pack | WP5/WP8 | Renderer derivation tests | CLI human render + JSON come from one pack struct; no separate renderer state exists| implemented |
-| FR-038 | Explain output generated from the actual resolver trace | WP6 | Trace-explain equivalence test | `beme explain --trace` reads the persisted actual trace (FR-038 E2E verified)| implemented |
+| FR-038 | Explain output generated from the actual resolver trace | WP6 | Trace-explain equivalence test | `Session.Resolve` persists sanitized traces for CLI/MCP/evaluation; cache failure clears handle without blocking reads (`TestMCPSourceEvidenceTraceAndHealth`, `TestTraceFailureIsHonestAndReadStillServes`)| implemented |
 | FR-039 | Work-safe provenance is a safe scoped view; omits private identifiers, locators, paths, repo names, denied relationship metadata, correlatable hashes | WP5 | Safe-provenance regression (threat case 25) | work-safe provenance omits source IDs/revisions/hashes (`provenanceManifest`); task_summary echoes requester text only| implemented |
 
 ## Interfaces
@@ -94,6 +120,32 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | FR-064 | Schema and index migrations versioned, atomic, rollback-aware, tested | WP4 | Migration fixtures | `migrate.go` + `TestMigrationsFreshAndIdempotent`/`RollbackAndReapply`/`FailedMigrationLeavesPriorIntact`| implemented |
 | FR-065 | Corrupt operational state recoverable through rebuild without changing canonical sources | WP4/WP10 | Corruption-recovery test | `Wipe()` rebuild; doctor flags rebuild-needed; rebuild never touches sources| implemented |
 
+## Brain (V2 second brain, ADR-033)
+
+| ID | Requirement (summary) | Owner WP | Verification method | Evidence | Status |
+|---|---|---|---|---|---|
+| FR-070 | The brain vault is plain markdown/yaml, initialized idempotently; non-document files (code) are flagged, never ingested | WP12 | Vault init + foreign-file audit tests | `internal/brain` `Init`, `foreignFiles`; `TestDoctorFlagsCapOverlapLintForeignAndInvalid` | implemented |
+| FR-071 | Capture is selective: code, diffs, stack traces, secrets, transcripts, instruction-shaped text, and under-specified notes (a decision without its why) are refused | WP12 | Gate table test + positive controls | `TestGateRejectsWhatTheBrainMustNeverHold`, `TestGateAcceptsLegitimateNotes`; CLI exit 3 in `TestBrainSessionContinuityEndToEnd` | implemented |
+| FR-072 | Agents write proposals only; Brain Doctor is the sole promoter; capture never waits on maintenance | WP12 | Lock + inbox tests | `TestMaintenanceLockExcludesConcurrentDoctor`, `TestProposalFailingGateAtDoctorTimeIsRejectedNotPromoted` | implemented |
+| FR-073 | Doctor merges only conservative exact equivalence and supersedes by topic/capture chronology; paraphrases remain reviewable; validated decisions are protected | WP12 | Dedupe/supersede/conflict tests | `TestDoctorPreservesRewordedClaimsForReview`, `TestReliabilityScalarRevisionMustReplacePriorDecision`, `TestTopicSupersedesOldDecision`, `TestValidatedDecisionIsNeverSilentlyOverwritten` | implemented |
+| FR-074 | Doctor is idempotent, lock-protected, retries persisted partial mutations, supports dry-run, retains bounded summaries, and raises stateless hygiene flags | WP12 | Idempotence/dry-run/recovery/flag tests | `TestDoctorPromotesCleanProposalsAndIsIdempotent`, `TestDryRunWritesNothing`, `TestInterruptedPromotionIsRecovered`, `TestStaleLockIsBroken`, `TestSummaryRetentionKeepsNewestThree` | implemented |
+| FR-075 | The session briefing is bounded (≤ 9,000 bytes), scope-safe (matched project + global only), data-framed, single-line-sanitized, and never injects unsafe live notes | WP12 | Briefing tests | `TestBriefingCarriesDecisionsAndOpenWorkForItsProjectOnly`, `TestBriefingNeverInjectsUnsafeLiveNotesAndFlattensText`, `TestBriefingIsBounded` | implemented |
+| FR-076 | SessionStart injection works under a real harness and is fail-open; a clean session recalls decisions and open work | WP12 | Hook-contract tests + owner-run live recall | `TestBrainSessionContinuityEndToEnd` verifies the real binary and synthetic hook JSON; installed-harness execution, model-level recall and repeated real-task benefit are not_run for this candidate | partial |
+| FR-077 | Project resolution: longest real-path root, worktree via main checkout, ambiguity fails closed; registration is separate from the V1 workspace registry | WP12 | Resolution tests | `TestResolveProject`, `TestBrainRealWorktreeIdentity`, `TestOneWayWorktreeMarkerDoesNotGrantProjectScope`, `TestReliabilityFakeWorktreeMustNotAcquireProjectMemory`, `TestProjectRegistrationValidation` | implemented |
+| FR-078 | The vault follows the deployment-root isolation rule (ADR-026) | WP12 | Isolation e2e | `TestBrainRespectsDeploymentIsolation` | implemented |
+| FR-079 | Every Doctor run can be recorded as one git commit in the vault (reviewable diff); refuses non-repository vaults; no empty commits | WP12 | Git e2e | `TestBrainDoctorCommit` | implemented |
+| FR-080 | Append-only, greppable brain log records captures, promotions (with hash), retirements, snapshots, restores, freezes; a no-op run appends nothing; never injected | WP12 | Log tests | `TestLogIsAppendOnlyAndGreppable` | implemented |
+| FR-081 | Doctor snapshots once before its first mutation; snapshots are checksummed, retained (10), outside the vault, never overwritten; restore is verified, traversal/link-safe, and itself preceded by a snapshot | WP12 | Backup/restore tests incl. adversarial archives | `TestDoctorSnapshotsBeforeFirstMutationOnly`, `TestBackupRetention`, `TestRestoreRoundTripIsVerifiedAndReversible`, `TestRestoreRefusesTamperedOrUnverifiedArchives`, `TestRestoreRefusesTraversalAndLinks`, `TestBackupsWithinOneSecondDoNotOverwriteEachOther`, `TestListBackupsSurvivesCorruptSidecar` | implemented |
+| FR-082 | `freeze` locks every writer while reads work; unknown/refused/newer schema metadata cannot authorize writes | WP12 | Freeze/schema tests | `TestFreezeLocksEveryWriter`, `TestNewerSchemaIsNeverWrittenByOlderBinary`, `TestFinalPartialNewSchemaInitMustNotWrite`, `TestFinalUnreadableSchemaCannotAuthorizeWrites`, `TestCorrectionSchemaAbsenceIsNotInvalidity`; CLI in `TestBrainOperatorLifecycleEndToEnd` | implemented |
+| FR-083 | Vault guards: symlinked documents refused and flagged, private permissions, identity card screened like a note | WP12 | Guard tests | `TestSymlinksNeverEnterTheVaultOrABriefing`, `TestVaultFilesArePrivate`, `TestIdentityCardIsScreenedLikeAnyOtherInjectedText`; Unix permission bits tested, Windows ACL privacy not verified | partial |
+| FR-084 | Briefing modes normal/economy/manual (config `brain_mode` or `--mode`); `briefing` pulls the full text, as a true read by default, with best-effort `--doctor` | WP12 | Mode + read-only-sandbox tests | `TestModes`; config/flag path in `TestBrainOperatorLifecycleEndToEnd`; `TestBriefingIsReadOnlyUnderARealReadOnlySandbox` (ADR-035) | implemented |
+| FR-085 | Session-silence nudge distinguishes deduplicated identified sessions (512-ID window) from invocations; accepted capture resets counts or visibly marks accounting unknown; overlapping in-flight obligations cannot be erased by another reset; default reads do not account | WP12 | Nudge/degradation tests | `TestCaptureNudgeAfterSilentSessions`, `TestIdentifiedSessionAccountingIsIdempotent`, `TestConcurrentSessionInvocationsDoNotLoseUpdates`, unchanged `TestCorrectionAcceptedCaptureAccountingUnknownUntilReset`; `TestCaptureOverlapLatePublicationRemainsUnknown`, `TestCaptureOverlapThreeCompletionOrders`, `TestCaptureOverlapDelayedResetCannotEraseNewEvents`, `TestCaptureAccountingConcurrentStressPreservesPending`; observed unmodified public-CLI overlap RED→GREEN + safe recovery (HANDOFF §1); real hook JSON in `TestBrainOperatorLifecycleEndToEnd` | implemented |
+| FR-086 | Lint parity: aging, broken references, identity pointers, unsafe identity, contradictions; `doctor --strict` exits 1 on any flag; `status` reports the vault | WP12 | Lint + CLI tests | `TestExtendedLint`, `TestContradictionIsNotMergedAsDuplicate`; strict/status in `TestBrainOperatorLifecycleEndToEnd` | implemented |
+| FR-087 | Duplicate detection preserves all material content/rationale differences; summaries select the latest parsed capture instant | WP12 | Semantics tests | `TestContradictionIsNotMergedAsDuplicate`, `TestNewerSummaryIsNeverDroppedAsDuplicate` | implemented |
+| FR-088 | `install-hooks` merges idempotently into a Claude Code settings file preserving foreign settings and shapes (`.beme-bak`, `--remove`, `--dry-run`, refuses a go-run binary); a byte-exact instruction block serves hook-less harnesses; PreCompact hook | WP12 | Settings/adapter tests | `TestInstallSettingsHooksPreservesEverythingElse`, `TestInstallSettingsHooksEdgeCases`, `TestStripBrainHooksLeavesUnknownShapesAlone`, `TestInstallHooksRefusesTemporaryBinary`, `TestBrainAdapterBlockCoexistsWithV1BlockAndIsByteExact` | implemented |
+| FR-089 | Doctor + briefing has a synthetic latency regression target over 300 notes; production hook latency is measured separately | WP12 | Latency regression | `TestSessionStartLatencyAtScale`, `TestAuditRefsDoesNotParseTheWholeArchive`; no new production latency claim | implemented |
+
+
 ## Non-functional requirements
 
 | ID | Requirement (summary) | Verification method | Evidence | Status |
@@ -106,7 +158,7 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | NFR-006 Reversibility | Configuration, projection build, adapter install, candidate review, schema migration have rollback/rebuild paths | Rollback tests per area | Migrations rollback-aware; Wipe rebuild; adapter uninstall preserves; candidate review reversible| implemented |
 | NFR-007 Portability | macOS, Linux, and Windows verified by the full test suite in CI; released-binary behavior inside Windows harnesses stays unverified until tested | Platform matrix | Full Go test suite in CI on macOS, Ubuntu, and Windows (`test-windows` job, ADR-028); released-binary use inside Windows harnesses not exercised| implemented |
 | NFR-008 Performance | Interactive resolution targets sub-second on seed corpus after warm index; correctness gates outrank; budgets set at calibration | Benchmark evidence (WP10) | `internal/benchmark` + `cmd/beme-bench` (`make bench`); `evals/benchmarks/seed-baseline.json` — warm resolution p95 far below the 1 s target at 1×, 20×, and 200× seed scale| implemented |
-| NFR-009 Boundedness | File ingestion and context output enforce explicit size/time/depth limits | Bounds fixtures (threat case 29) | Ingestion Limits + `TestBoundsEnforced`| implemented |
+| NFR-009 Boundedness | File ingestion and context output enforce explicit size/time/depth limits | Bounds fixtures (threat case 29) | Ingestion Limits + `TestBoundsEnforced`; brain bounded regular-file/scoped scans, identity guards, archive limits (ADR-036)| implemented |
 | NFR-010 Maintainability | Domain logic independent of CLI, MCP, storage driver, harness adapter | Dependency-direction audit | `internal/` domain packages import no CLI/MCP/SDK (grep-verified); MCP SDK isolated to `cmd/beme`| implemented |
 | NFR-011 Extensibility | Source adapters and pack renderers have internal interfaces; no public plugin SDK in v1 | Interface tests | Source ingestion via descriptor; renderers derive from pack; no public SDK| implemented |
 | NFR-012 Documentation | A new implementation agent can execute each work package from repository docs without prior conversation access | Fresh-agent documentation test (release-candidate gate) | `docs/HANDOFF.md` | active |

@@ -173,19 +173,19 @@ test or command that exercises the real boundary), **implemented-unverified**,
 **out-of-scope**. Nothing moves to verified without recorded evidence, and no
 threshold is lowered here.
 
-Baseline for this revision: every open item below was first reproduced against
-PR head `6c5b7d7`, then fixed and re-verified at the current head. Each
-"verified" row names the test or command that exercises the real boundary;
-every new assertion was additionally proved by reintroducing the defect in a
-scratch copy (mutation evidence in PR #1).
+The 2026-10-09 combined candidate now contains source fixes and synthetic
+regressions for the independently reproduced runtime/evaluation and brain
+failures (ADR-036–038; EFFECTIVENESS_REVIEW.md). Current gates are in HANDOFF §1;
+final independent review is still required. Historical V1 continuation evidence
+below remains historical and does not establish current installed/live behavior.
 
 ### Readiness (reported independently)
 
 | Category | State | Evidence / blocker |
 |---|---|---|
-| Engineering ready for merge | yes | S1–S7, E1–E4, B1–B2 and D1 verified with mutation evidence; last product-code commit `c2ae7b9` has green three-platform CI including installed-binary smoke (run [35126605518](https://github.com/0merUfuk/beme/actions/runs/35126605518)); every review thread answered and resolved. Merging remains the owner's decision |
-| Release verification complete | no — owner decision only | P1–P5 are verified (P3 passed with zero improvisations at `c2ae7b9`); the only open item is P6, the owner decision to publish |
-| Personal effectiveness demonstrated | blocked | live-model evaluation (E6), private-corpus retrieval measurement (E5) and live-session pre-decision use (H3–H5) need owner approval; runnable procedures are prepared |
+| Engineering ready for merge | not approved — remediated source pending independent review | combined synthetic regressions and source-bound evidence must be independently accepted |
+| Release verification complete | no — independent and owner gates remain | historical P1–P5 results are not current installed/release acceptance |
+| Personal effectiveness demonstrated | not_run / unmeasured | truthful mechanisms and constructed grades are not separately approved real-task measurement |
 
 ### Safety and data-integrity invariants
 
@@ -205,17 +205,17 @@ scratch copy (mutation evidence in PR #1).
 |---|---|---|---|---|---|
 | E1 | Arms B0–B4 follow the contract (B1 real bootstrap; B2 all eligible, no selection/precedence/truncation; B3 pre-precedence retrieval without provenance) | every arm built from one session's `Session.EvalInputs` behind the same Stage-A gate; B1 uses the real managed bootstrap text (`internal/bootstrap`) | none | verified | `TestArmsReceiveExactlyTheirConstruction` (10 subtests), `TestSyntheticArmFixturePositiveControls`, `TestArmsCannotMutateEachOthersInput`, `TestBootstrapMatchesCanonicalAdapterText`; mutations M1–M2, M5, M7 of the evaluation set |
 | E2 | Ablations no-scope, no-provenance, no-unknowns, canonical-only, learned-only | all five implemented; no-scope refuses outside a synthetic, network-disabled deployment (`Runtime.NoScopeRefusal`); canonical-only is role-based and `not_run` on an unknown role | none | verified | `TestNoScopeRefusedOutsideSyntheticDeployments`, ablation assertions in `TestArmsReceiveExactlyTheirConstruction`; mutations M3–M4 of the evaluation set |
-| E3 | Manifests identify real model settings, prompts, corpus revisions, arm construction | observed provider settings, prompt and fixture hashes, corpus revisions and arm construction recorded; build-info versions reported honestly as `unknown` in test binaries | `BEME_EVAL_GIT_COMMIT` must be set for owner runs in a worktree (Go stamps the main checkout HEAD) | verified | `TestManifestsRecordObservedValues`; mutation M6 of the evaluation set |
+| E3 | Manifests identify real model settings, prompts, corpus revisions, arm construction | declared provider settings (not independently observed), actual prompt and fixture hashes, corpus revisions and arm construction recorded; build-info versions reported honestly as `unknown` in test binaries | `BEME_EVAL_GIT_COMMIT` must be set for owner runs in a worktree (Go stamps the main checkout HEAD) | verified | `TestManifestsRecordObservedValues`; mutation M6 of the evaluation set |
 | E4 | Blockers fail units; generated text reaches raw and blinded artifacts | `TestRunnerBlockerFailsUnitAndPreservesText` | none | verified | suite passes at the current head |
 | E5 | Retrieval recall ≥90% / precision ≥80% on the locked corpus (core alpha) | mechanism proven on synthetic fixtures; `beme-eval retrieval --corpus DIR --config DIR` runs it without a model | owner-authorized local run on the private corpus | blocked-approval | procedure in [INTEGRATIONS.md](INTEGRATIONS.md) "Owner-run procedure for the evaluation gates"; evidence bundle kept outside the repository |
-| E6 | Blind paired B4-vs-B0 and the trusted-beta behavioral gates | runner proven with deterministic mocks; `beme-eval behavioral … --provider command --command '…'` pipes prompts to an external harness CLI (`--dry-run` counts generations without running them) | paid live-model runs | blocked-approval | same procedure; §6 thresholds unchanged |
+| E6 | Blind paired B4-vs-B0 and the trusted-beta behavioral gates | command generation is grading_pending/exit 3; independent complete blinded grade import, separate safety blockers, whole-family intervals, high-risk and quality guards implemented (ADR-038) | independent review, then separately authorized live runs and endpoint-specific evidence | blocked-approval | synthetic no-op/high-risk/fabrication/invalid-grade controls fail and a constructed positive gate passes with benefit not_run; §6 thresholds unchanged |
 
 ### Benchmark, integration, platform, and documentation
 
 | ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
 |---|---|---|---|---|---|
 | B1 | Benchmark seed identifiers cannot escape owned dirs or inject metadata; explicit seed; accurate failure reporting | whole seed validated before anything is written (ID allowlist, Windows device names, enum and control-character checks, round-trip through the real parser, case-insensitive collisions); `--seed` required; cleanup and output-write failures surface in the exit code | Windows-specific ID cases verified on macOS only; three-platform CI covers the rest | verified | `internal/benchmark/seed_safety_test.go`, `cmd/beme-bench/{seed_flag,cleanup}_test.go`; 11 mutations caught |
-| B2 | NFR-008 measurement with environment conditions | `evals/benchmarks/seed-baseline.json` regenerated at the current head (darwin/arm64, go1.25.6, 14 cpus): warm resolve p95 0.30 / 5.65 / 27.20 ms at 1×, 20×, 200× against the 1 s target | re-measure per release commit | verified | `make bench` output recorded in the baseline file |
+| B2 | NFR-008 measurement with environment conditions | historical `evals/benchmarks/seed-baseline.json` (not overwritten by this integration) (darwin/arm64, go1.25.6, 14 cpus): warm resolve p95 0.30 / 5.65 / 27.20 ms at 1×, 20×, 200× against the 1 s target | re-measure per release commit | verified | `make bench` output recorded in the baseline file |
 | D1 | Diagnostics: doctor never downgrades `policy_blocked`; error labels and exit codes match failure classes; guard tests fail on traversal errors | severity-preserving `raise()`; explain maps trace→4, unusable ledger→3, other→1; guard propagates walk/read errors; `beme candidate --config` no longer falls back to the real deployment | none | verified | `TestDoctorKeepsMostSevereStatus`, `TestExplainErrorClasses`, `TestReadSurfaceGuardCatchesEvasions`, `TestRestoredObservationHiddenOnCLI`; mutations M13–M14 |
 | H1 | Harness configuration lifecycle (Claude Code, Codex) | re-run at the final head on 2026-09-16 against installed Claude Code 2.1.271 and Codex 0.154.0 in isolated config homes, no model calls: `TestClaudeCodeHarnessIntegration` (add → get → remove), `TestCodexHarnessIntegration` (add → list/doctor → remove), `TestAdapterInstallRemoveByteExact` | none | verified | `BEME_HARNESS_INTEGRATION=1 go test ./cmd/beme -run HarnessIntegration` — all pass |
 | H2 | MCP protocol connection | re-run at the final head on 2026-09-16: `TestMCPClientEndToEnd` (official Go MCP client against the real stdio server) and Claude Code reporting `Connected` for the spawned server | none | verified | same run; Codex has no model-free MCP health check, which is why its connection level stays unverified |
@@ -232,8 +232,10 @@ scratch copy (mutation evidence in PR #1).
 
 ### Consolidated approval request (owner decisions)
 
-Everything below is blocked only on an explicit owner decision; nothing here
-has been attempted. Each row states exactly what would run and what it costs.
+These owner decisions remain separate from independent candidate review.
+They are not the only remaining prerequisites. Do not deploy, merge or
+publish the remediated candidate before independent source-bound acceptance;
+the historical action menu below grants no authorization.
 
 | # | Decision | What runs | Cost / risk | Unblocks |
 |---|---|---|---|---|
@@ -274,3 +276,24 @@ happens only after personal data entered a shared pack; any source acquires a
 competing source of truth; agent-produced choices are learned as preferences
 without acceptance; completion is claimed from commands rather than verified
 outcomes.
+
+## 11. Integrated brain candidate (WP12, ADR-033–040)
+
+**Local engineering acceptance complete; live acceptance remains open:** restore, exact
+equivalence, chronology, verified worktree scope, mutation failure reporting,
+bounded reads and session-accounting regressions now exercise the corrected
+production paths. The original audit assertions and adjacent parent followups
+remain part of synthetic acceptance, not evidence of deployment or human benefit.
+
+Local deterministic and synthetic CLI evidence is tracked in HANDOFF §1:
+brain capture/Doctor/briefing, gate rejection, modes, read-only pull,
+backup/restore/freeze and managed-block coexistence. The same-binary regression
+also checks newer runtime positive/negative retrieval, work-safe separation,
+trace explain, durable forget/rebuild, and config isolation. Existing privacy
+corpus and B0–B4/ablation tests remain required; no acceptance threshold changes.
+
+Still **not_run** for this candidate: installed-harness invocation, live model
+recall/use, repeated real-task benefit, and deployment. The owner-run
+`make brain-live` can invoke a model starting at stage 2. Identified-session and invocation
+counters are not an effectiveness denominator. No `assured` label, beta
+acceptance, deployment or release follows from synthetic passing tests alone.

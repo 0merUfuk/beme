@@ -950,6 +950,408 @@ no-evidence unknown.
 **Reopen:** measured recall loss on the evaluation corpus (E5), or a need for
 semantic retrieval.
 
+## ADR-033 — V2 second brain: a writable, non-canonical work-memory vault with hook-driven session continuity
+
+**Date:** 2026-09-19 (adopted into the integrated candidate 2026-10-09)
+**Status:** accepted (YELLOW — user-directed V2 scope; ADR-001 not reopened)
+**Context:** V1 resolves personal principles and approved knowledge
+read-only from canonical sources. Nothing carried *work memory* across agent
+sessions — why an architecture was chosen, what is unfinished — so every new
+session started cold. The user directed a V2 with four requirements: session
+continuity by an automatic start mechanism, a lightweight hygiene loop that
+keeps only durable decisions, a hard "no code in the brain" separation, and a
+pragmatic (~1 day) MVP. The research dossier (Karpathy LLM-wiki, hook-based
+injection, selective persistence, Brain Doctor, coding/memory separation)
+converged on plain markdown + hooks + lint, and warned that agents writing
+their own mid-task output into long-term memory poisons it.
+**Decision:**
+1. **A brain vault** — plain markdown/yaml, Obsidian-readable, git-diffable —
+   is an **additional writable, non-canonical store** alongside the runtime's derived and enforcement stores. It is *non-canonical work memory*:
+   every note is `informational`, never enters the normative precedence tiers,
+   and can never override user instructions, project policy, or canonical
+   knowledge. It does not copy canonical sources (ADR-003): the identity card
+   holds a short role card and *pointers*.
+2. **Selective persistence.** Agents write *proposals* (`beme brain capture`,
+   at task completion, per the protocol injected at session start). A
+   deterministic gate refuses code, diffs, stack traces, secrets,
+   transcripts, instruction-shaped text, and under-specified notes (a
+   decision requires its `why`) — synchronously at capture and again inside
+   Doctor. Only **Brain Doctor** promotes proposals to live notes.
+3. **Brain Doctor** is a lightweight deterministic loop (no model calls):
+   promote/reject, merge reworded duplicates, supersede by `topic`, retain
+   the newest summaries, and raise stateless flags (conflict, overlap, stale
+   open items, cap of 30, lint, invalid, foreign file). A human-`validated`
+   decision is never silently overwritten — a conflicting proposal is
+   promoted alongside and flagged. Retired notes move to `archive/`;
+   nothing is destroyed except rejected proposals after 30 days. Runs are
+   lock-protected, idempotent, support `--dry-run`, and optionally
+   `--commit` to a vault git repository (the diff is the human review).
+4. **Session continuity by hooks.** `SessionStart` runs
+   `beme brain session-start --format claude-hook`: maintenance pass, then a
+   bounded (≤ 9,000 bytes; the test contract reserves headroom below 10,000) briefing
+   of identity, the project's latest summary, open work, decisions in force,
+   learnings, Doctor flags, and the capture protocol. It is **fail-open**
+   (a broken deployment degrades to one honest line, never blocks a session).
+   `SessionEnd` runs `beme brain doctor --quiet`. Adapters stay `advisory`
+   (FR-045/046 unchanged).
+5. **Scope safety.** A briefing carries only the resolved project plus
+   `global`; other projects are never mentioned. Projects are registered in
+   the vault (longest real-path root wins, linked git worktrees resolve
+   through their main checkout by file reads, ties fail closed), deliberately
+   *separate from the V1 trusted workspace registry* so a brain registration
+   can never widen V1 trust.
+6. **Non-changes:** the MCP surface stays exactly four tools (ADR-009);
+   no transcript ingestion (ADR-019 — the brain stores distilled outcomes,
+   not conversations); no embeddings (ADR-012); no `os/exec` in `internal/`
+   (FR-021 — git runs in `cmd/beme` only); no network (FR-060). The vault
+   follows the ADR-026 isolation rule (`brain_dir` defaults inside the data
+   dir; `BEME_BRAIN_HOME` never applies to an explicit config root).
+**Alternatives rejected:** LLM distillation of session transcripts (paid
+model calls, a second transcript importer against ADR-019, and the highest
+poisoning risk); agents writing live notes directly (memory poisoning, no
+review point); new MCP capture tools (breaks the ADR-009 contract; the CLI
+is already reachable and allow-listable); reusing the V1 workspace registry
+for projects (agent-runnable registration would widen V1 trust); indexing
+brain notes into V1 projections now (needs scope-narrowing ingestion
+changes; deferred, notes already carry `id`/`type` frontmatter so V1 can
+ingest them later); an idle-time background daemon (platform dependency —
+hooks plus a maintenance pass at both session boundaries need none).
+**Consequences:** notes are agent-authored and can be stale or wrong. That
+is mitigated, not eliminated: the briefing frames them as data and instructs
+verification against the repository; validated decisions are protected;
+every change is a reviewable git diff. Capture depends on the agent
+following the injected protocol (advisory) — there is no forced capture, so
+sessions that never capture leave no memory (the honest limit; evaluated separately by
+`scripts/brain_live_e2e.sh`). Briefing recall by a real model is owner-run
+evidence (paid/quota), recorded as `not_run` when unavailable (ADR-023
+semantics).
+**Rollback:** remove the hooks from harness settings; delete
+`internal/brain`, `cmd/beme/brain.go`, and the `brain` route in `main.go`.
+The vault remains ordinary markdown; `brain_dir` in `config.yaml` is
+optional and additive.
+**Reopen:** measured capture-compliance in live runs is too low (consider a
+`Stop`-hook nudge); a vault outgrows a few hundred notes (add FTS over the
+vault); pack integration with the V1 resolver is wanted (ingest brain notes
+as scope-narrowed `precedent` records); multi-user use.
+
+## ADR-034 — V2 completion: reference-parity hardening and the deliberate non-adoptions
+
+**Date:** 2026-09-19 (adopted into the integrated candidate 2026-10-09)
+**Status:** accepted (YELLOW — extends ADR-033; no ADR-001 change)
+**Context:** ADR-033 shipped the MVP from the research dossier. A second pass
+against the reference systems' primary sources (Karpathy's LLM-wiki gist,
+nanobrain, open-second-brain, avenoxbeyin) found mechanisms the dossier's
+summary omitted, and an independent review of the MVP found defects.
+**Decision — adopted** (each with tests, FR-080..089):
+1. **Append-only `log.md`** (Karpathy/nanobrain): `## [date] op | detail`, one
+   greppable line per capture/promotion (with content hash)/retirement/backup/
+   restore/freeze; never injected into a briefing.
+2. **Backup-first maintenance** (open-second-brain snapshots, nanobrain
+   checkpoints, Avenox backup-before-update): Doctor snapshots the vault once
+   before its first mutation of a run; snapshots are checksummed tar.gz files
+   in a sibling `<vault>.backups/` (never inside the vault or its git history),
+   newest 10 kept. `restore` verifies the checksum, refuses traversal/links/
+   oversized entries, and is itself preceded by a snapshot.
+3. **`freeze on|off`** (open-second-brain): locks every writer; reads and the
+   briefing keep working and say so. Restore stays possible while frozen.
+4. **Schema guard:** `brain.yaml` carries `schema_version`; a newer vault is never
+   written by an older binary. Engine updates never touch the vault (data lives
+   outside the binary), which is the Avenox update-without-overwriting-notes
+   guarantee.
+5. **Vault guards** (V1 FR-022 in the brain): symlinked notes are refused and
+   flagged; vault files are private (0700/0600); `identity.md` is screened for
+   secrets/instruction-shaped text like any note and withheld with a notice.
+6. **Modes** (Avenox normal/economy/manual): `brain_mode` in config or
+   `--mode`; economy ≤ 3,000 bytes, manual is a two-line pull pointer;
+   `beme brain briefing` pulls the full briefing (progressive disclosure).
+7. **Session-silence nudge:** the brain counts session starts per project since
+   the last capture and tells the agent when ≥ 2 recorded nothing — closing the
+   advisory-capture gap without a blocking `Stop` hook.
+8. **Lint parity** (Karpathy/nanobrain/open-second-brain hygiene): `aging`
+   (decisions/learnings untouched > 180 days), `broken_ref`, `identity_pointer`,
+   `identity_unsafe`, contradiction detection (negation-aware: an opposite claim
+   is never merged as a duplicate), `doctor --strict` for CI, and `status`.
+   Summaries always replace (latest state), never dedupe.
+9. **Harness integration:** `PreCompact` settles the vault before compaction
+   (the post-compaction `SessionStart` re-injects); `install-hooks` merges the
+   fragment idempotently into a Claude Code settings file (foreign settings
+   untouched, original kept as `.beme-bak`, `--remove`, `--dry-run`); a
+   byte-exact managed instruction block (`beme brain adapter`, own markers) serves
+   harnesses without hooks; Codex/Hermes/Cursor hook mechanics remain unverified.
+10. **Compounding synthesis** (Karpathy answer filing): the injected protocol
+    tells agents to capture the *distilled conclusion* of a durable analysis as
+    a `learning` — never the transcript.
+**Decision — deliberately not adopted:**
+- *LLM distillation of transcripts, an idle-time background daemon, a `Stop`-hook
+  raw queue* (nanobrain): paid model calls, a second transcript importer against
+  ADR-019, the highest memory-poisoning risk, and a platform daemon. Replaced by
+  agent-authored proposals + deterministic Doctor + the silence nudge. Reopen if
+  measured capture compliance stays low.
+- *Daily notes, rules, skills, reference documents as brain content* (Avenox):
+  the owner's direction is that the brain holds only architectural decisions,
+  work summaries, and experience; identity holds pointers, never copies.
+- *Hash-chained ledgers, per-write byte diffs* (open-second-brain): git history
+  (`--commit`) plus snapshots and the log give the audit trail at this scale.
+- *Vector/FTS search over the vault, wikilink graph builder*: ADR-012; the
+  note-count warning and generated index support small curated vaults; the
+  warning is not a hard storage or traversal limit.
+- *Brain notes inside V1 resolver packs:* deferred (privacy-corpus invariants
+  need scope-narrowing ingestion changes); nothing in the references requires it.
+**Consequences:** the brain is now reversible end to end (log, snapshots,
+restore, freeze) and its failure modes are visible (flags, nudge). The cost is
+more surface (`beme brain` has 16 verbs); each verb is small and covered by a
+real-binary test.
+**Rollback:** each capability is independent; removing one leaves ADR-033's
+core intact. **Reopen:** measured capture compliance too low; vault grows past a
+few hundred notes; Codex/Hermes expose a verified hook contract.
+
+## ADR-035 — `briefing` is a true read; hook-less adapters request maintenance explicitly
+
+**Date:** 2026-09-20 (adopted into the integrated candidate 2026-10-09)
+**Status:** accepted (GREEN — source bug fix, no product-boundary change)
+**Context:** A briefing routed through session-start attempts maintenance and
+lock-file creation. That prevents a read-only caller from consuming already
+promoted memory. Without hooks, captures also need an explicit maintenance
+invocation before they can appear in future briefings.
+**Decision:** Preserve the existing V2 separation: `brain briefing` performs
+no writes by default; `--doctor` opts into best-effort maintenance and reports
+a skipped pass without failing the read. `session-start` still attempts
+maintenance by default. The hook-less instruction block requests
+`briefing --doctor` at start and `doctor --quiet` at end; these are advisory
+instructions, not evidence that an agent actually executes them.
+**Alternatives rejected:** aliasing briefing to session-start (read requires
+write permission); promoting proposals during every read (same defect);
+adding new MCP tools or weakening a harness approval policy (out of scope).
+**Evidence:** `TestBriefingIsReadOnlyUnderARealReadOnlySandbox` exercises a
+synthetic vault with directory writes denied on Unix. The adopted CLI and
+adapter tests cover maintenance and block installation. No live harness,
+private deployment, or model-use acceptance is claimed for this candidate.
+**Consequences:** read-only briefings can be one maintenance cycle stale;
+notes remain informational and must be checked against current project state.
+**Rollback:** revert the separate briefing path and adapter instructions; the
+read-only failure would return. Existing Markdown notes remain readable.
+**Reopen:** a verified native hook replaces the advisory maintenance path.
+
+## ADR-036 — Brain correctness, bounded reads and honest session accounting
+
+**Date:** 2026-10-09 · **Status:** implemented; local independent review/recheck complete
+**Owner:** integration agent (YELLOW; user-authorized source/synthetic scope).
+**Supersedes:** ADR-033/034 fuzzy merging, chronology and invocation-count
+semantics; extends ADR-035 without changing its true-read default. Their
+historical text remains intact; this entry is the current correction.
+**Decision:** restore pins checksum-verified bytes and stages/validates all
+entries before retention/live replacement, with rollback on ordinary install
+errors. Exact content/rationale/topic equivalence alone is a recapture; changed
+claims remain versions/conflicts, never independent confirmations. Capture
+instants use RFC3339Nano; maintenance does not invent semantic freshness.
+Verified reciprocal Git metadata can alias registered roots; explicit roots
+win and forged metadata fails closed. Scope selection precedes bounded
+regular-file reads; identity/metadata use the same no-symlink reader. Global
+summary/open captures are rejected, legacy ones retained and flagged without
+broadcast. Read-only audits protect warnings before optional content.
+Mutation reports describe committed actions, failed retirements retain retry
+intent, and proposals publish with 128-bit random IDs plus atomic no-clobber.
+Registration/bookkeeping/init obey freeze/schema gates; dry-run needs no write
+lock. Hook/manual/protocol commands quote the selected executable and config;
+manual pull explicitly selects normal mode. Startup/resume/fork identities
+are deduplicated in a per-project 512-hash window, separately from unidentified
+invocations; hook-less accounting is explicit opt-in. Capture is not use.
+**Evidence:** brain reliability/equivalence/mutation/guard/state suites;
+`TestBrainReliabilityEndToEnd`, `TestBrainRealWorktreeIdentity`,
+`TestBrainHooksIncludeForkSource`; original parent-audit probes replayed outside
+the repository. HANDOFF §1 records current combined gates.
+**Alternatives rejected:** fuzzy confirmations, trusting a gitdir string,
+read-time maintenance/accounting, unbounded whole-vault reads, and implicit
+global fallback; each recreates an evidenced defect.
+**Consequences:** paraphrases may require review; old coarse timestamps cannot
+recover lost chronology. Restore is entry-wise, not power-loss-atomic; retain
+recovery directories. Same-user races and stalled filesystem syscalls are not
+OS-isolated. Evicted IDs can count again. No native harness/task benefit claim.
+**Reversibility:** source changes can be reverted independently; existing notes
+remain ordinary files. Do not restore unsafe merging or destructive restore
+ordering merely to recover old behavior.
+**Reopen:** reproducible loss/scope/boundedness failure, measured useful recall
+loss, or separately authorized native harness evidence.
+
+## ADR-037 — Production-path evidence, full-pack budgets and honest traces
+
+**Date:** 2026-10-09 · **Status:** implemented; local independent review/recheck complete
+**Owner:** integration agent (YELLOW); privacy boundaries unchanged.
+**Decision:** normalize actual Summary/Decision paragraphs, not navigation,
+headings, comments or fenced examples. Fences close only on the opening
+character with sufficient marker length and no trailing content (RF02).
+Bounded metadata can narrow applicability, never self-assign authority.
+Infer task facets before Stage A; explicit mismatches remain narrowing.
+Persist build-health classes and reread on every request. Admit advisory items
+by relevance across sections with full compact JSON byte/4 accounting;
+mandatory overflow never admits an unlimited tail. Unknowns and provenance
+reflect delivered compact items, including learned evidence.
+`Session.Resolve` records sanitized, policy-bound traces for every frontend;
+cache failure leaves reads working but clears the handle with reduced
+assurance. Retention is by age. Normalized records, source-byte provenance and
+effective policy bind snapshot identities. Work-safe withholds raw fingerprints;
+provenance order uses visible fields only (RF01).
+The pack schema gains exactly `policy_digest: "withheld"` and `trace_ref: ""`
+alternatives to its existing valid strings. Empty trace is emitted only for
+honestly reported persistence failure; generated personal/work-safe/cache-failure
+schema tests and invalid controls enforce the shared contract. Default preview/evaluator
+capability IDs now satisfy the unchanged capability regex; explicit labels are
+not silently normalized.
+**Evidence:** `TestGeneratedRuntimePackSchema`,
+`TestMCPSourceEvidenceTraceAndHealth`, `TestParentMultiSourceProvenanceDeterminism`,
+`TestWorkSafeProvenanceOrderUsesOnlyVisibleTuple`,
+`TestParentMarkdownMixedFencesDoNotReplaceSummary`, `TestMarkdownFenceBoundaries`,
+runtime budget/health/snapshot/trace suites, original external audit probes.
+**Alternatives rejected:** widening scope for recall, weakening fingerprint
+regexes, fabricating cache handles, and source-label hashes.
+**Consequences:** budgets are deterministic estimates, not model tokens;
+mandatory metadata may overflow with explicit incompleteness. Optional trace
+storage may be unavailable. Trace content still obeys current revocation.
+**Reversibility:** targeted source/schema rollback; rebuild derived indexes
+if snapshot format changes. **Reopen:** a changed-input hash collision in the
+contract, a denied-data leak, or a reproduced budget/observability mismatch.
+
+## ADR-038 — Frozen evaluation inputs and independent offline paired grades
+
+**Date:** 2026-10-09 · **Status:** mechanism implemented; live benefit `not_run`
+**Owner:** integration agent (YELLOW mechanism); corpus approval, independent
+judgments and paid/live execution remain owner-gated.
+**Decision:** validate JSON/YAML/YML, lifecycle, capability and exact corpus
+coverage; require an approved frozen byte/hash/family/split manifest before
+generation. Complete-request evaluation uses `RunRequest` →
+`EvalInputsRequest`; legacy task-only wrappers remain explicit and evidence
+records only forwarded fields. All delivered sections use `Pack.DeliveredItems`.
+Required/optional/forbidden labels, aliases and empty-gold controls have honest
+denominators; degraded retrieval fails instead of disappearing from coverage.
+Command generation is `grading_pending`/exit 3. Templates contain no judgments;
+complete blinded independent hash-bound grades and nonwaivable safety booleans
+are imported offline. Pair by case/repeat; report decision/reasoning separately,
+whole-family seeded bootstrap intervals, quality tolerance and high-risk
+pass→fail guards. Weak B0 may legitimately improve to a good B4. Synthetic
+ratings can pass machinery gates but never become measured benefit.
+Every run, including retrieval-only, preserves original corpus/split bytes,
+actual requests, eligible/delivered content and source/binary identities.
+B3/B4 remains a bundled comparison: B3 flat item-text estimates and B4 full
+JSON overhead differ. Provider/network/harness declarations are not observed
+isolation or release assurance.
+**Evidence:** evaluator corpus/split/evidence/grades/comparison/CLI tests,
+`TestRetrievalEvidenceBindsRiskAndHarness`, independent original audit probes and
+synthetic executable grade-import controls. Protocol: EVALUATION_USAGE.md.
+**Alternatives rejected:** default keyword behavioral verdicts, split labels
+without membership, silent YAML omission, averaging safety into scores, and
+calling model settings observed when only supplied by a provider.
+**Consequences:** existing private split formats require explicit owner
+adaptation; no automatic approval. Reviewer independence is declared, not
+identity authenticated. Hash/exclusive-write bundles are not tamper-proof
+against their owner. A paired endpoint alone is not all trusted-beta gates.
+**Reversibility:** API wrappers retained; old evidence remains historical,
+never relabeled as newly graded. **Reopen:** invalid evidence accepted, blinded
+condition leakage, or a reproducible gate false-success/false-failure.
+
+## ADR-039 — Close adjacent brain chronology, write-gate and bookkeeping failures
+
+**Date:** 2026-10-09 · **Status:** source correction accepted locally after independent recheck
+**Owner:** corrective-pass sole writer (YELLOW); no deployment or permission changes.
+**Decision:** retain the last semantic capture instant separately from maintenance
+updates, including conservative legacy recapture timestamps. Use it both for
+supersession and persisted-intent reconciliation across bounded inbox pages.
+Filter global warning identifiers by supported, safely read note scope, not
+warning kind. Strictly distinguish an absent legacy schema marker from an
+unreadable, linked, oversized, malformed, unknown or newer marker; inspect it
+before repairing even a partial vault. Completed merges retain archive receipts;
+only unresolved retry IDs remain on a live note, capped at 128 without evicting
+pending operations. Successful note writes must pass the production reader's
+format and 64 KiB bound. Carry explicit wrapper identity through manual pull,
+capture and its generated Doctor command. A lock-free accounting intent precedes
+publication; accepted capture with a failed reset stays accepted, with a warning
+and unknown counters, never an ordinary failure inviting duplicate retries.
+**Evidence:** original BFR-001..006 reproductions, the real 800-recapture
+Capture→Doctor lifecycle, `TestCorrection*`, and
+`TestBrainExplicitWrapperSurvivesGeneratedChain`. HANDOFF §1 records final gates.
+**Alternatives rejected:** Created-only ordering, warning-kind-only redaction,
+marker-error fallback to v1, lifetime retry lists or eviction of unresolved IDs,
+wrapper rediscovery via the executable, and failing a capture after publication.
+**Consequences:** older/ambiguous revisions stay reviewable; excessive unresolved
+cleanup delays more merges instead of inflating counts. A subsequent accepted
+capture can reconcile completed publications, but not interrupted/in-flight
+intents (see the corrective-cycle-2 amendment below). Old archive receipts remain ordinary
+files; no lifetime archive-growth or crash/power-loss isolation claim.
+**Reversibility:** scoped source rollback; preserve notes, receipts and prior
+evidence. Do not roll back to silent false acceptance or unavailable live notes.
+**Reopen:** a reproducible chronology, retry double-count, reader-validity,
+write-authorization, identifier-disclosure or accounting-truth counterexample.
+
+**Corrective-cycle-2 amendment (BFR-006 only):** independent review reproduced
+two overlapping CLI captures where the single shared marker let the second
+completion hide the first's late accepted publication and failed reset. Replace
+that last-writer-wins marker with up to 128 exclusive per-project intent slots.
+An owner appends completion only after publication. Reset acknowledges only a
+snapshot of completed slots, commits state, and reclaims those slots while still
+holding the accounting lock. File/allocation identity prevents an old delayed
+reset from acting on a reused slot; already-acknowledged resets leave newer
+events alone. A monotonic reset epoch and read-side snapshot recheck prevent
+combining old counters with newly cleared slots. Publication errors/collisions
+cancel only their own unaccepted attempt. No exported API, Doctor lock or
+global-project scan is introduced.
+
+**Alternatives rejected:** rewriting the same shared marker later (still racy),
+unbounded per-capture live files, expiring pending intents by age, or converting
+an accepted publication into an ordinary error. **Tradeoff:** full capacity
+refuses before publication; partial/interrupted/refused or legacy-mismatched
+intents remain conservatively unknown and require inspection after all writers
+stop. A later successful capture clears only completed obligations. Known legacy
+state remains readable; concurrent old/new writers and retroactive reconstruction
+of already-lost legacy obligations are not promised. Rollback must stop all writers
+and retain accounting evidence, not run an old binary that ignores new slots.
+
+**Evidence:** unchanged public-CLI two-process reproduction observed RED then
+GREEN, both hitting the real pause-before-publication boundary, with two accepted
+notes, warning/unknown/no false nudge and later safe recovery. Added
+`TestCaptureOverlapLatePublicationRemainsUnknown`, all six three-capture completion
+orders, delayed-reset/slot-reuse, collision/error, bounded interruption and
+concurrent stress controls; original sequential accounting test remains unchanged.
+This amendment does not reopen BFR-001..005, E1/E2 or runtime/RF01/RF02. Parent
+reviewed the new production delta and independently repeated the exact public-CLI
+interleaving, safe recovery and 20-repeat race run successfully. Local acceptance
+is recorded in HANDOFF §1; no deployment is authorized by that result.
+
+## ADR-040 — Reconcile evidence before grading; share a content-only reviewer packet
+
+**Date:** 2026-10-09 · **Status:** source correction accepted locally after independent recheck
+**Owner:** corrective-pass sole writer (YELLOW mechanism); owner still approves
+corpus, reviewers and live/paid execution.
+**Decision:** checksums are necessary but do not establish semantic consistency.
+Before template issuance, reviewer export or grade import, revalidate the stored
+corpus and frozen split, derive the selected population, require the exact
+configured case×arm×repeat matrix and artifact layout, and join raw text/prompts,
+arm key/construction, request, retained context, manifests, gold and summary.
+Reconstruct arm inputs from retained evidence; record repeat overrides and
+full-versus-legacy request mode explicitly. Old task-only/default-repeat bundles
+are checked as such, not relabeled as full requests. Reject invalid bootstrap
+settings normally, before analysis. A new `reviewer-packet` export is the only
+shareable review surface: one shuffled content-only JSON file carrying samples
+and the existing hash-bound grade template. The owner bundle, including `blinded/`,
+is not shared; its creation timestamps are not claimed normalized.
+**Evidence:** all seven original E1 mutations reject at template/import while
+original positive/mixed/regression controls retain their intended population;
+`TestReindexedContradictoryEvidenceRejectedBeforeTemplate`,
+`TestEveryConfiguredArmReconstructsForGrading`, repeat-override controls, and
+`TestReviewerPacketHasNoConditionOrderMetadata` (predictions recorded before labels).
+**Alternatives rejected:** checking only the reindexed hashes, inferring missing
+population from submitted grades, fixing only mtime while exposing birth times,
+or calling a directory blinded because its filenames are random.
+**Consequences:** incomplete or unreconstructible historical bundles cannot become
+gradeable by silently guessing configuration. These checks reject contradictory
+pre-anchor bundles, not a malicious owner's wholly consistent fabrication; keep
+the original index digest independently. Nonwaiver/completeness covers **the
+reviewers supplied to this import**, not a frozen expected roster. Reviewer-specific
+versions are recorded, not preauthorized by a frozen version set. Authentication
+and roster enforcement are not claimed. Answer wording can still suggest an arm.
+**Reversibility:** existing grade format/hash anchors remain; retain old evidence
+as historical, export a new reviewer packet without changing its source bundle.
+**Reopen:** contradictory evidence becomes gradeable, metadata predicts condition
+order on the actual shared packet, or separately authorized roster requirements.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

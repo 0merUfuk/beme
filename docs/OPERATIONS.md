@@ -226,6 +226,25 @@ beme candidate review obs_xxxxxxxx --action reject --note "reason"
 # repository's proposal path. Be Me never writes canonical knowledge.
 ```
 
+## Brain (V2)
+
+See [`BRAIN.md`](BRAIN.md) for the inherited CLI, operator flow and limits.
+`brain_dir` defaults to `<data>/brain`; an explicit `--config DIR` ignores
+`BEME_BRAIN_HOME` and defaults inside that deployment. `brain_mode` selects
+`normal`, `economy` or `manual`. V1 operations do not initialize the vault.
+
+Use `beme brain init`, register a project with `brain project add`, submit
+outcomes with `brain capture`, and promote with `brain doctor`. A plain
+`brain briefing` is read-only; `--doctor` requests best-effort maintenance.
+`brain backup|restore|freeze` manages the independent vault. V1 `forget` and
+`purge` do **not** erase brain notes, archives, logs or snapshots; do not
+mistake the runtime ledger's guarantees for a brain-erasure guarantee.
+
+Build `./cmd/beme` once for both runtime and brain use; no separate legacy
+brain binary is required. Upgrading the executable does not migrate or edit
+existing vault data. Review hook/config changes before installing anything;
+this candidate has not been deployed.
+
 ## Recovery
 
 - Projection stores are derived and rebuildable: delete them and re-run

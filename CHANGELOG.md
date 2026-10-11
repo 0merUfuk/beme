@@ -5,6 +5,19 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 ## [Unreleased]
 
 ### Added
+- Effectiveness remediation (ADR-036–038): strict frozen corpus/split binding,
+  immutable retrieval evidence, independent offline grade import/adjudication,
+  paired quality/high-risk/safety gates, and pending generation rather than
+  automatic behavioral success. Synthetic judgments never establish benefit.
+- Generated personal/work-safe/cache-failure schema regressions, parent RF01/RF02
+  controls, complete-request evaluator integration and shared-doc drift guards.
+- Existing V2 brain functionality integrated into the newer runtime's `beme`
+  executable: capture gate, Doctor, Markdown vault, bounded briefing, modes,
+  log/snapshots/restore/freeze and optional harness integration (ADR-033–035).
+  V1 privacy enforcement, purge, diagnostics, relevance and evaluation arms
+  remain intact. Brain notes are not injected into V1 ContextPacks.
+- Same-binary synthetic continuity/runtime regression and ADR-collision doc
+  check. Historical deployment and model results are not candidate acceptance.
 - **Upgrade/downgrade:** legacy keys and schema-2 ledgers migrate in place on
   the next ledger write. Downgrading to a pre-schema-3 binary afterwards is
   unsupported — it fails closed on the upgraded ledger, and no downgrade

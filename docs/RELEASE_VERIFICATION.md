@@ -93,7 +93,9 @@ beme doctor --json --config "$BEME_CONFIG_HOME"
 >   all eligible records for B2, pre-precedence retrieval without provenance
 >   for B3); the no-scope and canonical-only ablations are implemented, with
 >   no-scope refusing to run outside a synthetic deployment; manifests record
->   observed model settings, prompt and corpus hashes. New `beme-eval` CLI.
+>   provider-declared model settings and actual prompt/corpus hashes. The current
+>   `beme-eval` requires frozen splits and independent offline grades; generation
+>   alone stays grading_pending (ADR-038).
 >
 > **Benchmark and CLI**
 > - `beme-bench` requires `--seed`, validates seed identifiers and metadata

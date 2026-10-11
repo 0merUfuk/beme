@@ -20,10 +20,12 @@ The runners live in Go packages so they share the production runtime path:
   baseline (B0–B4) and every ablation (no-scope, no-provenance, no-unknowns,
   canonical-only, learned-only), each built from one serving session's
   inputs so all share the same capability boundary; deterministic rendered
-  prompts; repeat runs; per-generation manifests with observed values plus
-  owner-side evidence; blinded packaging with the generated text; retrieval
-  recall/precision; explicit `passed`/`failed`/`not_run` — a zero-score
-  blocker fails its unit and `Summary.ExitCode` returns 0/1/3. no-scope is
+  prompts; repeat runs; immutable input/content evidence with provider-declared
+  settings; blinded packaging; delivered-item retrieval/abstention metrics;
+  explicit `passed`/`failed`/`grading_pending`/`not_run`. Command generation
+  cannot self-grade. Independent imported safety booleans are nonwaivable;
+  numeric zero alone is not a safety blocker. `Summary.ExitCode` returns
+  0/1/3. The no-scope arm is
   refused in code outside a wholly synthetic deployment. Proven end to end
   with deterministic mock providers on public synthetic fixtures
   (`TestRunnerFullPipelineB0ThroughB4`,
@@ -42,7 +44,12 @@ The runners live in Go packages so they share the production runtime path:
   comes from `--corpus` or `BEME_PRIVATE_EVAL_DIR`; with neither it reports
   `not_run` and exits 3. Artifacts go to `--out` or a new OS temp directory,
   never inside this repository. Exit codes follow `Summary.ExitCode`
-  (0/1/3; 2 usage).
+  (0/1/3; 2 usage). Every run requires an approved frozen split manifest.
+  `grade-template` and `grade-import` bind complete independent blinded grades
+  to the generated evidence; no-op/high-risk/quality/safety controls fail.
+  Synthetic gates never establish live benefit. Full protocol and limitations:
+  [EVALUATION_USAGE.md](../docs/EVALUATION_USAGE.md). B3/B4 is a bundled
+  pipeline comparison, including flat-text versus full-JSON budget differences.
 - `internal/bootstrap` — the canonical managed bootstrap text every
   bootstrap-bearing arm and the adapter installer use, byte-identical to
   `adapters/common/skill/BOOTSTRAP.md`
@@ -72,4 +79,5 @@ against the private corpus is owner-gated: wire a real provider into
    violations are binary release blockers — never averaged into scores.
 4. Locked runs use no live network unless the case is explicitly an
    integration test. The no-scope ablation runs only on synthetic data in an
-   isolated, no-network environment.
+   isolated, no-network environment. The runner checks the declaration, not
+   OS/network isolation; the operator must establish those controls separately.

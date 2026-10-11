@@ -250,6 +250,46 @@ check("D14 no unqualified crash-safety claims", not d14, "; ".join(d14[:4]))
 unreleased = re.findall(r"^## \[Unreleased\]", (ROOT / "CHANGELOG.md").read_text(), re.M)
 check("D15 CHANGELOG has a single Unreleased section", len(unreleased) <= 1, f"{len(unreleased)} Unreleased headings")
 
+# --- D16: integrating brain must not reuse the runtime's ratified ADR IDs.
+decisions = (ROOT / "docs" / "DECISIONS.md").read_text()
+adr_rows = re.findall(r"^## ADR-(\d{3}) — (.+)$", decisions, re.M)
+adr_ids = [number for number, _ in adr_rows]
+d16 = [f"duplicate ADR-{number}" for number in sorted(set(adr_ids)) if adr_ids.count(number) > 1]
+if (ROOT / "internal" / "brain" / "note.go").exists():
+    titles = dict(adr_rows)
+    for number, title in {"033": "V2 second brain", "034": "V2 completion", "035": "`briefing` is a true read"}.items():
+        if not titles.get(number, "").startswith(title):
+            d16.append(f"ADR-{number} must record {title}")
+check("D16 ADR IDs unique; brain decisions do not collide with runtime decisions", not d16, "; ".join(d16))
+
+# --- D17: current integration status must not inherit historical blockers.
+current_handoff = handoff.split("## 1. Status", 1)[1].split("### Historical", 1)[0]
+current_brain = (ROOT / "docs" / "BRAIN.md").read_text()
+d17 = []
+for name, text in [("README", readme), ("HANDOFF current", current_handoff), ("BRAIN", current_brain)]:
+    for phrase in ["integrated baseline pending remediation", "No remediation, installation", "No remediation was attempted here"]:
+        if phrase.lower() in text.lower():
+            d17.append(f"{name}: stale current claim {phrase}")
+if "independent review" not in current_handoff.lower() or "not_run" not in current_handoff:
+    d17.append("current status must separate independent review and unrun live gates")
+check("D17 current synthetic remediation status and live gates distinct", not d17, "; ".join(d17))
+
+# --- D18: generation is not grading or benefit; B3/B4 remains bundled.
+usage_eval = (ROOT / "docs" / "EVALUATION_USAGE.md").read_text()
+d18 = [word for word in ["grading_pending", "grade-import", "split-manifest", "bundled pipeline", "benefit: not_run"] if word not in usage_eval]
+check("D18 evaluation documents pending grades, frozen splits and bundled contrast", not d18, str(d18))
+
+# --- D19: cross-lane contracts must describe the implementation, not old V2.
+architecture = (ROOT / "docs" / "ARCHITECTURE.md").read_text()
+d19 = []
+for word in ["exact equivalence", "512", "invocations", "--mode normal"]:
+    if word not in current_brain:
+        d19.append(f"BRAIN missing {word}")
+for word in ["compact JSON", "withheld", "trace_ref", "risk/harness"]:
+    if word not in architecture:
+        d19.append(f"ARCHITECTURE missing {word}")
+check("D19 shared brain/runtime/evaluator contracts stay reconciled", not d19, "; ".join(d19))
+
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]
 print(f"\n{passed}/{len(results)} documentation-consistency checks passed")

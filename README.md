@@ -29,6 +29,22 @@ inspectable `ContextPack` objects for AI coding agents.
   continuity tooling — Be Me reads them through adapters and never takes
   ownership.
 
+## V2: second brain (unreleased)
+
+The same `beme` executable now includes the existing V2 plain-Markdown work
+memory: decisions, open work, summaries and learnings; gated capture, Brain
+Doctor, snapshots/restore/freeze, bounded briefings and optional harness hooks.
+Notes remain non-canonical and **do not enter V1 ContextPacks**. The newer
+runtime, privacy ledger, retrieval and evaluation tooling are preserved.
+See [`docs/BRAIN.md`](docs/BRAIN.md), ADR-033–035, and
+[`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for candidate verification and limits.
+This is a **locally verified source candidate**, not an installed deployment
+or release. Independent review and parent production-path replays closed the
+tracked audit defects, including two corrective cycles (ADR-036–040).
+Generated answers remain `grading_pending` until independent grade import;
+synthetic grades never establish live benefit. See
+[`EVALUATION_USAGE.md`](docs/EVALUATION_USAGE.md) for the frozen-split and grading protocol.
+
 ## Status
 
 **Alpha.** `v0.1.0-alpha.1` is released: contracts, runtime, narrow MCP

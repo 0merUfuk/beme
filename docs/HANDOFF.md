@@ -1,24 +1,13 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 14 — 2026-09-16
-**Position:** `v0.1.0-alpha.1` published. Continuation work is on branch
-`feat/eval-runner-and-privacy-corpus`, PR
-[#1](https://github.com/0merUfuk/beme/pull/1). Every safely implementable
-prerequisite from the owner's 14-item continuation list is implemented and
-verified: the evaluation runner (now with retrieval recall/precision); the
-privacy threat corpus with all 30 §19 cases executed and passing (none
-`not_run`); the physical-purge workflow and durable tombstone ledger
-(ADR-027); the NFR-008 benchmark harness with a measured seed baseline;
-Windows CI runtime verification with per-OS directories (ADR-028);
-installed-harness integration tests at four explicit verification levels;
-and the requirements/docs reconciliation with an expanded docs-consistency
-gate (D1–D9).
+**Revision:** 18 — 2026-10-09
+**Position:** local engineering acceptance complete — not deployed or released. V2 brain
+is integrated onto the newer public PR2 runtime; no commit, push, merge,
+installation, hook/settings change or deployment is part of this pass.
+Canonical current status and fresh candidate evidence are in §1. Prior
+continuation/release results below are historical, not candidate acceptance.
 
-Remaining work is owner-gated only (ACCEPTANCE §7a): live-model B4-vs-B0
-behavioral evaluation (paid API runs); private-corpus retrieval measurement
-(owner-run, ADR-023); pre-decision-use measurement in live harness sessions
-before any `assured` label; running a physical purge on real data (RED);
-non-alpha release approval.
+### Historical V1 continuation notes
 
 **Rev 12 — purge reliability (owner review blockers, PR #1 not to be
 merged until the owner says so):** projection purge now removes provenance
@@ -82,13 +71,248 @@ passed the fresh-checkout onboarding test (P3) with zero improvisations,
 performed by an independent agent on that exact commit. Later commits are
 evidence-only (documentation). PR #1 is open and unmerged by owner
 instruction; every review thread is answered and resolved. Nothing is tagged
-or published, and no real user data was touched. What remains is owner-gated
-only — the decisions in [ACCEPTANCE.md](ACCEPTANCE.md) §7a "Consolidated
-approval request"; no engineering item is open.
+or published, and no real user data was touched. This historical continuation
+record does not establish current readiness: the 2026-10-09 independent audits
+reopened deterministic engineering work before any owner-run evaluation or
+release decision (see §1).
 
 ## 1. Status
 
-**Current (rev 13):** PR #1 is open against `main`, unmerged at the owner's
+**Current (2026-10-09): corrective-cycle-2 candidate; parent independent review and local acceptance complete.**
+The bounded final review and parent both reproduced one remaining BFR-006
+overlap on the first corrective seal: A paused after intent, B completed, two
+starts were recorded, then A published but failed its reset. Both notes survived,
+yet the shared marker hid A's uncertainty and allowed a false silence nudge.
+Only accounting, its focused tests and these truth documents change in cycle 2;
+BFR-001..005, E1/E2, runtime/RF01/RF02 and existing tests remain byte-preserved.
+
+ADR-039's cycle-2 amendment records bounded independent publication obligations,
+completed-only reconciliation and delayed-reset/slot-reuse handling. Pending or
+interrupted intents are never acknowledged merely because another capture
+finished. Default reads remain write-free and fail unknown on inconsistent
+state/intent snapshots. Capture remains independent of Doctor's lock. Full
+intent capacity refuses before publication; interrupted/legacy-mismatched
+bookkeeping requires quiescent inspection, not fabricated precision.
+
+Fresh cycle-2 evidence (local macOS arm64; fresh synthetic HOME/TMPDIR/BEME
+roots, offline caches, host Git configuration and signing disabled):
+
+| Gate | Observed cycle-2 result |
+|---|---|
+| Original unmodified public-CLI overlapping-capture reproduction | RED then GREEN; both runs observed the real pause-before-publication boundary on the first attempt; A exit 0 + warning, both accepted notes survive; GREEN reports unknown and suppresses the false nudge |
+| Public-CLI recovery and read-only control | repeated briefing/status preserve bytes and metadata; a later accepted capture reconciles completed obligations, restores known zero counters, and all three notes survive |
+| New deterministic adjacent accounting tests | 8 top-level tests / 20 passing events: all six three-capture completion orders, delayed reset and slot reuse, per-attempt collision cancellation, publication failure, capacity/interruption/refused-file bounds, and concurrent stress |
+| Repeated scheduling/concurrency race run | 20 repetitions; 200 passing events / 80 top-level executions, no race report |
+| `go test -json -count=1 -timeout=300s ./...` | exit 0; 542 passing test/subtest events, 343 top-level tests, 18 passing packages; 2 installed Claude Code/Codex tests intentionally skip |
+| `go test -race -count=1 -timeout=300s ./internal/brain ./cmd/beme` | exit 0; no race report; includes unchanged sequential accepted/unknown/reset regression |
+| Original BFR tests and CLI | original Go assertions replayed unchanged as replacement overlay: 15 top-level / 39 passing events; existing quoted-command property adaptation retained, CLI 11/11 |
+| Evaluator/runtime no-drift smoke | unchanged 37-command built-binary acceptance passes; all 14 retained E1 invalid operations reject normally; positive/mixed/regression controls preserve denominator 20 and benefit `not_run` |
+| Public/static gates | `make validate`: 19 passed/0 failed; docs 19/19, CI separation 7/7; build, vet, fmt, diff check and private scan exit 0 |
+| Linux/Windows cross-builds | exit 0; not native execution evidence |
+
+Exact new source hashes, the narrow delta versus the frozen 232-file baseline,
+full uncommitted patch, command logs and repeated `-trimpath` binary comparisons
+are in the external cycle-2 receipt. The concurrency probe changes only the
+marker observation path; no product pause hook or test bypass was added. Its
+missed-pause exit cannot count as success. The first adjacent-control run had a
+fixture-only entry-count error (`inbox/rejected/` is not a proposal); the failed
+receipt is retained and corrected checks count actual note files.
+
+**Parent acceptance:** all 233 source files and all 244 packaged file entries
+were hash-verified against the delivered cycle-2 seal. Parent reviewed the two
+changed production files and focused scheduling tests, then independently reran
+the full suite (542 passing events / 343 top-level tests / 18 packages), original
+15 Go and 11 CLI regressions, all 14 malformed-evidence rejections and original
+positive/mixed/regression controls. The public-CLI concurrency probe hit its real
+pause boundary, preserved both accepted notes, marked accounting unknown and
+suppressed the false nudge; subsequent safe recovery preserved all three notes.
+Read-only calls preserved bytes and metadata. The 20-repeat concurrency race run
+also passed. `make validate` returned `19 passed, 0 failed`; docs, CI separation,
+private scan, vet and fmt passed. Final closure edits are documentation-only and
+are separately sealed; product code/tests and exercised executable bytes remain
+unchanged. The final external receipt binds these identities and reused evidence.
+
+**Not claimed / not_run:** installed or native harness/fork delivery,
+live/private-corpus/model benefit, power-loss
+transactionality, hostile same-user isolation, mixed-version concurrent writers,
+retroactive reconstruction of lost legacy obligations, or native Linux/Windows
+runtime acceptance. No staging, product commit, push, PR, merge, installation,
+real vault/settings/credentials access, network/model/paid call or release occurred.
+No confirmed blocker remains in the reviewed deterministic scope. Publication,
+controlled deployment and real effectiveness measurement are separate steps;
+passing this gate neither performs nor authorizes them. No new PR was created.
+
+### Historical first corrective pass (superseded by cycle 2 above)
+
+**First corrective candidate (2026-10-09; final review reopened BFR-006 overlap).**
+The first integrated seal was independently rejected on six adjacent brain
+findings (BFR-001..006) and evaluator E1/E2. ADR-039–040 record that first bounded
+corrective pass. Earlier green counts below are preserved as historical evidence,
+not retroactive acceptance. Runtime/ingestion/RF01/RF02, platform adaptations and
+config-only APIs remain intact; there was no product Git write, deployment,
+settings/vault change, credential access, network/model call or release.
+
+Fresh synthetic results on the corrected source (local macOS arm64, isolated
+HOME/TMPDIR/config, offline Go modules and disabled host Git config/signing):
+
+| Gate | Observed corrective-pass result |
+|---|---|
+| `go test -count=1 -json -timeout=240s ./...` | exit 0; 522 passing test/subtest events, 335 top-level tests, 18 passing packages; 2 installed Claude Code/Codex tests intentionally skip |
+| Targeted races across brain/app/ingestion/projection/resolver/evalrunner and both CLIs | exit 0; no race report, including the real 800-recapture lifecycle |
+| Original BFR Go and generated-command regressions | original core failures now pass; CLI 11/11 after replacing a raw quoted-path substring check with exact shell-decoded executable identity; the original false-negative log is retained |
+| BFR adjacent controls | delayed/paginated recapture and retirement retry, all global warning paths, malformed/absent schema, 128 unresolved retry capacity, old receipt replay, writer bounds and accepted/unknown accounting pass |
+| Original E1 bundles at template and import | all 14 invalid-evidence assertions reject normally; bootstrap zero no longer panics; original positive/mixed/regression controls retain 20 pairs (mixed: 6 wins/14 losses) |
+| Evaluator malformed-bundle matrix and configured-arm controls | 24 template mutation cases pass; configured repeat overrides and all ten arms reconstruct; original anchored-grade rejection and independent positive/safety/nonregression controls pass |
+| E2 actual shared surface | standalone shuffled reviewer packet, no per-sample filesystem metadata; metadata-only predictions written before labels: 16/40 correct versus 40/40 on the old owner directory; packet-based grades remain hash-bound |
+| Combined built CLI acceptance | 37 checked commands pass, including pending/import/high-risk/quality/blocker controls; original generation bundle unchanged; benefit `not_run` |
+| Build, vet, fmt, public validation, CI separation and private scan | exit 0; `make validate`: 19 passed/0 failed; CI separation 7/7; clean scan |
+| Original parent audit overlay, privacy corpus and benchmark | pass; threat corpus 34/34; seed warm-p95 within target at all scales; benchmark output external only |
+| Linux/Windows cross-builds | exit 0, not native runtime evidence |
+
+The external correction receipt binds the exact delta from the rejected seal,
+complete source inventory, `-trimpath` binary hashes and command logs. No private
+paths or raw receipts belong in this repository. A separately retained bundle
+index remains necessary: semantic consistency is not malicious-owner-proof
+integrity. The owner directory (including `blinded/`) is **not** shareable with
+reviewers; only `reviewer-packet` is. Reviewer completeness/nonwaiver covers the
+supplied review set, not a frozen expected roster or authenticated identities.
+
+**Still not_run / not claimed:** parent independent acceptance of this new seal,
+installed native/fork delivery, live model/private-corpus outcomes, real note
+migration, Linux/Windows runtime acceptance, deployment/release or human benefit.
+Next: independently replay the new sealed source and every review finding;
+obtain separate owner authorization for any real-data, installed or paid action.
+
+### Historical first-integration verification (before corrective review)
+
+**First integrated candidate (superseded by the corrective pass above):**
+One `beme` executable combines V2 brain and the newer runtime. Verified brain,
+runtime and evaluation deliveries were integrated as scoped deltas, preserving
+Windows-aware harness adaptations, config-only `ResolveConfig`, ADR-033–035
+and the newer durable/privacy paths. No commit, staging, publication,
+installation, real settings/vault access or provider run occurred.
+
+Current corrections are ADR-036 (brain reliability), ADR-037 (runtime evidence),
+and ADR-038 (honest evaluation). Full generated-pack schema tests cover personal,
+work-safe and trace-cache failure with invalid controls. The evaluator uses
+`Pack.DeliveredItems` and complete-request APIs; B3's flat text estimate and
+B4's full compact JSON budget remain a **bundled comparison**. RF01 visible-only
+provenance determinism and RF02 matching fence markers passed their original
+parent regressions after observed failures. Generated default preview/evaluator capability
+IDs were corrected to match the unchanged schema regex.
+
+Fresh combined evidence (local macOS arm64, offline Go dependencies, synthetic
+HOME/config/temp roots; host Git config/signing disabled):
+
+| Gate | Observed result |
+|---|---|
+| `go test ./... -count=1 -json` | exit 0; 438 passing test/subtest events across 18 passing packages, including both temporary-vault Git commit tests; 2 installed Claude Code/Codex tests intentionally skip |
+| `go test -race ./internal/brain ./internal/app ./internal/ingestion ./internal/projection ./internal/resolver ./internal/evalrunner ./cmd/beme ./cmd/beme-eval -count=1` | exit 0; no race report |
+| Built combined CLI + evaluator synthetic acceptance script | 37 checked commands: positive/negative retrieval, schema/cache failure, brain capture/maintenance/fork/freeze, corpus formats and pending/no-op/degraded/high-risk/quality/safety grade controls; source bundle unchanged, benefit not_run |
+| Real-binary source/brain/MCP/evaluator suites | capture/promote/briefing, restore/error/freeze, protected warnings and scope, Markdown→build→pack, task parity, partial/recovered health, trace→explain and cache failure all pass |
+| `TestGeneratedRuntimePackSchema` | actual personal/work-safe/cache-failure CLI packs validate; malformed trace/digest controls fail |
+| Independent parent RF01/RF02 tests | both observed RED then GREEN; mixed/shorter/longer fence and work-safe ordering controls also pass |
+| `make validate` | exit 0: 19 passed, 0 failed (historical public fixtures; generated states are separately tested above) |
+| `go build ./...`, `go vet ./...`, `make fmt`, `git diff --check` | all exit 0 |
+| `GOOS=windows go build ./...`, `GOOS=linux go build ./...` | exit 0; cross-build only, not native runtime/harness evidence |
+| `python3 scripts/test_docs_consistency.py` | exit 0: 19/19 checks pass; D17/D19 observed RED before shared-doc correction |
+| `python3 scripts/test_ci_regression.py`, `python3 scripts/scan_private_data.py` | exit 0: 7/7 separation checks and clean scan |
+| Original independent audit probes via external Go overlay | exit 0: all 12 original brain probes, 13 runtime/evaluation groups and the B3 observation control pass; only frozen-fixture setup and full-JSON cap accounting adapted |
+| Built `beme-threat-corpus --repo .` | exit 0: 34 passed, 0 failed, 0 not_run |
+| Scratch-output `beme-bench --seed testdata/synthetic/records.json --out <scratch>/benchmark.json` | exit 0; all seed scales under the 1,000 ms warm-p95 target; historical repository baseline unchanged |
+
+The exact command logs, original/adapted probe source, final source inventory
+and executable hashes live in the operator's external integrated evidence
+bundle, not in this repository. A binary's inherited alpha version string is
+not its candidate source identity: use that bundle's SHA-256 seals. Build and
+final verification results are bound there to the uncommitted candidate.
+
+**Not run / not claimed:** installed native hooks (including native fork
+delivery), live model use, paid evaluation, private corpus/vault changes,
+deployment, Linux/Windows runtime acceptance or actual human decision benefit.
+Synthetic supplied grades can pass the mechanism but retain `benefit: not_run`.
+No `assured` label or release readiness follows from delivery tests. Brain
+backups/logs/archive remain independent of V1 purge; Windows ACL privacy and
+hostile same-user races are outside the demonstrated boundary.
+
+**Next gate:** parent independent review of exact source, external evidence and
+unresolved items. Passing synthetic gates is not merge/deployment approval.
+
+### Historical source-adoption evidence (superseded by remediation above)
+
+The following snapshot describes the earlier adoption-only candidate, not
+current failures or current readiness. Its command evidence is preserved.
+
+**Historical source-adoption snapshot (before remediation, 2026-10-09):** source integration is complete; this is an
+**integrated baseline pending remediation**, not accepted product readiness. One `beme` binary has both the brain CLI and the newer runtime. Shared
+edits are limited to brain dispatch, config-only loading and independent
+managed adapter blocks. Public durable enforcement, purge, source-failure
+diagnostics, negative relevance, trace handling, four-tool MCP surface and
+B0–B4/ablation evaluation implementations remain on the newer code. Existing
+`beme-eval`, `beme-bench` and `beme-threat-corpus` commands remain separate tools.
+
+The adopted brain ADRs are **033–035**; public ADR-027–032 keep their identities.
+FR-070..089 describes brain scope; live harness/model recall (FR-076) stays
+**partial**. The vault remains separate, non-canonical and never enters V1
+packs. See [BRAIN.md](BRAIN.md) and [THREAT_MODEL.md](THREAT_MODEL.md) §8.
+
+Fresh evidence and remaining work:
+- The new `TestIntegratedBrainAndRuntime` failed first because the public
+  binary lacked `brain` (exit 2), then passed after source integration. The
+  same executable captures/promotes/reads a synthetic note and proves newer
+  positive/negative retrieval, no-evidence unknown, trace explain, work-safe
+  exclusion, durable forget across rebuild and isolated config defaults.
+- Adopted real-binary tests exercise synthetic hook JSON, read-only briefing,
+  operator lifecycle, gate rejection and adapter coexistence. An ADR collision
+  regression (docs D16) failed before the new entries and passes with the
+  renumbered ledger. These are local fixtures, not installed-harness proof.
+- Fresh local gates (macOS arm64; isolated synthetic HOME/config/temp roots,
+  installed Go dependency cache only; no provider calls):
+
+  | Command | Observed result |
+  |---|---|
+  | `go test ./... -count=1` | exit 0, all packages pass |
+  | `go test -race ./internal/brain ./internal/app ./internal/resolver ./internal/evalrunner ./cmd/beme -count=1` | exit 0, all selected packages pass |
+  | `go build ./...` and `go vet ./...` | each exit 0 |
+  | `go build -o <scratch>/bin/ ./cmd/beme ./cmd/beme-eval ./cmd/beme-bench ./cmd/beme-threat-corpus` | exit 0; deliverable executables built, not installed |
+  | Built `beme` on a disposable synthetic deployment | capture/promote/briefing + positive/negative runtime retrieval + explicit no-evidence unknown + no brain in packs + work-safe exclusion all pass |
+  | Built `beme-threat-corpus --repo .` | exit 0: 34 passed, 0 failed, 0 not_run |
+  | `make validate` (Python 3.13 venv, `jsonschema pyyaml`) | exit 0: 19 passed, 0 failed |
+  | `python3 scripts/test_docs_consistency.py` | exit 0: 16/16 checks pass |
+  | `python3 scripts/test_ci_regression.py` | exit 0: 7/7 checks pass; private corpus intentionally absent |
+  | `python3 scripts/scan_private_data.py` | exit 0: clean, including additive untracked files |
+  | `GOOS=windows go build ./...`, `GOOS=linux go build ./...` | each exit 0; cross-build only, not runtime verification |
+  | `bash -n scripts/brain_live_e2e.sh` | syntax only, exit 0; script not executed |
+  | `git diff --check`, `gofmt -l cmd/beme internal/brain internal/app/app.go` | clean/no formatting drift |
+
+  The source-adoption comparison confirms only three existing Go files changed
+  (`main.go`, `adapter.go`, `app.go`); newer resolver/eval/ingestion/durable/
+  storage/privacy/MCP implementations are unchanged. Added brain code is the
+  existing implementation, with ADR comments and the stale briefing-help line
+  corrected. Test harness adaptations reuse the public Windows-aware builder
+  and isolate temporary homes; Unix permission tests explicitly skip Windows.
+- **Not run:** `brain-live`, any paid/provider call, private corpus/vault access,
+  real hook installation, live model recall or repeated real-task effectiveness.
+  Historical live results are deliberately not imported as acceptance.
+- **Confirmed blockers (independent audits, not fixed by this integration):**
+  the behavioral evaluator can report `passed` for a high-risk comparison
+  with B4 scoring 1 versus B0 scoring 4; corpus/measurement and runtime
+  evidence-delivery gaps remain. V2 restore can remove a healthy live vault
+  before extraction succeeds; fuzzy deduplication can falsely confirm a
+  materially changed decision; unverified worktree metadata can select another
+  project's memory. Chronology, failure reporting, file-read safety, boundedness,
+  freeze and generated-command issues also require isolated remediation.
+  Existing green tests do not cover those new failure cases. Paid runs alone
+  cannot close these engineering gaps. No remediation was attempted here.
+- **Review required:** parent-directed remediation and new regressions must
+  precede product acceptance or deployment. Hook counters do not measure
+  task-level capture/use. V1 purge does not erase the independent brain vault,
+  logs, archive or backups. Windows ACL privacy is unverified; Unix permission
+  tests do not establish it. No deployment or release approval is implied.
+
+### Historical runtime/release evidence
+
+**Historical (rev 13):** PR #1 is open against `main`, unmerged at the owner's
 instruction, with CI on macOS, Ubuntu, and Windows plus the private-data
 scan. Nothing from this continuation is released or tagged; `main` is
 unchanged until the owner merges. The alpha
@@ -223,9 +447,9 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 ## 5. Work NOT completed (honest gaps)
 
 - **Live-model behavioral evaluation** (B4-vs-B0 blind paired grading):
-  paid model-API runs — owner-gated. The runner, rubric, splits, and
-  thresholds are ready; `evalrunner.Provider` is the single integration
-  point.
+  paid model-API runs — owner-gated. Generation remains grading_pending until independent offline grades;
+  frozen corpus/split bytes and complete paired coverage are mandatory.
+  See EVALUATION_USAGE.md; no private manifest migration is automatic.
 - **Private-corpus retrieval measurement:** owner-run (ADR-023). Mechanism
   ready: pass a `Refs` lookup that maps record IDs to the refs the private
   gold uses.
@@ -277,22 +501,18 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 
 ## 8. Exact next step
 
-1. **Owner:** review and merge PR #1 once its CI (macOS, Ubuntu, Windows,
-   private-data scan) is green.
-2. **Owner:** run the live behavioral evaluation (B0–B4 + ablations) against
-   the private corpus — wire a paid provider into `evalrunner.Provider`;
-   protocol in `evals/EVALUATION_CONTRACT.md` §4–§6.
-3. **Owner:** measure retrieval recall/precision on the private corpus with
-   `evalrunner.Run(..., RunConfig{Refs: ...})` and record the evidence bundle
-   against ACCEPTANCE §5.
-4. **Owner:** measure pre-decision use in live Claude Code/Codex sessions
-   before labeling any surface `assured`; verify the Codex harness connection
-   in the same session.
-5. **Then:** dogfood (`beme build`, `beme preview` in a real registered
-   workspace); extend the corpus in thin categories.
+1. Preserve the verified local candidate and its final source/binary/receipt
+   identities; do not restart the closed audit without a new counterexample.
+2. For the separately requested PR, establish an allowed authenticated publishing
+   route, verify the live target/base, and run exact-head CI after publication.
+   There is no new push, PR or CI receipt from this local acceptance pass.
+3. A controlled installed rollout must preserve real data, quiesce mixed-version
+   writers and retain rollback evidence. Then separately authorized real tasks
+   and independent outcome grading can measure benefit. Source tests are not
+   approval for privacy expansion, paid calls, destructive actions, merge or release.
 
 
-## 9. Acceptance evidence (this session)
+## 9. Historical V1 acceptance evidence (prior continuation)
 
 | Check | Result |
 |---|---|

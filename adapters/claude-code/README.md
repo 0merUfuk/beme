@@ -20,6 +20,15 @@ Effects (idempotent, marker-delimited):
    `UserPromptSubmit` hook snippet (verified against the installed version —
    hook availability is version-sensitive; see `docs/INTEGRATIONS.md`).
 
+## Optional brain hooks
+
+`beme brain hooks` prints a fragment for SessionStart, PreCompact and
+SessionEnd. `beme brain install-hooks --settings FILE --dry-run` previews its
+separate settings merge; only an explicit invocation without `--dry-run`
+changes settings. V1 adapter installation does not install these hooks.
+See [`docs/BRAIN.md`](../../docs/BRAIN.md). No installed-harness or model-use
+assurance is claimed by this source integration.
+
 ## Uninstall
 
 ```sh
