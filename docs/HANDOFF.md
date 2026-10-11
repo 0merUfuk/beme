@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 23 — 2026-10-11
+**Revision:** 24 — 2026-10-11
 **Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
 publication preparation follows ADR-041. The separately authorized local rollout
 verified installed CLI and fresh configured MCP connections, not model use.
@@ -185,6 +185,21 @@ the docs gate scans the complete Git-tracked Markdown inventory, including
 adapters/templates. This corrects instructions, not adds another installer.
 Native fixture acceptance and corrected-revision fresh-reader acceptance remain
 required before publication.
+
+**Native acceptance at `d62b30d`:** run
+[38170961639](https://github.com/0merUfuk/beme/actions/runs/38170961639)
+completed all nine jobs successfully: full macOS/Linux/Windows suites, all five
+native source/archive targets and the privacy scan. This includes the strict
+Windows fixture correction; earlier failed runs remain unchanged evidence.
+The independent fresh reader passed every executed source/bootstrap/install/
+synthetic/archive path and accepted the adapter corrections. Its remaining HOLD
+was the evaluation contract's unqualified original WP2B approval wording.
+That design/history text now references the completed original freeze and this
+current status, without accessing or changing any corpus, threshold or gold.
+The lifecycle regression was RED first and is now covered by the docs gate.
+This final documentation-only correction still needs its own exact-head CI and
+independent correction acceptance; it does not lift the owner merge hold or
+claim a published release.
 
 **Local installation:** the earlier accepted snapshot was installed through
 existing entrypoints with rollback copies. Installed CLI, a synthetic

@@ -6,8 +6,12 @@
 > golden cases (real user decisions) are private deployment data living
 > outside this repository — never in public fixtures or CI.
 >
-> **Status:** Draft → user approval gate. Golden-case approval is RED
-> (user-owned). Thresholds freeze at WP2B, before the holdout is sealed.
+> **Status:** evaluation design contract, not a pending original approval
+> request. The original WP2B approval/freeze is complete as recorded in
+> [ACCEPTANCE.md](../docs/ACCEPTANCE.md) §4. Current execution, evidence and
+> remaining gates live in [HANDOFF.md §1](../docs/HANDOFF.md#1-status).
+> Golden-case changes remain RED, owner-owned; this document does not authorize
+> changing approved cases, thresholds or sealed holdout membership.
 
 ## 1. Claims under test
 
@@ -309,6 +313,9 @@ started_at, ended_at.
 
 ## 9. Dataset stages & splits
 
+The following are dataset-growth design targets, not software-release version
+labels or a statement of the current private corpus inventory:
+
 Seed (30–40 approved real decisions) → Alpha (60 golden + 30 privacy) → Beta
 (100–150) → Public release (synthetic/anonymized fixtures; private pack runs
 locally). Splits: calibration / development / locked_holdout / privacy_red_team.
@@ -328,13 +335,25 @@ decision. Each completed gate produces an immutable evidence bundle (inputs,
 revisions, environment manifest, raw outputs, grading records, summaries,
 artifact digests).
 
-## 11. Approvals needed from the user (RED gates)
+## 11. Approval procedure and completed original freeze
 
-1. Approve the seed golden-case set (WP2B entry gate) — private review of the
-   candidate corpus.
-2. Freeze confirmation: thresholds + splits (WP2B exit).
-3. Trusted local beta results review.
-4. Public release approval.
+This is the **historical WP2A approval procedure**, retained to explain decision
+rights, not a list of currently outstanding tasks:
 
-The candidate corpus and thresholds are presented for approval together at
-WP2B; the agent prepares evidence but the user decides.
+1. Review and approve the original seed golden-case set before WP2B entry.
+2. Confirm its thresholds and splits before sealing the holdout at WP2B exit.
+3. Review trusted local beta results when that evaluation stage is undertaken.
+4. Obtain the applicable publication authorization for the selected release.
+
+The original seed approval and threshold/split freeze are complete; their
+recorded outcome is [ACCEPTANCE.md](../docs/ACCEPTANCE.md) §4 under ADR-022.
+Do not recreate or re-freeze that corpus as part of documentation or delivery
+cleanup. A new or revised corpus needs its own approved, version-bound protocol
+before use; existing gold never changes merely because an agent inferred a
+preference.
+
+For **current** publication authorization, independent merge clearance and
+remaining private/live measurement gates, follow
+[HANDOFF.md §1](../docs/HANDOFF.md#1-status) and
+[RELEASE_VERIFICATION.md](../docs/RELEASE_VERIFICATION.md). Historical approval
+does not establish live-model benefit or grant unrelated future permissions.

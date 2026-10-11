@@ -360,6 +360,16 @@ for harness, boundary in (("cursor", "no managed installer"),
         d24.append(f"{harness} must distinguish {boundary}")
 check("D24 adapter guides state the actual installer boundary", not d24, "; ".join(d24))
 
+# --- D25: the original completed freeze is not a renewed approval request.
+evaluation_intro = contract.split("## 1. Claims under test", 1)[0]
+evaluation_approvals = contract.split("## 11.", 1)[-1]
+d25 = [target for target in ("HANDOFF.md", "ACCEPTANCE.md") if target not in evaluation_intro]
+if "Draft → user approval gate" in evaluation_intro:
+    d25.append("evaluation contract still labels the completed original gate draft")
+if "historical" not in evaluation_approvals.lower() or "current" not in evaluation_approvals.lower():
+    d25.append("evaluation approval procedure must distinguish historical and current gates")
+check("D25 evaluation lifecycle references the completed original freeze", not d25, "; ".join(d25))
+
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]
 print(f"\n{passed}/{len(results)} documentation-consistency checks passed")

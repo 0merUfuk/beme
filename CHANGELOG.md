@@ -132,6 +132,9 @@ Live-model benefit and assured harness use remain unmeasured.
   automatic skill/prompt-hook effects the V1 CLI does not implement. The docs
   gate includes tracked adapter/template guides and checks literal targets
   against the CLI's actual selector.
+- Evaluation-contract approval prose distinguishes the completed original
+  WP2B freeze from historical design procedures and later owner-owned changes;
+  it no longer sends a new reader back to re-approve or rebuild the seed corpus.
 - Evaluation artifact names are now portable wire identifiers rather than host
   path spellings; malformed identifiers still fail closed. Immutable-bundle
   output protection recognizes filesystem aliases, including alternate casing.
