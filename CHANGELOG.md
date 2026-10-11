@@ -134,6 +134,9 @@ Live-model benefit and assured harness use remain unmeasured.
   destination; bounded session-lock refusals are distinguished from lost
   successful writes. Native path fixtures and Windows command-exit controls no
   longer assume POSIX behavior or permit false-green smoke tests (ADR-042).
+- Windows accounting-lock acquisition retries only the specific access/sharing
+  denials within its existing deadline, preserving permanent errors and never
+  retrying callbacks or treating a failed create as ownership (ADR-043).
 - Brain correctness: restore preserves material note changes, paged recapture
   keeps the newest capture chronology, global warnings withhold unrelated IDs,
   malformed/newer schema markers refuse writes, and long-lived metadata stays

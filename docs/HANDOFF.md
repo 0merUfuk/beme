@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 20 — 2026-10-11
+**Revision:** 21 — 2026-10-11
 **Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
 publication preparation follows ADR-041. The separately authorized local rollout
 verified installed CLI and fresh configured MCP connections, not model use.
@@ -138,6 +138,22 @@ also guards explicit temporary-directory templates after a platform-specific
 scratch-containment discrepancy. A corrected source needs fresh exact-head CI
 and a repeated clean-checkout documentation gate. Failed receipts stay preserved;
 the live GitHub objects establish subsequent completion, not this older evidence.
+
+**Acquisition follow-up (ADR-043):** Windows access/sharing-denied exclusive
+creates now retry only within the unchanged 500 ms deadline, preserving the
+original error on persistent failure. No callback/publication is retried and no
+denied create grants ownership. The twelve-event assertion remains unchanged.
+Parent verified the six-file delivery hashes and independently exercised host
+replay plus false-success/permanent-error mutation controls. The combined parent
+`go test -json -count=1 -timeout=300s ./...` run reports 364 top-level tests,
+681 passing test/subtest events and 18 packages; the two installed-model tests
+remain opt-in. `make validate` reports `19 passed, 0 failed`; docs consistency
+reports 22/22. Build, vet, format, scan, synthetic separation, release helpers,
+threat corpus and the combined six-package race run exit 0. This evidence
+addition is documentation-only and preserves those production/test bytes.
+Real delete-pending and DACL tests are part of the Windows suite; the corrected
+combined source must still pass native CI and the repeated clean-checkout
+documentation gate.
 
 **Local installation:** the earlier accepted snapshot was installed through
 existing entrypoints with rollback copies. Installed CLI, a synthetic

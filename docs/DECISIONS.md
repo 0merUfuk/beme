@@ -1451,6 +1451,47 @@ old evidence and never rewrite its identifiers or hashes in place.
 **Reopen:** native CI contradicts the modeled OS behavior, successful events are
 lost, malformed evidence becomes gradeable, or aliases evade output containment.
 
+## ADR-043 — Bounded Windows accounting-lock acquisition retries
+
+**Date:** 2026-10-11 · **Status:** implemented with host replay and native test
+controls; final exact-head Windows CI remains required
+**Owner:** maintainer (GREEN correctness repair within the existing lock contract).
+**Context:** native CI at `f8b0954` exposed an exclusive-create `Access is denied`
+error before any accounting callback. That log cannot distinguish temporary
+delete/sharing conditions from a permanent ACL refusal. Treating either as
+successful ownership, or hiding it behind ordinary contention, is unsound.
+
+**Decision:** only on Windows, failed exclusive accounting-lock creation with
+`ERROR_ACCESS_DENIED` or `ERROR_SHARING_VIOLATION` may retry within the existing
+500 ms acquisition deadline. The first such error is preserved if acquisition
+never succeeds; a later `ErrExist` cannot erase it. Other errors fail immediately.
+Callbacks, state writes and post-commit work are never retried. Only successful
+exclusive creation grants ownership; the ambiguous-error branch performs no
+stale-node cleanup. Existing `ErrExist`-only stale recovery is unchanged and does
+not acquire a stronger hostile-same-user filesystem guarantee.
+
+**Evidence:** `TestConcurrentSessionInvocationsDoNotLoseUpdates` is unchanged and
+still requires exactly twelve successful events. New native controls are
+`TestSessionAccountingWindowsDeletePendingRecovers`,
+`TestSessionAccountingWindowsPermanentACLRefusal` and
+`TestSessionAccountingWindowsRetryCodesAreNarrow`; adjacent controls cover
+`TestSessionAccountingCallbackErrorsAreNotRetried`,
+`TestSessionAccountingRefusedLockNodesPreserved` and
+`TestSessionAccountingUnixPermissionRefusalIsNotRetried`. Independent host replay
+exercised the actual loop with Windows error codes; mutations returning false
+success or concealing permanent errors were rejected. Host replay and Windows
+cross-compilation are not native execution evidence.
+**Alternatives rejected:** increasing the deadline, changing the event-count
+assertion, retrying arbitrary I/O or callbacks, or calling an ambiguous denial
+ordinary contention/success.
+**Consequences:** transient acquisition can recover; persistent ACL denial stays
+an explicit original error after the bounded wait. This does not establish the
+cause of every native failure or guarantee wall-clock latency of OS I/O.
+**Reversibility:** the acquisition predicate/loop change is independently
+revertible; no schema, stored data, capabilities or publication permissions change.
+**Reopen:** native delete-pending/ACL controls fail, original errors disappear,
+callbacks execute without ownership, or successfully recorded events are lost.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

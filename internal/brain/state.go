@@ -91,6 +91,7 @@ func (v *Vault) updateState(slug string, change func(*projState) error, committe
 	}
 	lock := filepath.Join(dir, slug+".lock")
 	deadline := time.Now().Add(500 * time.Millisecond)
+	var createErr error
 	for {
 		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err == nil {
@@ -98,14 +99,24 @@ func (v *Vault) updateState(slug string, change func(*projState) error, committe
 			break
 		}
 		if !os.IsExist(err) {
-			return err
-		}
-		if st, err := os.Lstat(lock); err == nil && st.Mode().IsRegular() && time.Since(st.ModTime()) > time.Minute {
+			if !retryStateLockCreate(err) {
+				return err
+			}
+			// Only failed exclusive creates are retried, never callbacks or
+			// state publication. Do not run stale cleanup on an ambiguous
+			// sharing/access denial, or disguise it as ordinary contention.
+			if createErr == nil {
+				createErr = err
+			}
+		} else if st, err := os.Lstat(lock); err == nil && st.Mode().IsRegular() && time.Since(st.ModTime()) > time.Minute {
 			if err := os.Remove(lock); err == nil {
 				continue
 			}
 		}
 		if time.Now().After(deadline) {
+			if createErr != nil {
+				return createErr
+			}
 			return fmt.Errorf("session accounting locked; event not recorded")
 		}
 		time.Sleep(time.Millisecond)
