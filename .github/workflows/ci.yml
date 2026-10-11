@@ -4,30 +4,53 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Validated immutable release SHA; empty keeps normal event CI
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  GOTOOLCHAIN: local
+  GOWORK: "off"
+  GOTELEMETRY: "off"
+  GOFLAGS: -mod=readonly
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
         go: ["1.25"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Set up Python validation deps (venv; PEP 668-safe)
         run: |
-          python3 -m venv /tmp/beme-venv
-          /tmp/beme-venv/bin/pip install --quiet jsonschema pyyaml
-          echo "/tmp/beme-venv/bin" >> "$GITHUB_PATH"
+          python3 -m venv "$RUNNER_TEMP/beme-venv"
+          "$RUNNER_TEMP/beme-venv/bin/pip" install --quiet jsonschema pyyaml
+          echo "$RUNNER_TEMP/beme-venv/bin" >> "$GITHUB_PATH"
       - name: Validate contract fixtures (public only)
         run: make validate
-      - name: CI regression suite (public/private separation invariants)
+      - name: CI regression suite (synthetic public/private separation)
         run: python3 scripts/test_ci_regression.py
       - name: Documentation consistency suite
         run: python3 scripts/test_docs_consistency.py
+      - name: Release workflow source-binding regressions
+        run: python3 scripts/test_release_workflow.py -v
       - name: Build
         run: go build ./...
       - name: Vet
@@ -37,34 +60,35 @@ jobs:
       - name: Threat corpus runner (shared registry, synthetic data)
         run: go run ./cmd/beme-threat-corpus --repo .
 
-  # Windows runtime verification (NFR-007): Go build, vet, and the full test
-  # suite. Contract/doc validation is platform-independent and runs above.
+  # Full native Windows suite, not a filtered or short brain subset.
   test-windows:
     runs-on: windows-latest
     steps:
       - name: Keep fixtures byte-exact (no CRLF conversion)
-        run: git config --global core.autocrlf false
+        run: |
+          git config --global core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version: "1.25"
-      - name: Build
-        run: go build ./...
-      - name: Vet
-        run: go vet ./...
-      - name: Test
-        run: go test ./...
-      - name: Threat corpus runner (shared registry, synthetic data)
-        run: go run ./cmd/beme-threat-corpus --repo .
+      - name: Build, vet, full tests and synthetic threat corpus
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          . ./scripts/native.ps1
+          Invoke-CheckedNative -Command go -Arguments @('build', './...')
+          Invoke-CheckedNative -Command go -Arguments @('vet', './...')
+          Invoke-CheckedNative -Command go -Arguments @('test', './...')
+          Invoke-CheckedNative -Command go -Arguments @('run', './cmd/beme-threat-corpus', '--repo', '.')
 
-  # Installed-binary smoke test (ACCEPTANCE P2): the release artifact is
-  # `go install`ed and driven from OUTSIDE the repository, in an isolated
-  # deployment (BEME_* homes under the runner temp dir), so nothing reads the
-  # runner's real config and no test fixture is in scope. No model calls.
+  # Source install AND actual native archive execution, outside the checkout.
+  # All data is synthetic; evaluator help does not execute a model/provider.
   installed-binary-smoke:
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -72,108 +96,54 @@ jobs:
     steps:
       - name: Keep fixtures byte-exact (no CRLF conversion)
         if: runner.os == 'Windows'
-        run: git config --global core.autocrlf false
+        run: |
+          git config --global core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.source-ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version: "1.25"
-      - name: Install the binaries
-        run: go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-threat-corpus ./cmd/beme-eval
-      - name: Smoke the installed binaries outside the repository (bash)
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Source install, negative controls and native artifact smoke
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          GOBIN: ${{ runner.temp }}/beme-installed-bin
+          BEME_SMOKE_BIN_DIR: ${{ runner.temp }}/beme-installed-bin
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-pr-artifacts
         run: |
           set -euo pipefail
-          gobin="$(go env GOPATH)/bin"
-          export PATH="$gobin:$PATH"
-          root="$RUNNER_TEMP/beme-smoke"
-          mkdir -p "$root/cfg/sources" "$root/src/entries"
-          cd "$root"
-          export BEME_CONFIG_HOME="$root/cfg" BEME_DATA_HOME="$root/data" BEME_CACHE_HOME="$root/cache"
-          cat > "$root/src/entries/SMOKE-001.md" <<'EOF'
-          ---
-          id: SMOKE-001
-          title: "Smoke preference"
-          type: preference
-          status: active
-          ---
-
-          Keep installed-binary smoke tests synthetic and isolated.
-          EOF
-          cat > "$root/cfg/sources/smoke.yaml" <<EOF
-          schema_version: "1"
-          source_id: smoke-src
-          type: directory
-          root: $root/src
-          purpose: [reusable_knowledge]
-          trust: canonical
-          instruction_semantics: registered_files_only
-          authority_ceiling: default
-          sensitivity: personal_private
-          profiles_allowed: [personal]
-          ingestion_mode: index_content
-          include: ["entries/**/*.md"]
-          EOF
-          beme doctor --json --config "$root/cfg"
-          beme build --profile personal --config "$root/cfg"
-          beme status --json --config "$root/cfg"
-          beme preview --task "installed binary smoke" --json --config "$root/cfg" | grep -q '"pack_id"'
-          beme candidate list --json --config "$root/cfg"
-          beme forget --config "$root/cfg" rec_smoke-001 "smoke"
-          beme purge --config "$root/cfg" --confirm rec_smoke-001 --dry-run rec_smoke-001
-          beme-threat-corpus --repo "$GITHUB_WORKSPACE"
-          beme-bench --seed "$GITHUB_WORKSPACE/testdata/synthetic/records.json" --scales 1 --iterations 2 --warmup 1 --build-runs 1 --out - > /dev/null
-      - name: Smoke the installed binaries outside the repository (pwsh)
+          go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-threat-corpus ./cmd/beme-eval
+          python scripts/test_smoke.py -v
+          python scripts/test_release.py -v
+          python scripts/release.py package --out "$ARTIFACT_DIR" --smoke
+      - name: Windows fail-then-success control, source and archive smoke
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GOBIN: ${{ runner.temp }}/beme-installed-bin
+          BEME_SMOKE_BIN_DIR: ${{ runner.temp }}/beme-installed-bin
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-pr-artifacts
         run: |
           $ErrorActionPreference = "Stop"
-          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
-          $root = Join-Path $env:RUNNER_TEMP "beme-smoke"
-          New-Item -ItemType Directory -Force -Path "$root\cfg\sources", "$root\src\entries" | Out-Null
-          Set-Location $root
-          $env:BEME_CONFIG_HOME = "$root\cfg"; $env:BEME_DATA_HOME = "$root\data"; $env:BEME_CACHE_HOME = "$root\cache"
-          @"
-          ---
-          id: SMOKE-001
-          title: "Smoke preference"
-          type: preference
-          status: active
-          ---
-
-          Keep installed-binary smoke tests synthetic and isolated.
-          "@ | Set-Content -Encoding utf8 "$root\src\entries\SMOKE-001.md"
-          $srcRoot = "$root\src" -replace '\\', '/'
-          @"
-          schema_version: "1"
-          source_id: smoke-src
-          type: directory
-          root: $srcRoot
-          purpose: [reusable_knowledge]
-          trust: canonical
-          instruction_semantics: registered_files_only
-          authority_ceiling: default
-          sensitivity: personal_private
-          profiles_allowed: [personal]
-          ingestion_mode: index_content
-          include: ["entries/**/*.md"]
-          "@ | Set-Content -Encoding utf8 "$root\cfg\sources\smoke.yaml"
-          beme doctor --json --config "$root\cfg"
-          beme build --profile personal --config "$root\cfg"
-          beme status --json --config "$root\cfg"
-          $pack = beme preview --task "installed binary smoke" --json --config "$root\cfg"
-          if ($pack -notmatch '"pack_id"') { throw "preview produced no pack" }
-          beme candidate list --json --config "$root\cfg"
-          beme forget --config "$root\cfg" rec_smoke-001 "smoke"
-          beme purge --config "$root\cfg" --confirm rec_smoke-001 --dry-run rec_smoke-001
-          beme-threat-corpus --repo "$env:GITHUB_WORKSPACE"
-          beme-bench --seed "$env:GITHUB_WORKSPACE/testdata/synthetic/records.json" --scales 1 --iterations 2 --warmup 1 --build-runs 1 --out - | Out-Null
+          . ./scripts/native.ps1
+          Invoke-CheckedNative -Command go -Arguments @('install', './cmd/beme', './cmd/beme-bench', './cmd/beme-threat-corpus', './cmd/beme-eval')
+          Invoke-CheckedNative -Command python -Arguments @('scripts/test_smoke.py', '-v')
+          Invoke-CheckedNative -Command python -Arguments @('scripts/test_release.py', '-v')
+          Invoke-CheckedNative -Command python -Arguments @('scripts/release.py', 'package', '--out', $env:ARTIFACT_DIR, '--smoke')
+      # No upload/publish in public CI: PRs execute the same packaging helpers.
 
   private-data-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+          persist-credentials: false
       - name: Scan for private data leakage
         run: python3 scripts/scan_private_data.py

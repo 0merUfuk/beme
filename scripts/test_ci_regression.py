@@ -14,12 +14,13 @@ Invariants under test:
   R2. Public validation output contains no private path or corpus name.
   R3. Private validation reports an explicit non-success (exit 3, not_run)
       when its corpus is unavailable — it never silently passes.
-  R4. Private validation validates real cases when the corpus IS provided.
+  R4. Private validation validates a synthetic corpus when explicitly provided.
   R5. The public validator and CI workflow contain no private path string
       and do not invoke the private validator.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,13 +51,15 @@ def run_public_validate(home_dir):
 # R1: public validate succeeds with an empty HOME (the exact CI condition).
 with tempfile.TemporaryDirectory() as fake_home:
     # seed a decoy to prove no home reads happen at all
-    os.makedirs(Path(fake_home) / ".config", exist_ok=True)
+    decoy = Path(fake_home) / ".config" / "beme" / "evals" / "synthetic-private-corpus"
+    decoy.mkdir(parents=True)
+    (decoy / "invalid.json").write_text('{"synthetic_private_decoy": true}')
     r = run_public_validate(fake_home)
     check("R1 public validate passes with empty HOME (CI regression)", r.returncode == 0,
           f"exit={r.returncode} tail={ (r.stdout or r.stderr)[-200:] }")
 
 # R2: output contains no private path or corpus name.
-private_markers = ["regression-pack", "omer-regression", ".config/beme"]
+private_markers = ["synthetic-private-corpus", "synthetic_private_decoy", ".config/beme"]
 leaks = [m for m in private_markers if m in r.stdout + r.stderr]
 check("R2 public validate output free of private paths", not leaks, f"leaked={leaks}")
 
@@ -80,22 +83,22 @@ r3b = subprocess.run([PY, str(ROOT / "scripts" / "validate_private_eval.py")],
 check("R3b private eval not_run when BEME_PRIVATE_EVAL_DIR unset", r3b.returncode == 3,
       f"exit={r3b.returncode}")
 
-# R4: private validator validates real corpus when provided.
-corpus = os.environ.get("BEME_PRIVATE_EVAL_DIR", "").strip()
-if corpus and Path(corpus).is_dir():
+# R4: always synthetic. Ambient owner-corpus settings must never widen CI scope.
+with tempfile.TemporaryDirectory() as corpus:
+    for case in (ROOT / "evals" / "public" / "synthetic").glob("*.json"):
+        shutil.copyfile(case, Path(corpus) / case.name)
+    env4 = dict(env3, BEME_PRIVATE_EVAL_DIR=corpus)
     r4 = subprocess.run([PY, str(ROOT / "scripts" / "validate_private_eval.py")],
-                        capture_output=True, text=True, timeout=120)
-    check("R4 private eval validates real corpus", r4.returncode == 0,
+                        capture_output=True, text=True, env=env4, timeout=120)
+    check("R4 private validator accepts explicitly supplied synthetic corpus", r4.returncode == 0,
           f"exit={r4.returncode} out={r4.stdout.strip()[:200]}")
-else:
-    check("R4 private eval validates real corpus", True,
-          "skipped: corpus not present in this environment (owner-run only)")
 
 # R5: static source invariants — no private path in public scripts/workflow,
 # and CI never invokes the private validator.
 public_sources = [
     ROOT / "scripts" / "validate_contracts.py",
     ROOT / ".github" / "workflows" / "ci.yml",
+    ROOT / ".github" / "workflows" / "release.yml",
     ROOT / "Makefile",
 ]
 violations = []
@@ -104,8 +107,9 @@ for src in public_sources:
     for marker in private_markers:
         if marker in text:
             violations.append(f"{src.name}: {marker}")
-    if src.name == "ci.yml" and "validate_private_eval" in text:
-        violations.append("ci.yml invokes private validator")
+    if src.suffix == ".yml" and any(marker in text for marker in
+            ["validate_private_eval", "validate-private", "brain_live_e2e", "BEME_LIVE"]):
+        violations.append(f"{src.name} invokes an owner-only gate")
     if src.name == "Makefile" and "validate-private" in text and "validate_private_eval" in text:
         pass  # the private target existing in Makefile is fine; CI must not call it
 check("R5 no private paths in public scripts/CI; CI never runs private eval", not violations,

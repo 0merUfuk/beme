@@ -1,4 +1,4 @@
-.PHONY: help validate validate-private test build vet fmt scan bench check brain-live
+.PHONY: help validate validate-private test build vet fmt scan bench check release-check brain-live
 
 help:
 	@echo "validate          — public contract fixtures vs schemas (repo-local only, CI-safe)"
@@ -6,7 +6,8 @@ help:
 	@echo "test / build / vet — Go toolchain gates"
 	@echo "scan              — private-data leakage scan (public patterns + local terms)"
 	@echo "bench             — NFR-008 benchmark on the public seed corpus (writes evals/benchmarks/seed-baseline.json)"
-	@echo "check             — full public gate: validate + build + vet + test + scan"
+	@echo "check             — public gate: validate + build + vet + test + scan + release-check"
+	@echo "release-check     — synthetic release, smoke and workflow regression tests (no publication)"
 	@echo "brain-live        — owner-run real harness/model calls (paid/quota; never part of check)"
 
 # Public contract validation. Repo-local only: no home-directory reads, no
@@ -40,7 +41,13 @@ scan:
 bench:
 	go run ./cmd/beme-bench --seed testdata/synthetic/records.json --out evals/benchmarks/seed-baseline.json
 
-check: validate build vet test scan
+release-check: export PYTHONDONTWRITEBYTECODE = 1
+release-check:
+	python3 -B scripts/test_release.py -v
+	python3 -B scripts/test_smoke.py -v
+	python3 -B scripts/test_release_workflow.py -v
+
+check: validate build vet test scan release-check
 
 # Owner-run only: real model calls starting at stage 2 (see docs/BRAIN.md).
 brain-live:
