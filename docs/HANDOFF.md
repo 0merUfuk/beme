@@ -155,6 +155,12 @@ Real delete-pending and DACL tests are part of the Windows suite; the corrected
 combined source must still pass native CI and the repeated clean-checkout
 documentation gate.
 
+**Pre-tag target coverage:** PR CI now uses the same explicit five runner/target
+pairs as the release artifact matrix, with actual source-install and archive
+execution. A workflow regression binds those matrices and requires explicit
+native targets. It does not replace the tag-bound release gates or the owner
+merge boundary.
+
 **Local installation:** the earlier accepted snapshot was installed through
 existing entrypoints with rollback copies. Installed CLI, a synthetic
 capture/Doctor/briefing and fork-hook fixture, a read-only real briefing, and

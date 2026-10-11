@@ -85,14 +85,21 @@ jobs:
           Invoke-CheckedNative -Command go -Arguments @('test', './...')
           Invoke-CheckedNative -Command go -Arguments @('run', './cmd/beme-threat-corpus', '--repo', '.')
 
-  # Source install AND actual native archive execution, outside the checkout.
+  # Exercise every release target before tagging, outside the checkout.
   # All data is synthetic; evaluator help does not execute a model/provider.
   installed-binary-smoke:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - {os: macos-15-intel, target: darwin_amd64}
+          - {os: macos-15, target: darwin_arm64}
+          - {os: ubuntu-24.04, target: linux_amd64}
+          - {os: ubuntu-24.04-arm, target: linux_arm64}
+          - {os: windows-latest, target: windows_amd64}
+    env:
+      TARGET: ${{ matrix.target }}
     steps:
       - name: Keep fixtures byte-exact (no CRLF conversion)
         if: runner.os == 'Windows'
@@ -121,7 +128,7 @@ jobs:
           go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-threat-corpus ./cmd/beme-eval
           python scripts/test_smoke.py -v
           python scripts/test_release.py -v
-          python scripts/release.py package --out "$ARTIFACT_DIR" --smoke
+          python scripts/release.py package --target "$TARGET" --out "$ARTIFACT_DIR" --smoke
       - name: Windows fail-then-success control, source and archive smoke
         if: runner.os == 'Windows'
         shell: pwsh
@@ -135,7 +142,7 @@ jobs:
           Invoke-CheckedNative -Command go -Arguments @('install', './cmd/beme', './cmd/beme-bench', './cmd/beme-threat-corpus', './cmd/beme-eval')
           Invoke-CheckedNative -Command python -Arguments @('scripts/test_smoke.py', '-v')
           Invoke-CheckedNative -Command python -Arguments @('scripts/test_release.py', '-v')
-          Invoke-CheckedNative -Command python -Arguments @('scripts/release.py', 'package', '--out', $env:ARTIFACT_DIR, '--smoke')
+          Invoke-CheckedNative -Command python -Arguments @('scripts/release.py', 'package', '--target', $env:TARGET, '--out', $env:ARTIFACT_DIR, '--smoke')
       # No upload/publish in public CI: PRs execute the same packaging helpers.
 
   private-data-scan:

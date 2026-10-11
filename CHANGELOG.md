@@ -17,6 +17,9 @@ Live-model benefit and assured harness use remain unmeasured.
   publication of a pre-created owner draft. Existing published releases and
   mismatched assets are never overwritten. PR CI exercises packaging without
   publishing; `make release-check` runs the synthetic helper regressions.
+- Pre-tag PR smoke uses all five release runner/target pairs, including native
+  Linux arm64 and Darwin amd64, so those targets are exercised before committing
+  to an immutable version tag.
 - Effectiveness remediation (ADR-036–038): strict frozen corpus/split binding,
   immutable retrieval evidence, independent offline grade import/adjudication,
   paired quality/high-risk/safety gates, and pending generation rather than

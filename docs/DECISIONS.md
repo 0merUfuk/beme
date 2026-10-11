@@ -1383,6 +1383,12 @@ an unanswered request does not lift it. Stable/non-alpha publication, paid
 model runs, real-data erasure, private-corpus access and scope widening remain
 separate approvals. Release authorization is not proof of real task benefit.
 
+PR source-install and native-archive smoke must cover the same five explicit
+runner/target pairs as release packaging, before a version tag is created.
+A workflow regression prevents matrix or target-argument drift. This adds
+pre-tag CI work rather than first discovering a target failure after committing
+to an immutable tag; it does not replace any tag-bound release gate.
+
 **Alternatives rejected:** leaving completed source local-only; treating a
 successful local build as a release; publishing directly from the topic branch
 to evade the merge hold; moving an older tag; adding a large release framework;

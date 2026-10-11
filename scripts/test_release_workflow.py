@@ -56,9 +56,23 @@ class WorkflowTests(unittest.TestCase):
                 for step in job.get("steps", []):
                     self.assertNotIn("continue-on-error", step)
 
+    def test_pr_smoke_covers_each_release_target_before_tagging(self):
+        job = self.ci["jobs"]["installed-binary-smoke"]
+        expected = self.release["jobs"]["artifacts"]["strategy"]["matrix"]["include"]
+        actual = job["strategy"]["matrix"].get("include", [])
+        self.assertEqual(sorted((x["os"], x["target"]) for x in actual),
+                         sorted((x["os"], x["target"]) for x in expected))
+        self.assertEqual(job["env"]["TARGET"], "${{ matrix.target }}")
+        packaging = [s for s in job["steps"] if "scripts/release.py" in s.get("run", "")]
+        self.assertEqual(len(packaging), 2)
+        for step in packaging:
+            self.assertIn("--target", step["run"])
+            self.assertIn("--smoke", step["run"])
+            self.assertIn("$env:TARGET" if step.get("shell") == "pwsh" else "$TARGET", step["run"])
+
     def test_windows_smoke_executes_real_negative_control(self):
         job = self.ci["jobs"]["installed-binary-smoke"]
-        self.assertIn("windows-latest", job["strategy"]["matrix"]["os"])
+        self.assertIn("windows-latest", [x["os"] for x in job["strategy"]["matrix"]["include"]])
         for step in job["steps"]:
             if "test_smoke.py" in step.get("run", ""):
                 self.assertIn("BEME_SMOKE_BIN_DIR", step["env"])

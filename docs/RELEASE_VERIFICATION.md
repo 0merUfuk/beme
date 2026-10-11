@@ -81,6 +81,13 @@ benchmark and evaluator help. They do not run a model. `release-check` alone may
 skip the explicitly opt-in native build/source-install controls and PowerShell
 when unavailable; CI supplies the installed binaries and executes archive smoke
 separately, and Windows must execute the real PowerShell fail-then-success control.
+
+PR CI exercises every distribution target before tagging: Darwin amd64/arm64,
+Linux amd64/arm64 and Windows amd64. Its explicit runner/target pairs must match
+the release artifact matrix, and packaging refuses a non-native smoke target.
+This front-loads platform failures without publishing; the tag-bound release
+workflow still repeats its own required native artifact gates.
+
 Set `BEME_RELEASE_NATIVE_TEST=1` for the unittest's additional real packaging
 control, or `BEME_SMOKE_BIN_DIR` for its source-install control.
 
