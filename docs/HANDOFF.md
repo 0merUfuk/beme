@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 24 — 2026-10-11
+**Revision:** 25 — 2026-10-12
 **Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
 publication preparation follows ADR-041. The separately authorized local rollout
 verified installed CLI and fresh configured MCP connections, not model use.
@@ -197,9 +197,29 @@ was the evaluation contract's unqualified original WP2B approval wording.
 That design/history text now references the completed original freeze and this
 current status, without accessing or changing any corpus, threshold or gold.
 The lifecycle regression was RED first and is now covered by the docs gate.
-This final documentation-only correction still needs its own exact-head CI and
-independent correction acceptance; it does not lift the owner merge hold or
-claim a published release.
+The independent corrected-source documentation gate is **PASS at `99295c8`**:
+the prose, changed links and regression were independently checked in a fresh
+public checkout. Unchanged earlier runtime executions retain their original
+source identity; they are not relabeled as new-head executions.
+
+**Concurrent-read test correction:** the next exact-head run
+[38173348267](https://github.com/0merUfuk/beme/actions/runs/38173348267)
+passed eight jobs, including Windows, but exposed a macOS stress-test assumption.
+A legitimate `document changed during read` refusal caused the test worker to
+exit early, then label its unattempted captures as lost notes. A controlled
+native reproduction preserved every actually accepted note. The test-only
+correction keeps all eight workers/eight captures, public error-or-unknown
+behavior, error-free quiescent reads, read immutability, exactly 65 unique
+unchanged notes and safe recovery; arbitrary errors still fail. Parent replayed
+the original RED and corrected GREEN, public/write-caller fault controls and
+repeated race checks. Production, Windows fixtures and the original twelve-event
+control remain byte-identical. Parent full local gates passed: 365 top-level
+tests / 685 passing test events across 18 packages, six-package race checks,
+public validation (19 passed, 0 failed), docs (25/25), separation, release-helper,
+build, vet, formatting, privacy scan and threat corpus. Only the two opt-in live
+harness integration tests were skipped. The correction still requires its own
+exact-head native CI. Documentation acceptance does not lift the owner merge
+hold or claim a published release.
 
 **Local installation:** the earlier accepted snapshot was installed through
 existing entrypoints with rollback copies. Installed CLI, a synthetic

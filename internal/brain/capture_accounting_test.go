@@ -420,8 +420,21 @@ func TestCaptureAccountingRefusedParentCannotAuthorizePublication(t *testing.T) 
 }
 
 func TestCaptureAccountingConcurrentStressPreservesPending(t *testing.T) {
-	v, _ := newVault(t)
-	_, pending, publish := stagedCapture(t, v, "Paused publisher during stress", t0)
+	v, root := newVault(t)
+	for i := 0; i < nudgeAfter; i++ {
+		if err := v.RecordSession("demo", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertKnownInvocations(t, v, nudgeAfter)
+	text, _ := v.Briefing(BriefingOptions{CWD: root, Now: t0})
+	if !strings.Contains(text, "no accepted captures") {
+		t.Fatal("known control did not reach the silence nudge")
+	}
+	paused, pending, publish := stagedCapture(t, v, "Paused publisher during stress", t0)
+	assertCaptureAccountingReadsUnchanged(t, v, root)
+	var accepted [8][8]*Note
+	var attempts, refusals, falseKnown [8]int
 	var wg sync.WaitGroup
 	for worker := 0; worker < 8; worker++ {
 		wg.Add(1)
@@ -431,27 +444,80 @@ func TestCaptureAccountingConcurrentStressPreservesPending(t *testing.T) {
 				in := sqliteDecision
 				in.Project = "demo"
 				in.Title = fmt.Sprintf("Concurrent synthetic outcome %d %d", worker, i)
-				if _, err := v.Capture(in, t0); err != nil {
-					t.Error(err)
-					return
+				attempts[worker]++
+				n, err := v.Capture(in, t0)
+				if err != nil {
+					t.Errorf("capture %d/%d refused: %v", worker, i, err)
+				} else {
+					accepted[worker][i] = n
 				}
-				if st, err := v.readState("demo"); err != nil || !st.AccountingUnknown {
-					t.Errorf("pending publication lost during concurrent reset: %+v %v", st, err)
-					return
+				st, err := v.readState("demo")
+				if err != nil {
+					// An atomic reset may replace the state between Lstat and
+					// Open. The rejected snapshot is not a known zero counter.
+					// Only this observed overlap refusal is expected here;
+					// arbitrary errors remain failures, not retry candidates.
+					if err.Error() != "document changed during read" {
+						t.Errorf("unexpected accounting read failure: %v", err)
+					}
+					refusals[worker]++
+				} else if !st.AccountingUnknown {
+					falseKnown[worker]++
+					t.Errorf("pending publication falsely known during concurrent reset: %+v", st)
 				}
+				assertCaptureAccountingUnknown(t, v, root)
+				// Observations must never truncate the eight-capture workload:
+				// unattempted captures are not lost accepted notes.
 			}
 		}(worker)
 	}
 	wg.Wait()
+	totalAttempts, totalRefusals, totalFalseKnown := 0, 0, 0
+	notes := []*Note{paused}
+	for worker := range accepted {
+		totalAttempts += attempts[worker]
+		totalRefusals += refusals[worker]
+		totalFalseKnown += falseKnown[worker]
+		for _, n := range accepted[worker] {
+			if n != nil {
+				notes = append(notes, n)
+			}
+		}
+	}
+	t.Logf("attempted=%d accepted=%d read_refusals=%d false_known=%d", totalAttempts, len(notes)-1, totalRefusals, totalFalseKnown)
+	if totalAttempts != 64 || len(notes) != 65 || totalFalseKnown != 0 {
+		t.Errorf("incomplete workload or false-known accounting: attempted=%d accepted=%d false_known=%d", totalAttempts, len(notes)-1, totalFalseKnown)
+	}
+	// With all resets finished the pending intent must remain readable and
+	// unchanged; a persistent read failure is not an acceptable unknown result.
+	info, err := os.Lstat(pending.path)
+	if err != nil || !os.SameFile(info, pending.file) {
+		t.Fatal("pending allocation was removed or replaced", err)
+	}
+	if data, err := os.ReadFile(pending.path); err != nil || string(data) != pending.id+"\n" {
+		t.Fatal("pending publication was acknowledged before publication", err)
+	}
+	if _, err := os.Lstat(paused.Path); !os.IsNotExist(err) {
+		t.Fatal("paused publisher unexpectedly published", err)
+	}
+	assertCaptureAccountingReadsUnchanged(t, v, root)
 	publish()
 	if err := v.recordCapture(pending, t0); err != nil {
 		t.Fatal(err)
 	}
-	if v.loadState("demo").AccountingUnknown {
-		t.Fatal("stress failed to recover")
+	st, err := v.readState("demo")
+	if err != nil || st.AccountingUnknown || st.InvocationsSinceCapture != 0 || st.SessionsSinceCapture != 0 || st.LastCapture != t0.Format(time.RFC3339Nano) {
+		t.Fatalf("stress failed to recover: %+v %v", st, err)
 	}
-	entries, err := filepath.Glob(filepath.Join(v.inboxDir(), "*.md"))
-	if err != nil || len(entries) != 65 {
-		t.Fatalf("accepted notes lost: %d %v", len(entries), err)
+	assertKnownInvocations(t, v, 0)
+	text, _ = v.Briefing(BriefingOptions{CWD: root, Now: t0})
+	if strings.Contains(text, "capture accounting degraded/unknown") || strings.Contains(text, "no accepted captures") {
+		t.Fatal("briefing did not recover after publication", text)
 	}
+	assertCaptureAccountingNotes(t, v, notes, 65)
+	if err := v.RecordSession("demo", t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	assertKnownInvocations(t, v, 1)
+	assertCaptureAccountingNotes(t, v, notes, 65)
 }
