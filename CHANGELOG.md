@@ -121,6 +121,10 @@ Live-model benefit and assured harness use remain unmeasured.
   inherited sensitivity (FR-054).
 
 ### Fixed
+- Secondary evaluation instructions now require the single reviewer-packet JSON,
+  never the owner bundle. Continuation/examples follow current implementation
+  status, and documented temporary allocations respect the chosen scratch root;
+  documentation regressions guard these fresh-reader findings.
 - Evaluation artifact names are now portable wire identifiers rather than host
   path spellings; malformed identifiers still fail closed. Immutable-bundle
   output protection recognizes filesystem aliases, including alternate casing.

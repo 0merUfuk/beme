@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 19 — 2026-10-11
+**Revision:** 20 — 2026-10-11
 **Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
 publication preparation follows ADR-041. The separately authorized local rollout
 verified installed CLI and fresh configured MCP connections, not model use.
@@ -107,8 +107,8 @@ did not establish coverage of those new paths. These failures are retained as
 RED evidence; a corrected exact-head matrix must pass before release, without
 skipping portable cases or weakening their invariants.
 
-**Corrections prepared (ADR-042):** evaluator wire identifiers and output
-containment now respect native filesystem identity without relaxing evidence
+**Corrections prepared at `f8b0954` (ADR-042):** evaluator wire identifiers and
+output containment now respect native filesystem identity without relaxing evidence
 joins. Brain intent allocation preserves refused occupants while using other
 slots; failed replacement cleans its temporary file only. Native path fixtures
 and explicit pre-write accounting refusals are tested rather than hidden. All
@@ -124,6 +124,20 @@ remain bound to that run. The bounded independent release-automation review also
 passed its ten-file scope, including real native archive execution and adversarial
 controls; parent verified the same file hashes. New exact-head native CI remains
 a separate gate. The original failed run remains evidence, not a green result.
+
+**Follow-up evidence at `f8b0954`:** the portability fixes, release automation
+and version/docs preparation are pushed in `a4553b8`, `0bd2e45` and `f8b0954`.
+Native run [38161550878](https://github.com/0merUfuk/beme/actions/runs/38161550878)
+passed Linux/macOS full tests, all three installed-smoke jobs and the private
+scan. Windows full Go still reported a lock-creation `Access is denied` error in
+`TestConcurrentSessionInvocationsDoNotLoseUpdates`; a passing local run did not
+close it. The fresh-reader documentation gate separately found an unsafe legacy
+grader-directory instruction, a stale §8 continuation and an obsolete example
+lifecycle statement. Those instructions are corrected here; the regression suite
+also guards explicit temporary-directory templates after a platform-specific
+scratch-containment discrepancy. A corrected source needs fresh exact-head CI
+and a repeated clean-checkout documentation gate. Failed receipts stay preserved;
+the live GitHub objects establish subsequent completion, not this older evidence.
 
 **Local installation:** the earlier accepted snapshot was installed through
 existing entrypoints with rollback copies. Installed CLI, a synthetic
@@ -561,15 +575,19 @@ ADR-001…021 from the blueprint, ratified with live verification. New:
 
 ## 8. Exact next step
 
-1. Preserve the verified local candidate and its final source/binary/receipt
-   identities; do not restart the closed audit without a new counterexample.
-2. For the separately requested PR, establish an allowed authenticated publishing
-   route, verify the live target/base, and run exact-head CI after publication.
-   There is no new push, PR or CI receipt from this local acceptance pass.
-3. A controlled installed rollout must preserve real data, quiesce mixed-version
-   writers and retain rollback evidence. Then separately authorized real tasks
-   and independent outcome grading can measure benefit. Source tests are not
-   approval for privacy expansion, paid calls, destructive actions, merge or release.
+1. Continue from [the current status in §1](#1-status), its linked PR/CI records
+   and the selected candidate's exact source identity. Do not replay initial
+   PR/authentication setup or closed historical audits from older receipts.
+2. Apply [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md) to that candidate:
+   resolve evidenced blockers, require exact-head CI and fresh-checkout docs
+   acceptance, obtain any outstanding explicit merge clearance, then verify the
+   owner-authored release and downloaded source-bound assets. A pushed branch
+   or local pass is not a published release.
+3. Keep installation and real-task benefit separate. Any further authorized
+   rollout must preserve real data, quiesce mixed-version writers and retain
+   rollback evidence. Independently graded real tasks require their own scope
+   approval; source tests do not authorize privacy expansion, paid calls or
+   destructive operations.
 
 
 ## 9. Historical V1 acceptance evidence (prior continuation)

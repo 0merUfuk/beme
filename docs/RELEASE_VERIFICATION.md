@@ -46,6 +46,10 @@ or success. Real model benefit is a separate evidence level and remains unmeasur
 
 ## 2. Verification run (on the release commit, clean checkout)
 
+Set `TMPDIR` to an existing writable scratch directory if outputs must stay
+under a specific root. The recipes pass full path templates to `mktemp` so a
+platform's default temporary-directory selection cannot override that root.
+
 ```sh
 git clone https://github.com/0merUfuk/beme && cd beme && git checkout <sha>
 python3 -m venv .venv && .venv/bin/pip install jsonschema pyyaml   # needs network
@@ -55,7 +59,7 @@ python3 scripts/test_docs_consistency.py
 python3 scripts/test_ci_regression.py
 go run ./cmd/beme-threat-corpus --repo .
 go test -race ./internal/brain ./internal/app ./internal/durable ./internal/learning ./internal/storage ./internal/evalrunner
-bench_out="$(mktemp -d)"
+bench_out="$(mktemp -d "${TMPDIR:-/tmp}/beme-bench.XXXXXX")"
 go run ./cmd/beme-bench --seed testdata/synthetic/records.json --out "$bench_out/benchmark.json"
 GOOS=windows go vet ./... && GOOS=linux go vet ./...
 ```
@@ -64,10 +68,10 @@ Then execute the same source-install smoke used by the
 `installed-binary-smoke` CI job, followed by a real native archive:
 
 ```sh
-export GOBIN="$(mktemp -d)"
+export GOBIN="$(mktemp -d "${TMPDIR:-/tmp}/beme-bin.XXXXXX")"
 go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-threat-corpus ./cmd/beme-eval
 python3 -B scripts/smoke.py --bin-dir "$GOBIN"
-artifact_out="$(mktemp -d)"
+artifact_out="$(mktemp -d "${TMPDIR:-/tmp}/beme-artifacts.XXXXXX")"
 python3 -B scripts/release.py package --out "$artifact_out" --smoke
 ```
 

@@ -112,7 +112,7 @@ canonical personal knowledge.
 
 ```sh
 # 1. Isolated deployment with synthetic sources (nothing of yours is read)
-export BEME_HOME="$(mktemp -d)"
+export BEME_HOME="$(mktemp -d "${TMPDIR:-/tmp}/beme-harness.XXXXXX")"
 export BEME_CONFIG_HOME="$BEME_HOME/cfg" BEME_DATA_HOME="$BEME_HOME/data" BEME_CACHE_HOME="$BEME_HOME/cache"
 # (descriptor and entry shapes: docs/OPERATIONS.md "Registering a source")
 mkdir -p "$BEME_CONFIG_HOME/sources" "$BEME_HOME/src/entries"
@@ -195,14 +195,19 @@ go run ./cmd/beme-eval behavioral \
 Exit codes: 0 requested retrieval/paired gates passed, 1 failed/invalid,
 3 not_run or grading_pending, 2 usage. Successful command generation is
 grading_pending, not a behavioral pass; import complete independent blinded
-grades with `grade-template` / `grade-import` before evaluating paired gates.
+grades with `grade-import` after the `reviewer-packet` handoff described below.
 Synthetic supplied ratings remain benefit not_run. See
 [EVALUATION_USAGE.md](EVALUATION_USAGE.md) for the full protocol.
 
-Evidence bundles stay outside the repository (ADR-023). Only `blinded/` is
-grader-visible (plus an empty grade template); manifests record provider-declared
-model settings and actual prompt/corpus hashes. Network/provider declarations
-are not observed isolation. B3/B4 is a bundled pipeline contrast.
+Evidence bundles stay outside the repository (ADR-023). Give graders only the
+single content-only `reviewer-packet` JSON, which includes the empty grade
+template. **Never share the owner bundle, including its `blinded/` directory:**
+per-file timestamps can reveal condition order. `grade-template` is an owner-side
+API, not the reviewer handoff. Follow
+[the canonical grading protocol](EVALUATION_USAGE.md#4-blinded-offline-grading-and-adjudication).
+Manifests record provider-declared model settings and actual prompt/corpus
+hashes; those declarations are not observed isolation. B3/B4 is a bundled
+pipeline contrast.
 
 ## Second-brain integration (V2, ADR-033–035)
 

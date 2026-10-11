@@ -16,8 +16,8 @@ documentation test (2026-09-14), which FAILED the documentation gate:
   D4. Validation bootstrap must be documented — DEVELOPMENT.md must contain
       a venv-based bootstrap (python3 -m venv; jsonschema pyyaml) so a clean
       checkout works exactly as documented.
-  D5. Link integrity — relative markdown links inside docs/ and README.md
-      must resolve to existing files.
+  D5. Link integrity — relative markdown links in public documentation,
+      including examples and evaluation guides, must resolve to existing files.
   D6. The canonical status anchor — HANDOFF.md §1 must exist and be
       referenced by the other lifecycle docs.
 
@@ -35,12 +35,16 @@ def check(name, ok, detail=""):
     results.append((name, ok, detail))
     print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f"  — {detail}" if detail else ""))
 
-# --- D1: phase contradictions (docs + README only; ADR evidence quotes exempt)
+# --- D1: public lifecycle prose, including examples; ADR evidence quotes exempt
 PHASE_LIES = [
     r"Contracts[- ]phase", r"pre-implementation",
     r"gated behind WP2B", r"Blocked on user", r"Not authorized until WP2B",
+    r"once WP4 implements it",
 ]
-scan_files = [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md"))
+scan_files = [ROOT / "README.md"] + sorted(
+    f for directory in ("docs", "examples", "evals")
+    for f in (ROOT / directory).rglob("*.md")
+)
 violations = []
 for f in scan_files:
     text = f.read_text()
@@ -52,7 +56,7 @@ for f in scan_files:
             if f.name == "DECISIONS.md":
                 continue
             line = text[: m.start()].count("\n") + 1
-            violations.append(f"{f.name}:{line}: '{m.group(0)}'")
+            violations.append(f"{f.relative_to(ROOT)}:{line}: '{m.group(0)}'")
 check("D1 no phase contradictions outside ADR evidence", not violations, "; ".join(violations[:4]))
 
 # --- D2: stale hard-coded counts (prose promises)
@@ -110,7 +114,7 @@ check("D4 validation bootstrap documented (venv, deps, version, commands)", not 
 
 # --- D5: relative link integrity
 broken = []
-doc_files = [ROOT / "README.md", ROOT / "AGENTS.md"] + sorted((ROOT / "docs").glob("*.md"))
+doc_files = [ROOT / "AGENTS.md", *scan_files]
 for f in doc_files:
     base = f.parent
     text = f.read_text()
@@ -289,6 +293,41 @@ for word in ["compact JSON", "withheld", "trace_ref", "risk/harness"]:
     if word not in architecture:
         d19.append(f"ARCHITECTURE missing {word}")
 check("D19 shared brain/runtime/evaluator contracts stay reconciled", not d19, "; ".join(d19))
+
+# These bounded phrase guards supplement, not replace, a fresh-reader review.
+# --- D20: secondary guides cannot restore the unsafe directory handoff.
+d20 = []
+for f in scan_files:
+    if f.name == "DECISIONS.md":
+        continue
+    text = f.read_text()
+    if re.search(r"only\s+`blinded/`\s+is\s+grader-visible", text, re.I):
+        d20.append(f"{f.relative_to(ROOT)} permits the legacy directory handoff")
+for name, text in [("INTEGRATIONS", integrations), ("EVALUATION_USAGE", usage_eval)]:
+    if "reviewer-packet" not in text:
+        d20.append(f"{name} omits the reviewer-packet handoff")
+    if not re.search(r"never share[^.]*`blinded/`", text, re.I):
+        d20.append(f"{name} omits the explicit owner-bundle sharing prohibition")
+check("D20 review handoff is a packet, never the owner directory", not d20, "; ".join(d20))
+
+# --- D21: continuation derives from current status, not an older local pass.
+next_match = re.search(r"^## 8\. Exact next step\s*\n(.*?)(?=^## |\Z)", handoff, re.M | re.S)
+next_step = next_match.group(1) if next_match else ""
+d21 = [target for target in ("#1-status", "RELEASE_VERIFICATION.md") if target not in next_step]
+for phrase in ("establish an allowed authenticated publishing route",
+               "there is no new push, pr or ci receipt"):
+    if phrase in " ".join(next_step.lower().split()):
+        d21.append(f"stale continuation: {phrase}")
+check("D21 continuation links current status and release gates", not d21, "; ".join(d21))
+
+# --- D22: BSD mktemp can ignore TMPDIR unless given a full path template.
+d22 = []
+for f in scan_files:
+    if f.name == "DECISIONS.md":
+        continue
+    for m in re.finditer(r"\$\(\s*mktemp\s+-d\s*\)", f.read_text()):
+        d22.append(f"{f.relative_to(ROOT)} uses an implicit temporary root")
+check("D22 temporary recipes avoid implicit mktemp roots", not d22, "; ".join(d22))
 
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]
