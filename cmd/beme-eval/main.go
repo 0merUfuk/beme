@@ -42,6 +42,11 @@ const usage = `usage:
   beme-eval retrieval  --corpus DIR --config DIR [--out DIR] [--json]
   beme-eval behavioral --corpus DIR --config DIR --provider command --command 'CMD ARGS'
                        [--arms LIST] [--repeats N] [--dry-run] [--out DIR] [--json]
+  beme-eval grade-template --bundle DIR --evaluator ID --out NEW_FILE
+  beme-eval reviewer-packet --bundle DIR --evaluator ID --out NEW_FILE
+  beme-eval grade-import --bundle DIR --grades FILE [--grades FILE] [--adjudication FILE] --out DIR
+Every run verifies --split-manifest FILE (default corpus/split-manifest.json).
+Command generation stays grading_pending; independent offline grades are required.
 The corpus defaults to $BEME_PRIVATE_EVAL_DIR. Run "beme-eval <command> -h" for flags.
 Exit codes: 0 passed, 1 failed, 2 usage, 3 not_run.`
 
@@ -53,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "grade-template", "grade-import", "reviewer-packet":
+		return gradesCommand(args[0], args[1:], stdout, stderr)
 	case "retrieval":
 		return retrieval(args[1:], stdout, stderr)
 	case "behavioral":
@@ -67,18 +74,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // common holds the flags both commands share.
 type common struct {
-	corpus, config, out, capability, networkPolicy, split string
-	learned, jsonOut                                      bool
+	corpus, config, out, capability, networkPolicy, split, splitManifest string
+	learned, jsonOut                                                     bool
 }
 
 func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.corpus, "corpus", "", "golden-case corpus directory (default $BEME_PRIVATE_EVAL_DIR)")
 	fs.StringVar(&c.config, "config", "", "deployment config directory (required)")
 	fs.StringVar(&c.out, "out", "", "artifact directory (default: a new directory under the OS temp dir)")
-	fs.StringVar(&c.capability, "capability", "cap_eval_owner", "capability ID bound for evaluation sessions")
+	fs.StringVar(&c.capability, "capability", "cap_evalowner", "capability ID bound for evaluation sessions")
 	fs.BoolVar(&c.learned, "experimental-learned", false, "enable experimental learned guidance (personal profile only; required by learned-only)")
-	fs.StringVar(&c.networkPolicy, "network-policy", "disabled", "disabled|integration_only")
+	fs.StringVar(&c.networkPolicy, "network-policy", "disabled", "disabled|integration_only (declaration, not a sandbox)")
 	fs.StringVar(&c.split, "split", "calibration", "calibration|development|locked_holdout|privacy_red_team")
+	fs.StringVar(&c.splitManifest, "split-manifest", "", "frozen split manifest (default corpus/split-manifest.json)")
 	fs.BoolVar(&c.jsonOut, "json", false, "print the summary as JSON")
 }
 
@@ -118,9 +126,9 @@ func (c *common) prepare(stdout, stderr io.Writer) (*evalrunner.Corpus, *app.Run
 	return corpus, rt, out, -1
 }
 
-func (c *common) inputs(rt *app.Runtime) evalrunner.InputsFn {
-	return func(p contracts.Profile, task, ws string) (resolver.EvalInputs, error) {
-		return rt.EvalInputs(p, c.capability, c.learned, task, ws)
+func (c *common) inputs(rt *app.Runtime) evalrunner.RequestInputsFn {
+	return func(p contracts.Profile, req contracts.ResolutionRequest) (resolver.EvalInputs, error) {
+		return rt.EvalInputsRequest(p, c.capability, c.learned, req)
 	}
 }
 
@@ -140,8 +148,8 @@ func retrieval(args []string, stdout, stderr io.Writer) int {
 	if code >= 0 {
 		return code
 	}
-	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{
-		OutputDir: out, NetworkPolicy: c.networkPolicy, Split: c.split,
+	sum, err := evalrunner.RunRequest(corpus, evalrunner.RunConfig{
+		OutputDir: out, NetworkPolicy: c.networkPolicy, Split: c.split, SplitManifest: c.splitManifest,
 		Refs: refsLookup(rt, c.capability, c.learned),
 	}, nil, nil, c.inputs(rt))
 	if err != nil {
@@ -208,10 +216,11 @@ func behavioral(args []string, stdout, stderr io.Writer) int {
 	if code >= 0 {
 		return code
 	}
-	sum, err := evalrunner.Run(corpus, evalrunner.RunConfig{
+	sum, err := evalrunner.RunRequest(corpus, evalrunner.RunConfig{
 		Arms: arms, Repeats: *repeats, OutputDir: out, Harness: *harness, HarnessVersion: *harnessVersion,
-		NetworkPolicy: c.networkPolicy, Split: c.split, SkipRetrieval: true, DryRun: *dryRun,
-	}, cp, evalrunner.DeterministicGrader{}, c.inputs(rt))
+		NetworkPolicy: c.networkPolicy, Split: c.split, SplitManifest: c.splitManifest, SkipRetrieval: true, DryRun: *dryRun,
+		Refs: refsLookup(rt, c.capability, c.learned),
+	}, cp, nil, c.inputs(rt))
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -287,7 +296,7 @@ func resolveOut(flagOut string) (string, error) {
 	if flagOut == "" {
 		return os.MkdirTemp("", "beme-eval-")
 	}
-	abs, err := filepath.Abs(flagOut)
+	abs, err := evalrunner.CanonicalOutputPath(flagOut)
 	if err != nil {
 		return "", err
 	}

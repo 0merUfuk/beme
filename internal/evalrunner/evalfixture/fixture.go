@@ -291,5 +291,8 @@ func WriteCorpus(dir, workspaceHint string, repeats int) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "arms-case.json"), b, 0o600)
+	if err := os.WriteFile(filepath.Join(dir, "arms-case.json"), b, 0o600); err != nil {
+		return err
+	}
+	return WriteSyntheticSplit(dir)
 }

@@ -198,7 +198,7 @@ func TestManifestsRecordObservedValues(t *testing.T) {
 
 	var index map[string]string
 	ib, err := os.ReadFile(filepath.Join(root, "bundle_index.json"))
-	if err != nil || json.Unmarshal(ib, &index) != nil || len(index) != 4*len(arms)+2 {
+	if err != nil || json.Unmarshal(ib, &index) != nil || len(index) != 4*len(arms)+len(corpus.Files)+len(corpus.Cases)+5 {
 		t.Fatalf("bundle index: %d entries (%v)", len(index), err)
 	}
 	for rel, digest := range index {

@@ -12,10 +12,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/0merUfuk/beme/internal/contracts"
+	"gopkg.in/yaml.v3"
 )
 
 // Limits bound ingestion (NFR-009, threat case 29).
@@ -270,8 +272,8 @@ type MarkdownEntry struct {
 // ParseMarkdown splits frontmatter and body. It never interprets content
 // as instructions (ADR-006): frontmatter values are data only.
 func ParseMarkdown(content []byte) (map[string]any, string) {
-	txt := string(content)
-	if !strings.HasPrefix(txt, "---") {
+	txt := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if !strings.HasPrefix(txt, "---\n") {
 		return map[string]any{}, txt
 	}
 	rest := txt[3:]
@@ -280,24 +282,11 @@ func ParseMarkdown(content []byte) (map[string]any, string) {
 		return map[string]any{}, txt
 	}
 	fm := rest[:end]
-	// crude but safe YAML subset parse: key: value lines, lists
+	// Bounded YAML data, not instructions. Reject malformed metadata rather
+	// than flattening nested applicability constraints into global records.
 	front := map[string]any{}
-	for _, line := range strings.Split(fm, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "-") {
-			continue
-		}
-		kv := strings.SplitN(line, ":", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		k := strings.TrimSpace(kv[0])
-		v := strings.TrimSpace(kv[1])
-		v = strings.Trim(v, "\"'")
-		if strings.Contains(v, "#") && !strings.HasPrefix(v, "\"") {
-			v = strings.TrimSpace(strings.SplitN(v, "#", 2)[0])
-		}
-		front[k] = v
+	if len(fm) > 64<<10 || yaml.Unmarshal([]byte(fm), &front) != nil {
+		return map[string]any{}, txt
 	}
 	body := rest[end+4:] // skip "\n---" entirely (end points at the newline; +4 passes the closing dashes)
 	return front, body
@@ -334,6 +323,9 @@ func NormalizeEntry(sd contracts.SourceDescriptor, entry MarkdownEntry) (contrac
 	// Statement from body: first paragraph under Summary if present, else first line.
 	rec.Statement = firstMeaningful(entry.Body)
 	rec.CompactText = truncate(rec.Statement, 240)
+	if rec.Statement == "" || !applyMetadata(&rec, sd, fm) {
+		return contracts.Record{}, false
+	}
 	if rec.Status != contracts.StatusActive {
 		// keep deprecated entries out of the index entirely
 		return contracts.Record{}, false
@@ -377,10 +369,10 @@ func mapKind(v any) contracts.Kind {
 
 func mapStatus(v any) contracts.Status {
 	s, _ := v.(string)
-	if strings.TrimSpace(s) == "deprecated" {
-		return contracts.StatusDeprecated
+	if strings.TrimSpace(s) == "" {
+		return contracts.StatusActive
 	}
-	return contracts.StatusActive
+	return contracts.Status(strings.TrimSpace(s))
 }
 
 func mapConfidence(v any) contracts.Confidence {
@@ -409,23 +401,105 @@ func mapRole(sd contracts.SourceDescriptor) contracts.SourceRole {
 	return contracts.RoleTrustedReference
 }
 
+var markdownLinks = regexp.MustCompile(`!?\[[^\]\n]*\]\([^\)\n]*\)|\[\[[^\]\n]+\]\]`)
+
+func navigationOnly(line string) bool {
+	withoutLinks := markdownLinks.ReplaceAllString(line, "")
+	return withoutLinks != line && strings.Trim(withoutLinks, " 	|·>-/") == ""
+}
+
 func firstMeaningful(body string) string {
-	for _, para := range strings.Split(body, "\n\n") {
-		p := strings.TrimSpace(para)
-		p = strings.TrimPrefix(p, "#")
-		p = strings.TrimSpace(p)
-		if len(p) > 0 && !strings.HasPrefix(p, "[") && !strings.HasPrefix(p, "!") {
-			return truncate(p, 600)
+	// Entry summaries/ADR decisions take precedence over background text.
+	// Headings, navigation, comments and fenced examples are not decisions.
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	first, preferred := "", ""
+	paragraph := []string{}
+	section := ""
+	var fence byte
+	fenceLength := 0
+	comment := false
+	flush := func() {
+		p := strings.TrimSpace(strings.Join(paragraph, " "))
+		paragraph = nil
+		if p == "" {
+			return
+		}
+		if first == "" {
+			first = p
+		}
+		if preferred == "" && (section == "summary" || section == "decision") {
+			preferred = p
 		}
 	}
-	return ""
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		// A fence closes only with the opening character, at least the
+		// opening run length, and whitespace after the marker. Mixed or
+		// shorter markers inside an example are example content, not exits.
+		marker, run := byte(0), 0
+		if len(line) > 0 && (line[0] == '`' || line[0] == '~') {
+			marker = line[0]
+			for run < len(line) && line[run] == marker {
+				run++
+			}
+		}
+		if fence != 0 {
+			if marker == fence && run >= fenceLength && strings.TrimSpace(line[run:]) == "" {
+				fence, fenceLength = 0, 0
+			}
+			continue
+		}
+		if !comment && run >= 3 && (marker != '`' || !strings.Contains(line[run:], "`")) {
+			flush()
+			fence, fenceLength = marker, run
+			continue
+		}
+		if strings.Contains(line, "<!--") {
+			comment = true
+		}
+		if comment {
+			if strings.Contains(line, "-->") {
+				comment = false
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			flush()
+			section = strings.ToLower(strings.TrimSpace(strings.Trim(line, "#")))
+			continue
+		}
+		// Setext headings are headings too (Title followed by === or ---).
+		if i+1 < len(lines) {
+			next := strings.TrimSpace(lines[i+1])
+			if len(next) >= 3 && (strings.Trim(next, "=") == "" || strings.Trim(next, "-") == "") {
+				flush()
+				section = strings.ToLower(line)
+				continue
+			}
+		}
+		if line == "" || strings.Trim(line, "-=_*") == "" {
+			flush()
+			continue
+		}
+		if navigationOnly(line) {
+			flush()
+			continue
+		}
+		paragraph = append(paragraph, line)
+	}
+	flush()
+	if preferred != "" {
+		return truncate(preferred, 600)
+	}
+	return truncate(first, 600)
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(runes[:n-1]) + "…"
 }
 
 // ContentDigestOrCommit helper on SourceRevision.

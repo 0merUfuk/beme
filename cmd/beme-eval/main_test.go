@@ -54,6 +54,14 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "fake model failure")
 			os.Exit(9)
 		}
+		if os.Getenv("BEME_EVAL_FAKE_REGRESSION") == "1" {
+			if bytes.Contains(prompt, []byte("=== CONTEXT ===")) {
+				fmt.Print("client_server_db_by_convention")
+			} else {
+				fmt.Print(fx.AcceptableDecision + "; " + fx.MandatoryConclusion)
+			}
+			os.Exit(0)
+		}
 		fmt.Print("fake-model answer:\n")
 		os.Stdout.Write(prompt)
 		os.Exit(0)
@@ -217,14 +225,14 @@ func TestBehavioralRunsCommandProvider(t *testing.T) {
 	command, marker := fakeCommand(t)
 	code, rep, raw := runJSON(t, "behavioral", "--corpus", corpus, "--config", cfg, "--provider", "command", "--command", command,
 		"--arms", "B0,B4,no-scope", "--repeats", "1", "--model-id", "fake-model", "--temperature", "0", "--out", t.TempDir())
-	if code != 0 || rep.Summary.Generations != 3 {
+	if code != 3 || rep.Summary.Generations != 3 {
 		t.Fatalf("exit %d, generations %d\n%s", code, rep.Summary.Generations, raw)
 	}
 	if n := calls(t, marker); n != 3 {
 		t.Fatalf("command ran %d times, want 3", n)
 	}
 	for _, cr := range rep.Summary.CaseResults {
-		if cr.Outcome != evalrunner.OutcomePassed || !strings.HasPrefix(cr.PerRepeat[0].Text, "fake-model answer:\n") || !strings.Contains(cr.PerRepeat[0].Text, "=== TASK ===") {
+		if cr.Outcome != evalrunner.OutcomeGradingPending || !strings.HasPrefix(cr.PerRepeat[0].Text, "fake-model answer:\n") || !strings.Contains(cr.PerRepeat[0].Text, "=== TASK ===") {
 			t.Fatalf("%s: %+v", cr.Arm, cr)
 		}
 	}

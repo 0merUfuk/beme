@@ -97,19 +97,20 @@ func runMCPServer(configDir, profile, capability, experimentalLearnedStr string)
 		Name:        contracts.ToolStatus,
 		Description: "Safe health and capability metadata. In work-safe mode, private source titles and paths are never returned.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args statusArgs) (*mcp.CallToolResult, any, error) {
-		count, err := sess.VisibleCount()
+		health, err := sess.Health()
 		if err != nil {
 			return toolError(policyBlockedMsg), nil, nil
 		}
 		st := map[string]any{
-			"status":                  "ok",
+			"status":                  health.Status,
+			"degradations":            health.Degradations,
 			"capability":              sess.Capability.Profile,
 			"capability_id":           sess.Capability.CapabilityID,
 			"resolver_scope_enforced": true,
 			"os_isolation":            "none",
 			"downstream_use_control":  "not_enforced",
 			"index_revision":          sess.View.IndexRevision(),
-			"record_count":            count,
+			"record_count":            health.RecordCount,
 		}
 		if profileVal == contracts.ProfileWorkSafe {
 			st["sources"] = "hidden (work-safe safe view)"

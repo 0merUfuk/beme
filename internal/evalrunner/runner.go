@@ -1,44 +1,16 @@
-// Package evalrunner implements the executable evaluation runner defined
-// by evals/EVALUATION_CONTRACT.md (WP: evaluation infrastructure).
-//
-// Scope: the MECHANISM is fully implemented and proven with deterministic
-// mock providers and public synthetic fixtures. Executing it against live
-// models or the private corpus is owner-gated (cmd/beme-eval) — the runner
-// reports not_run for any condition it cannot honestly execute (never
-// silent).
-//
-// Supported:
-//   - Baselines B0–B4 and every ablation (no-scope, no-provenance,
-//     no-unknowns, canonical-only, learned-only). Each arm is built from one
-//     serving session's resolver.EvalInputs, so all share the same hard
-//     capability boundary (§18.6); arms.go documents each construction. An
-//     arm that cannot honestly run is not_run with a reason — never graded
-//     as the full pack under another label.
-//   - A deterministic rendered prompt per generation (prompt.go), given to
-//     the provider in GenerationRequest.Prompt.
-//   - Repeat runs (1..5); each repeat gets a freshly built, deep-copied arm
-//     context, so no arm or repeat can mutate another's input.
-//   - Per-generation manifests carrying exactly the run-manifest schema's
-//     fields from observed values, plus owner-side evidence (prompt, context
-//     and bootstrap digests, arm construction, corpus file hashes,
-//     deployment revision, provider-reported model settings).
-//   - Blinded result packaging: condition labels are replaced by opaque
-//     arm IDs + a separate key file, so a human grader can grade without
-//     knowing which arm is Be Me.
-//   - Explicit states: passed | failed | not_run. A zero score (prohibited
-//     or unsafe output) is a binary blocker: the unit fails and is never
-//     averaged. Summary.ExitCode applies the exit contract: 0 = every unit
-//     passed; 1 = any failure or blocker; 3 = no failure but ≥1 not_run.
+// Package evalrunner implements validated, split-bound generation/retrieval
+// and independent offline grading. Successful generation is not benefit.
+// Deterministic graders are explicit mechanism-only test tools; real answers
+// remain pending until blinded, hash-bound grades and paired gates exist.
+// See docs/EVALUATION_USAGE.md for evidence custody and control limitations.
 package evalrunner
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -93,6 +65,14 @@ func ParseArms(s string) ([]Arm, error) {
 
 // Case is a golden case loaded from a corpus (schema-conformant).
 type Case struct {
+	SchemaVersion string  `json:"schema_version"`
+	Harness       *string `json:"harness"`
+	Provenance    struct {
+		ApprovedByUser bool     `json:"approved_by_user"`
+		EvidenceRefs   []string `json:"evidence_refs"`
+		ValidAt        string   `json:"valid_at"`
+		CandidateNote  string   `json:"candidate_note"`
+	} `json:"provenance"`
 	ID         string `json:"id"`
 	Status     string `json:"status"`
 	GoldType   string `json:"gold_type"`
@@ -106,12 +86,15 @@ type Case struct {
 		ExcludedInformation []string `json:"excluded_information"`
 	} `json:"scenario"`
 	Gold struct {
-		AcceptableDecisions   []string `json:"acceptable_decisions"`
-		UnacceptableDecisions []string `json:"unacceptable_decisions"`
-		MandatoryConclusions  []string `json:"mandatory_conclusions"`
-		ProhibitedConclusions []string `json:"prohibited_conclusions"`
-		ExpectedUnknowns      []string `json:"expected_unknowns"`
-		RequiredEvidenceRefs  []string `json:"required_evidence_refs"`
+		AcceptableDecisions     []string `json:"acceptable_decisions"`
+		UnacceptableDecisions   []string `json:"unacceptable_decisions"`
+		MandatoryConclusions    []string `json:"mandatory_conclusions"`
+		ProhibitedConclusions   []string `json:"prohibited_conclusions"`
+		ExpectedUnknowns        []string `json:"expected_unknowns"`
+		RequiredEvidenceRefs    []string `json:"required_evidence_refs"`
+		OptionalEvidenceRefs    []string `json:"optional_evidence_refs,omitempty"`
+		ForbiddenEvidenceRefs   []string `json:"forbidden_evidence_refs,omitempty"`
+		RelevanceLabelsComplete bool     `json:"relevance_labels_complete,omitempty"`
 	} `json:"gold"`
 	Grading struct {
 		Rubric  string `json:"rubric"`
@@ -119,53 +102,16 @@ type Case struct {
 	} `json:"grading"`
 }
 
-// Corpus is a directory of golden-case JSON files.
+// Corpus is a validated flat directory of JSON/YAML/YML golden cases.
 type Corpus struct {
 	Dir   string
 	Cases []Case
-	// Files maps every *.json corpus file name to "sha256:<hex>" of its
+	// Files maps every supported corpus case file name to "sha256:<hex>" of its
 	// bytes as loaded.
 	Files    map[string]string
 	caseFile map[string]string // case ID -> file name
-}
-
-// LoadCorpus reads every *.json case in dir and hashes each file.
-func LoadCorpus(dir string) (*Corpus, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	c := &Corpus{Dir: dir, Files: map[string]string{}, caseFile: map[string]string{}}
-	for _, e := range sortedNames(entries) {
-		if !strings.HasSuffix(e, ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e))
-		if err != nil {
-			return nil, err
-		}
-		var cs Case
-		if err := json.Unmarshal(data, &cs); err != nil {
-			return nil, fmt.Errorf("%s: %w", e, err)
-		}
-		if cs.ID == "" {
-			return nil, fmt.Errorf("%s: case has no id", e)
-		}
-		if prev, dup := c.caseFile[cs.ID]; dup {
-			return nil, fmt.Errorf("%s: case id %q already defined in %s", e, cs.ID, prev)
-		}
-		if cs.Grading.Repeats <= 0 {
-			cs.Grading.Repeats = 1
-		}
-		h := sha256.Sum256(data)
-		c.Files[e] = "sha256:" + hex.EncodeToString(h[:])
-		c.caseFile[cs.ID] = e
-		c.Cases = append(c.Cases, cs)
-	}
-	if len(c.Cases) == 0 {
-		return nil, fmt.Errorf("no cases in %s", dir)
-	}
-	return c, nil
+	Bytes    map[string][]byte `json:"-"`
+	Coverage Coverage          `json:"coverage"`
 }
 
 // Version is the dataset version: a digest over every corpus file name and
@@ -197,6 +143,7 @@ type RunConfig struct {
 	Harness        string // default "none"
 	HarnessVersion string // default "unspecified"
 	NetworkPolicy  string // disabled (default) | integration_only
+	SplitManifest  string
 	Split          string // calibration (default) | development | locked_holdout | privacy_red_team
 
 	// Refs maps a selected record to the identifiers gold
@@ -218,6 +165,10 @@ type RefsFn func(profile contracts.Profile, recordID string) []string
 // under the case's profile (app.Runtime.EvalInputs).
 type InputsFn func(profile contracts.Profile, task, workspaceHint string) (resolver.EvalInputs, error)
 
+// RequestInputsFn preserves the complete narrowed serving request.
+// It never sets the process-bound capability; profile remains a separate input.
+type RequestInputsFn func(profile contracts.Profile, req contracts.ResolutionRequest) (resolver.EvalInputs, error)
+
 // Retrieval thresholds (ACCEPTANCE §5; locked at blueprint design targets).
 const (
 	RecallThreshold    = 0.90
@@ -228,21 +179,37 @@ const (
 // (contract dimension 8: the pack contains the right records). Precision is
 // measured against the case's required_evidence_refs.
 type RetrievalCase struct {
-	CaseID    string     `json:"case_id"`
-	Outcome   RunOutcome `json:"outcome"`
-	Reason    string     `json:"reason,omitempty"`
-	Required  int        `json:"required"`
-	Retrieved int        `json:"retrieved"`
-	Selected  int        `json:"selected"`
-	Relevant  int        `json:"relevant"`
-	Recall    float64    `json:"recall"`
-	Precision float64    `json:"precision"`
+	FalsePositives      int                 `json:"false_positives"`
+	Forbidden           int                 `json:"forbidden"`
+	NegativeControl     bool                `json:"negative_control"`
+	RecallApplicable    bool                `json:"recall_applicable"`
+	PrecisionApplicable bool                `json:"precision_applicable"`
+	PrecisionMeaning    string              `json:"precision_meaning"`
+	SelectedIDs         []string            `json:"selected_ids"`
+	RefMappings         map[string][]string `json:"ref_mappings"`
+	CaseID              string              `json:"case_id"`
+	Outcome             RunOutcome          `json:"outcome"`
+	Reason              string              `json:"reason,omitempty"`
+	Required            int                 `json:"required"`
+	Retrieved           int                 `json:"retrieved"`
+	Selected            int                 `json:"selected"`
+	Relevant            int                 `json:"relevant"`
+	Recall              float64             `json:"recall"`
+	Precision           float64             `json:"precision"`
 }
 
 // RetrievalSummary micro-averages retrieval over measured cases.
 type RetrievalSummary struct {
 	Cases              []RetrievalCase `json:"cases"`
 	Measured           int             `json:"measured"`
+	Excluded           int             `json:"excluded"`
+	Required           int             `json:"required"`
+	Retrieved          int             `json:"retrieved"`
+	Selected           int             `json:"selected"`
+	Relevant           int             `json:"relevant"`
+	NegativeControls   int             `json:"negative_controls"`
+	FalsePositiveCases int             `json:"false_positive_cases"`
+	FalsePositiveRate  float64         `json:"false_positive_rate"`
 	Recall             float64         `json:"recall"`
 	Precision          float64         `json:"precision"`
 	RecallThreshold    float64         `json:"recall_threshold"`
@@ -254,9 +221,10 @@ type RetrievalSummary struct {
 type RunOutcome string
 
 const (
-	OutcomePassed RunOutcome = "passed"
-	OutcomeFailed RunOutcome = "failed"
-	OutcomeNotRun RunOutcome = "not_run"
+	OutcomeGradingPending RunOutcome = "grading_pending"
+	OutcomePassed         RunOutcome = "passed"
+	OutcomeFailed         RunOutcome = "failed"
+	OutcomeNotRun         RunOutcome = "not_run"
 )
 
 // CaseResult records one case×arm (+repeats) execution.
@@ -270,10 +238,10 @@ type CaseResult struct {
 }
 
 type RepeatResult struct {
-	Repeat       int     `json:"repeat"`
-	Score        float64 `json:"score"`
-	Text         string  `json:"text,omitempty"`
-	PromptSHA256 string  `json:"prompt_sha256,omitempty"`
+	Repeat       int      `json:"repeat"`
+	Score        *float64 `json:"mechanism_score,omitempty"`
+	Text         string   `json:"text,omitempty"`
+	PromptSHA256 string   `json:"prompt_sha256,omitempty"`
 }
 
 // Summary aggregates a run set.
@@ -292,7 +260,14 @@ type Summary struct {
 	ManifestPaths      []string         `json:"manifest_paths"`
 	Retrieval          RetrievalSummary `json:"retrieval"`
 
-	units []unitRecord // per-generation inputs, for artifacts
+	Coverage       Coverage     `json:"coverage"`
+	SplitBinding   SplitBinding `json:"split_binding"`
+	Benefit        RunOutcome   `json:"benefit"`
+	MechanismOnly  bool         `json:"mechanism_only"`
+	RepeatOverride int          `json:"repeat_override,omitempty"`
+	requestMode    string
+	units          []unitRecord // per-generation inputs, for artifacts
+	caseEvidence   map[string]any
 }
 
 // Grader scores a generation against gold, 0–4 (§18.7.1).
@@ -365,20 +340,39 @@ func (DeterministicGrader) Grade(cs Case, gen GenerationResult) (float64, string
 }
 
 // Run executes the requested arms against the corpus with the provider.
-// Each case's inputs are computed once and every arm is built from them, so
+// Each selected case's inputs are computed once and every arm is built from them, so
 // all arms of a case see the same capability, revocation state, and pack.
 func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, inputs InputsFn) (*Summary, error) {
+	if inputs == nil {
+		return nil, fmt.Errorf("inputs function is required")
+	}
+	return run(corpus, cfg, provider, grader, func(p contracts.Profile, req contracts.ResolutionRequest) (resolver.EvalInputs, error) {
+		return inputs(p, req.Task, req.WorkspaceHint)
+	}, false)
+}
+
+// RunRequest uses the full production request path. Legacy Run is task-only
+// and its evidence deliberately does not claim risk/harness were forwarded.
+func RunRequest(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, inputs RequestInputsFn) (*Summary, error) {
+	return run(corpus, cfg, provider, grader, inputs, true)
+}
+
+func run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, inputs RequestInputsFn, completeRequest bool) (*Summary, error) {
 	if corpus == nil {
 		return nil, fmt.Errorf("corpus is required")
 	}
 	if inputs == nil {
 		return nil, fmt.Errorf("inputs function is required")
 	}
+	if cfg.Repeats < 0 || cfg.Repeats > 5 {
+		return nil, fmt.Errorf("repeat override must be between 0 and 5")
+	}
 	if len(cfg.Arms) > 0 && provider == nil {
 		return nil, fmt.Errorf("provider is required (use MockProvider for deterministic runs)")
 	}
-	if grader == nil {
-		grader = DeterministicGrader{}
+	// Command/live output is never graded by the mechanism-only keyword grader.
+	if _, ok := provider.(*CommandProvider); ok {
+		grader = nil
 	}
 	if cfg.NetworkPolicy == "" {
 		cfg.NetworkPolicy = "disabled"
@@ -401,19 +395,57 @@ func Run(corpus *Corpus, cfg RunConfig, provider Provider, grader Grader, inputs
 		cfg.HarnessVersion = "unspecified"
 	}
 
+	binding, err := corpus.bindSplit(cfg.SplitManifest, cfg.Split)
+	if err != nil {
+		return nil, err
+	}
 	runID := "run_" + hexTimeID()
 	summary := &Summary{
-		RunID:         runID,
-		StartedAt:     time.Now().UTC().Format(time.RFC3339),
-		Corpus:        corpus.Dir,
-		Arms:          cfg.Arms,
-		NetworkPolicy: cfg.NetworkPolicy,
-		DryRun:        cfg.DryRun,
-		Retrieval:     RetrievalSummary{RecallThreshold: RecallThreshold, PrecisionThreshold: PrecisionThreshold},
+		RunID:          runID,
+		Benefit:        OutcomeNotRun,
+		Coverage:       corpus.Coverage,
+		SplitBinding:   binding,
+		MechanismOnly:  grader != nil,
+		RepeatOverride: cfg.Repeats,
+		StartedAt:      time.Now().UTC().Format(time.RFC3339),
+		Corpus:         corpus.Dir,
+		Arms:           cfg.Arms,
+		NetworkPolicy:  cfg.NetworkPolicy,
+		DryRun:         cfg.DryRun,
+		Retrieval:      RetrievalSummary{RecallThreshold: RecallThreshold, PrecisionThreshold: PrecisionThreshold},
 	}
 
+	selected := map[string]bool{}
+	summary.requestMode = "legacy-task-only"
+	if completeRequest {
+		summary.requestMode = "full"
+	}
+	for _, id := range binding.Selected {
+		selected[id] = true
+	}
+	summary.Coverage.Excluded = map[string]string{}
+	for name, reason := range corpus.Coverage.Excluded {
+		summary.Coverage.Excluded[name] = reason
+	}
 	for _, cs := range corpus.Cases {
-		in, inErr := inputs(armProfile(cs), cs.Scenario.Task, cs.Scenario.Workspace)
+		if !selected[cs.ID] {
+			summary.Coverage.Excluded[corpus.caseFile[cs.ID]] = "member of another frozen split"
+			continue
+		}
+		summary.Coverage.Selected++
+		req := contracts.ResolutionRequest{SchemaVersion: contracts.SchemaVersion, Task: cs.Scenario.Task, WorkspaceHint: cs.Scenario.Workspace}
+		if completeRequest {
+			req.RiskHint = cs.Risk
+			if cfg.Harness != "none" {
+				harness := cfg.Harness
+				req.Harness = &harness
+			}
+		}
+		in, inErr := inputs(armProfile(cs), req)
+		if summary.caseEvidence == nil {
+			summary.caseEvidence = map[string]any{}
+		}
+		summary.caseEvidence[cs.ID] = caseEvidence(cs, cfg, req, in, inErr, corpus, binding)
 		if !cfg.SkipRetrieval {
 			summary.Retrieval.Cases = append(summary.Retrieval.Cases, measureRetrieval(cs, cfg.Refs, in, inErr))
 		}
@@ -491,12 +523,17 @@ func runUnit(summary *Summary, cfg RunConfig, cs Case, arm Arm, in resolver.Eval
 			res.Outcome, res.Reason = OutcomeFailed, "generation error: "+err.Error()
 			break
 		}
+		rr.Text = gen.Text
+		if grader == nil {
+			res.PerRepeat = append(res.PerRepeat, rr)
+			continue
+		}
 		score, why, gerr := grader.Grade(cs, gen)
 		if gerr != nil {
 			res.Outcome, res.Reason = OutcomeFailed, "grading error: "+gerr.Error()
 			break
 		}
-		rr.Score, rr.Text = score, gen.Text
+		rr.Score, rr.Text = &score, gen.Text
 		res.PerRepeat = append(res.PerRepeat, rr)
 		if score == 0 {
 			// prohibited/unsafe → binary blocker: the unit fails and is
@@ -511,6 +548,8 @@ func runUnit(summary *Summary, cfg RunConfig, cs Case, arm Arm, in resolver.Eval
 	case cfg.DryRun && res.Outcome == "":
 		res.Outcome = OutcomeNotRun
 		res.Reason = fmt.Sprintf("dry run: %d generation(s) rendered, not executed", len(res.PerRepeat))
+	case res.Outcome == "" && grader == nil:
+		res.Outcome, res.Reason = OutcomeGradingPending, "generation succeeded; independent blinded grades required"
 	case res.Outcome == "" && len(scores) > 0:
 		mean := 0.0
 		for _, s := range scores {
@@ -547,91 +586,27 @@ func sortedNames(entries []os.DirEntry) []string {
 	return out
 }
 
-// measureRetrieval scores the case's full (B4) pack against
-// required_evidence_refs.
-func measureRetrieval(cs Case, refs RefsFn, in resolver.EvalInputs, inErr error) RetrievalCase {
-	rc := RetrievalCase{CaseID: cs.ID, Required: len(cs.Gold.RequiredEvidenceRefs)}
-	if refs == nil {
-		rc.Outcome, rc.Reason = OutcomeNotRun, "no record reference lookup configured"
-		return rc
-	}
-	if rc.Required == 0 {
-		rc.Outcome, rc.Reason = OutcomeNotRun, "case declares no required_evidence_refs"
-		return rc
-	}
-	if inErr != nil {
-		rc.Outcome, rc.Reason = OutcomeNotRun, "resolution failed: "+inErr.Error()
-		return rc
-	}
-	profile := in.Profile
-	pack := in.Pack
-	required := map[string]bool{}
-	for _, r := range cs.Gold.RequiredEvidenceRefs {
-		required[r] = true
-	}
-	found := map[string]bool{}
-	items := append(append(append([]resolver.ContextItem{}, pack.Constraints...), pack.Guidance...), pack.Precedents...)
-	for _, it := range items {
-		if it.RecordID == "" {
-			continue
-		}
-		rc.Selected++
-		relevant := false
-		for _, id := range append([]string{it.RecordID}, refs(profile, it.RecordID)...) {
-			if required[id] {
-				found[id] = true
-				relevant = true
-			}
-		}
-		if relevant {
-			rc.Relevant++
-		}
-	}
-	rc.Retrieved = len(found)
-	rc.Recall = ratio(rc.Retrieved, rc.Required)
-	rc.Precision = ratio(rc.Relevant, rc.Selected)
-	rc.Outcome = OutcomePassed
-	if rc.Recall < RecallThreshold || rc.Precision < PrecisionThreshold {
-		rc.Outcome = OutcomeFailed
-	}
-	return rc
-}
-
-func (r *RetrievalSummary) aggregate() {
-	required, retrieved, selected, relevant := 0, 0, 0, 0
-	for _, c := range r.Cases {
-		if c.Outcome == OutcomeNotRun {
-			continue
-		}
-		r.Measured++
-		required += c.Required
-		retrieved += c.Retrieved
-		selected += c.Selected
-		relevant += c.Relevant
-	}
-	r.Recall = ratio(retrieved, required)
-	r.Precision = ratio(relevant, selected)
-	r.ThresholdsMet = r.Measured > 0 && r.Recall >= RecallThreshold && r.Precision >= PrecisionThreshold
-}
-
 func ratio(n, d int) float64 {
 	if d == 0 {
 		return 0
 	}
-	return math.Round(float64(n)/float64(d)*1000) / 1000
+	return float64(n) / float64(d)
 }
 
 // ExitCode applies the runner's exit contract: 1 when any evaluation unit or
 // retrieval measurement failed or any blocker was recorded; 3 when nothing
 // failed but at least one was not_run; 0 only when everything passed.
 func (s *Summary) ExitCode() int {
+	if len(s.CaseResults) == 0 && len(s.Retrieval.Cases) == 0 && len(s.Blockers) == 0 {
+		return 3
+	}
 	failed := len(s.Blockers) > 0
 	notRun := false
 	for _, cr := range s.CaseResults {
 		switch cr.Outcome {
 		case OutcomeFailed:
 			failed = true
-		case OutcomeNotRun:
+		case OutcomeNotRun, OutcomeGradingPending:
 			notRun = true
 		}
 	}
@@ -639,7 +614,7 @@ func (s *Summary) ExitCode() int {
 		switch rc.Outcome {
 		case OutcomeFailed:
 			failed = true
-		case OutcomeNotRun:
+		case OutcomeNotRun, OutcomeGradingPending:
 			notRun = true
 		}
 	}

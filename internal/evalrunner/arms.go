@@ -36,11 +36,7 @@ func (c ArmContext) Items() []resolver.ContextItem {
 	if c.Pack == nil {
 		return c.Records
 	}
-	out := []resolver.ContextItem{}
-	for _, sec := range [][]resolver.ContextItem{c.Pack.Constraints, c.Pack.Guidance, c.Pack.Precedents, c.Pack.LearnedExperimental} {
-		out = append(out, sec...)
-	}
-	return out
+	return c.Pack.DeliveredItems()
 }
 
 // ArmConstruction describes how an arm's context was built. It is recorded
@@ -174,10 +170,9 @@ func rawDump(b armBuild, in resolver.EvalInputs) (armBuild, error) {
 
 // rankedRetrieval (B3): Stage-A-eligible records in relevance order, before
 // precedence (competing decisions for one decision_key all remain), with no
-// provenance, truncated to the B4 pack's token budget by walking the ranked
-// list and skipping any record that no longer fits — the resolver's own
-// budgetSection rule, applied to one score-ordered list with nothing
-// reserved.
+// provenance, using the same requested numeric cap as B4 but flat item-text
+// estimates. B4 budgets the full compact JSON envelope and reserves mandatory
+// sections: this is a bundled pipeline comparison, not equal-overhead input.
 func rankedRetrieval(b armBuild, in resolver.EvalInputs) (armBuild, error) {
 	budget := in.Pack.Budget.RequestedTokens
 	if budget <= 0 {
@@ -205,7 +200,7 @@ func rankedRetrieval(b armBuild, in resolver.EvalInputs) (armBuild, error) {
 	b.Context = ArmContext{Shape: ShapeRecords, Records: items}
 	b.Construction.Source = "stage_a_ranked_retrieval"
 	b.Construction.Ordering = "relevance_score_desc_record_id_asc"
-	b.Construction.Transform = "no precedence, no provenance; plain score-ordered budget truncation"
+	b.Construction.Transform = "bundled pipeline contrast vs B4 (not a causal precedence/provenance ablation): no B4 relevance filtering, no precedence, no provenance; score-ordered flat item-text budget (B4 includes the full compact JSON envelope)"
 	b.Construction.Eligible = len(cands)
 	b.Construction.Selected = len(items)
 	b.Construction.Truncated = truncated

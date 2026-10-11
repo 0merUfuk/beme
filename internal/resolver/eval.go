@@ -19,7 +19,8 @@ type Candidate struct {
 	SourceRole  contracts.SourceRole `json:"source_role"`
 	DecisionKey string               `json:"decision_key,omitempty"`
 	Score       float64              `json:"score"`
-	// Tokens is the deterministic token estimate the resolver budgets with.
+	// Tokens estimates flat item text for B3/legacy ablations. B4 accounts
+	// for the full compact JSON envelope; these are not equal-overhead budgets.
 	Tokens int `json:"tokens"`
 }
 
@@ -83,6 +84,9 @@ func withoutScopeEvaluator(opts Options) eligibilityFunc {
 }
 
 func eligibleWith(store Store, cap policy.Capability, tc policy.TaskContext, req contracts.ResolutionRequest, evaluate eligibilityFunc) EligibleSet {
+	if len(tc.TaskKinds) == 0 {
+		tc.TaskKinds = TaskKindsForRequest(req.Task, req.TaskKindHints)
+	}
 	total := len(store.Records())
 	eligible, _ := stageA(store, cap, tc, evaluate, nil)
 	facets := classifyFacets(req.Task, tc.TaskKinds)

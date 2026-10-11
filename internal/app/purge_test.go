@@ -255,7 +255,7 @@ func TestPhysicalPurgeErasesAndBlocksResurrection(t *testing.T) {
 	for name, want := range map[string]int{
 		"anti_resurrection_tombstone":       1,
 		"derived_purge_projection_personal": 1,
-		"derived_purge_traces":              2,
+		"derived_purge_traces":              3, // two copies plus the real serving trace
 		"derived_purge_observations":        2,
 		"canonical_source_removed":          1,
 	} {

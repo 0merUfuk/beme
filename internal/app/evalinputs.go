@@ -24,12 +24,18 @@ const SyntheticSourcePrefix = "synthetic-"
 // EvalInputs opens a session under (profile, capabilityID,
 // experimentalLearned) and computes the evaluation inputs for one task.
 func (rt *Runtime) EvalInputs(profile contracts.Profile, capabilityID string, experimentalLearned bool, task, workspaceHint string) (resolver.EvalInputs, error) {
+	return rt.EvalInputsRequest(profile, capabilityID, experimentalLearned, contracts.ResolutionRequest{SchemaVersion: contracts.SchemaVersion, Task: task, WorkspaceHint: workspaceHint})
+}
+
+// EvalInputsRequest accepts the same narrowed request as serving. The task-only
+// EvalInputs API remains a source-compatible convenience wrapper.
+func (rt *Runtime) EvalInputsRequest(profile contracts.Profile, capabilityID string, experimentalLearned bool, req contracts.ResolutionRequest) (resolver.EvalInputs, error) {
 	sess, err := rt.Serve(profile, capabilityID, experimentalLearned)
 	if err != nil {
 		return resolver.EvalInputs{}, err
 	}
 	defer sess.Store.Close()
-	return sess.EvalInputs(task, workspaceHint)
+	return sess.EvalInputsRequest(req)
 }
 
 // EvalInputs computes the evaluation inputs for one task in this session:
@@ -39,35 +45,39 @@ func (rt *Runtime) EvalInputs(profile contracts.Profile, capabilityID string, ex
 //   - NoScopePack: the same pipeline with scope filtering disabled, computed
 //     only when NoScopeRefusal finds the deployment wholly synthetic.
 func (s *Session) EvalInputs(task, workspaceHint string) (resolver.EvalInputs, error) {
-	req := contracts.ResolutionRequest{
-		SchemaVersion: contracts.SchemaVersion,
-		Task:          task,
-		WorkspaceHint: workspaceHint,
-	}
+	return s.EvalInputsRequest(contracts.ResolutionRequest{SchemaVersion: contracts.SchemaVersion, Task: task, WorkspaceHint: workspaceHint})
+}
+
+func (s *Session) EvalInputsRequest(req contracts.ResolutionRequest) (resolver.EvalInputs, error) {
 	pack, _, err := s.Resolve(req)
 	if err != nil {
 		return resolver.EvalInputs{}, err
 	}
 
 	// Mirror Session.Resolve's trusted task context and options exactly.
-	tc := policy.TaskContext{Task: req.Task, TaskKinds: clampKinds(req.TaskKindHints)}
-	if req.WorkspaceHint != "" {
-		m := s.Runtime.Registry.Resolve(req.WorkspaceHint)
-		if m.Ambiguous {
-			return resolver.EvalInputs{}, fmt.Errorf("workspace ambiguous: %s", m.Reason)
-		}
-		tc.WorkspaceID = m.WorkspaceID
+	tc, err := s.taskContext(req)
+	if err != nil {
+		return resolver.EvalInputs{}, err
 	}
 	revoked, _, err := s.Runtime.EffectiveRevoked(s.Capability.Profile, s.Store)
 	if err != nil {
 		return resolver.EvalInputs{}, err
 	}
 	now := timeNowUTC()
+	health, err := s.Health()
+	if err != nil {
+		return resolver.EvalInputs{}, err
+	}
+	policyDigest, err := s.effectivePolicyDigest(revoked)
+	if err != nil {
+		return resolver.EvalInputs{}, err
+	}
 	opts := resolver.Options{
+		PolicyDigest: policyDigest,
 		Policy:       policy.NewEngine(now),
 		Revoked:      revoked,
 		Now:          now,
-		Degradations: s.degradations,
+		Degradations: health.Degradations,
 	}
 
 	in := resolver.EvalInputs{

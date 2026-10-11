@@ -57,6 +57,11 @@ func resolveWith(store Store, cap policy.Capability, tc policy.TaskContext, req 
 
 	trace = append(trace, TraceStep{Step: "capability", Outcome: fmt.Sprintf("bound profile=%s capability=%s", cap.Profile, cap.CapabilityID)})
 
+	// Task applicability is derived before eligibility, never from ranking.
+	if len(tc.TaskKinds) == 0 {
+		tc.TaskKinds = TaskKindsForRequest(req.Task, req.TaskKindHints)
+	}
+
 	// Stage A over every record.
 	eligible, trace := stageA(store, cap, tc, evaluate, trace)
 
@@ -107,13 +112,40 @@ type Options struct {
 	Revoked      map[string]bool
 	Now          time.Time
 	BudgetTokens int
+	PolicyDigest string // optional digest of effective serving policy facts
 	Degradations []DegradationInput
 }
 
 // DegradationInput is resolver-visible degradation (blueprint §13.7).
 type DegradationInput struct {
-	Kind   string
-	Detail string
+	Kind   string `json:"kind"`
+	Detail string `json:"detail"`
+}
+
+// TaskKindsForRequest derives task applicability independently of relevance.
+// Explicit hints narrow applicability: lexical inference cannot override a
+// mismatched hint. Capability, sensitivity and workspace checks remain hard gates.
+func TaskKindsForRequest(task string, hints []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, h := range hints {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" {
+			continue
+		}
+		if len(h) > 64 {
+			h = h[:64]
+		}
+		if !seen[h] {
+			out = append(out, h)
+			seen[h] = true
+		}
+	}
+	if len(out) == 0 {
+		return classifyFacets(task, nil)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func classifyFacets(task string, hints []string) []string {
@@ -143,9 +175,8 @@ func classifyFacets(task string, hints []string) []string {
 			facets[h] = true
 		}
 	}
-	if len(facets) == 0 {
-		facets["implementation"] = true
-	}
+	// No lexical evidence means unknown task kind, not an assumed
+	// implementation task. A fallback must not widen task-scope eligibility.
 	out := make([]string, 0, len(facets))
 	for f := range facets {
 		out = append(out, f)

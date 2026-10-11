@@ -18,6 +18,7 @@ import (
 
 	"github.com/0merUfuk/beme/internal/contracts"
 	"github.com/0merUfuk/beme/internal/durable"
+	"github.com/0merUfuk/beme/internal/policy"
 	"github.com/0merUfuk/beme/internal/resolver"
 	"github.com/0merUfuk/beme/internal/storage"
 )
@@ -178,17 +179,39 @@ func (rt *Runtime) LoadTrace(profile contracts.Profile, traceID string) ([]resol
 	if _, err := rt.LoadLedger(); err != nil {
 		return nil, err
 	}
-	id := strings.TrimPrefix(traceID, "trace_")
-	if id == "" || strings.ContainsAny(id, `/\.:`) {
+	id, valid := traceFileID(traceID)
+	if !valid {
 		return nil, ErrTraceUnavailable
 	}
 	data, err := os.ReadFile(filepath.Join(rt.Config.CacheDir, "traces", id+".json"))
 	if err != nil {
 		return nil, ErrTraceUnavailable
 	}
+	var saved storedTrace
 	var steps []resolver.TraceStep
-	if err := jsonUnmarshal(data, &steps); err != nil {
-		return nil, ErrTraceUnavailable
+	bound := jsonUnmarshal(data, &saved) == nil && saved.Binding.Profile != ""
+	if bound {
+		if saved.Binding.Profile != profile {
+			return nil, ErrTraceUnavailable
+		}
+		steps = saved.Steps
+	} else {
+		if err := jsonUnmarshal(data, &steps); err != nil {
+			return nil, ErrTraceUnavailable
+		}
+		// Legacy arrays lack task binding. A cross-profile trace is never safe.
+		matched := false
+		for _, st := range steps {
+			if st.Step == "capability" {
+				matched = strings.HasPrefix(st.Outcome, "bound profile="+string(profile)+" ")
+				if !matched {
+					return nil, ErrTraceUnavailable
+				}
+			}
+		}
+		if profile == contracts.ProfileWorkSafe && !matched {
+			return nil, ErrTraceUnavailable
+		}
 	}
 
 	visibleIDs := map[string]bool{}
@@ -211,15 +234,24 @@ func (rt *Runtime) LoadTrace(profile contracts.Profile, traceID string) ([]resol
 			return nil, err
 		}
 		for _, rec := range recs {
-			if vis.visible(rec) {
-				visibleIDs[rec.RecordID] = true
+			if !vis.visible(rec) {
+				continue
 			}
+			cap := policy.Capability{Profile: profile, ExperimentalLearnedGuidance: saved.Binding.Learned}
+			tc := policy.TaskContext{WorkspaceID: saved.Binding.WorkspaceID, TaskKinds: saved.Binding.TaskKinds, Risk: saved.Binding.Risk}
+			// Task text is deliberately not logged; task-string exclusions
+			// cannot be re-proved after a change. Legacy arrays have no task
+			// binding, so scoped records cannot be assumed still eligible.
+			if len(rec.Scope.Exclude) > 0 || (!bound && len(rec.Scope.RiskLevels) > 0) || !policy.NewEngine(timeNowUTC()).Evaluate(rec, cap, tc, vis.revoked, cap.ExperimentalLearnedGuidance).Eligible {
+				continue
+			}
+			visibleIDs[rec.RecordID] = true
 		}
 	}
 	out := []resolver.TraceStep{}
 	withheld := false
 	for _, st := range steps {
-		if st.RecordID != "" && !visibleIDs[st.RecordID] {
+		if (st.Step == "stage_a" && st.Outcome == "excluded") || (st.RecordID != "" && !visibleIDs[st.RecordID]) {
 			withheld = true
 			continue
 		}

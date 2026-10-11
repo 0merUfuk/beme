@@ -63,11 +63,23 @@ func targetFile(harness string) (string, error) {
 	}
 }
 
+// markers delimit one managed region. V1's bootstrap and the V2 brain block
+// use different markers so they install, verify, and remove independently.
+type markers struct{ begin, end string }
+
+var (
+	v1Markers    = markers{blockBegin, blockEnd}
+	brainMarkers = markers{"<!-- BEGIN beme-brain:managed -->", "<!-- END beme-brain:managed -->"}
+)
+
 // installBlock inserts or replaces the managed block in target. Adding the
 // block is the ONLY change outside an existing marker region, and it is
 // exactly one "\n" separator (append case).
 func installBlock(target string) error {
-	canonical := canonicalBootstrap()
+	return installManaged(v1Markers, canonicalBootstrap(), target)
+}
+
+func installManaged(m markers, canonical, target string) error {
 	data, err := os.ReadFile(target)
 	var txt string
 	if err != nil {
@@ -80,12 +92,12 @@ func installBlock(target string) error {
 	}
 	// Idempotency by content: if the managed region already holds the
 	// canonical text, do nothing (no byte churn).
-	if inner := extractBlock(txt); inner != "" && strings.TrimSpace(inner) == strings.TrimSpace(canonical) {
+	if inner := extractManaged(m, txt); inner != "" && strings.TrimSpace(inner) == strings.TrimSpace(canonical) {
 		return nil
 	}
-	block := blockBegin + "\n" + strings.TrimSpace(canonical) + "\n" + blockEnd
+	block := m.begin + "\n" + strings.TrimSpace(canonical) + "\n" + m.end
 
-	newTxt, changed := replaceOrAppendBlock(txt, block)
+	newTxt, changed := replaceOrAppendManaged(m, txt, block)
 	if !changed {
 		return nil
 	}
@@ -97,7 +109,9 @@ func installBlock(target string) error {
 
 // removeBlock deletes the managed region, preserving everything else
 // byte-exactly (FR-043).
-func removeBlock(target string) error {
+func removeBlock(target string) error { return removeManaged(v1Markers, target) }
+
+func removeManaged(m markers, target string) error {
 	data, err := os.ReadFile(target)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -106,11 +120,11 @@ func removeBlock(target string) error {
 		return err
 	}
 	txt := string(data)
-	i := strings.Index(txt, blockBegin)
+	i := strings.Index(txt, m.begin)
 	if i < 0 {
 		return nil // nothing managed here
 	}
-	j := strings.Index(txt, blockEnd)
+	j := strings.Index(txt, m.end)
 	if j < i {
 		return nil
 	}
@@ -123,43 +137,47 @@ func removeBlock(target string) error {
 		// situation in which install writes a newline before the marker.
 		start = i - 1
 	}
-	newTxt := txt[:start] + txt[j+len(blockEnd):]
+	newTxt := txt[:start] + txt[j+len(m.end):]
 	return os.WriteFile(target, []byte(newTxt), 0o644)
 }
 
 // verifyBlock reports whether the installed block matches canonical.
 func verifyBlock(target string) (bool, error) {
+	return verifyManaged(v1Markers, canonicalBootstrap(), target)
+}
+
+func verifyManaged(m markers, canonical, target string) (bool, error) {
 	data, err := os.ReadFile(target)
 	if err != nil {
 		return false, nil
 	}
-	inner := extractBlock(string(data))
-	return inner != "" && strings.TrimSpace(inner) == strings.TrimSpace(canonicalBootstrap()), nil
+	inner := extractManaged(m, string(data))
+	return inner != "" && strings.TrimSpace(inner) == strings.TrimSpace(canonical), nil
 }
 
-func splitBlock(txt string) (before, after string, ok bool) {
-	i := strings.Index(txt, blockBegin)
+func splitManaged(m markers, txt string) (before, after string, ok bool) {
+	i := strings.Index(txt, m.begin)
 	if i < 0 {
 		return "", "", false
 	}
-	j := strings.Index(txt, blockEnd)
+	j := strings.Index(txt, m.end)
 	if j < i {
 		return "", "", false
 	}
-	return txt[:i], txt[j+len(blockEnd):], true
+	return txt[:i], txt[j+len(m.end):], true
 }
 
-func extractBlock(txt string) string {
-	i := strings.Index(txt, blockBegin)
-	j := strings.Index(txt, blockEnd)
+func extractManaged(m markers, txt string) string {
+	i := strings.Index(txt, m.begin)
+	j := strings.Index(txt, m.end)
 	if i < 0 || j < i {
 		return ""
 	}
-	return txt[i+len(blockBegin) : j]
+	return txt[i+len(m.begin) : j]
 }
 
-func replaceOrAppendBlock(txt, block string) (string, bool) {
-	if before, after, ok := splitBlock(txt); ok {
+func replaceOrAppendManaged(m markers, txt, block string) (string, bool) {
+	if before, after, ok := splitManaged(m, txt); ok {
 		newTxt := before + block + after
 		return newTxt, newTxt != txt
 	}
@@ -167,13 +185,13 @@ func replaceOrAppendBlock(txt, block string) (string, bool) {
 		// Empty file: region without a leading separator newline.
 		return block, true
 	}
-	// Append case: exactly one separator newline + block. removeBlock's
+	// Append case: exactly one separator newline + block. removeManaged's
 	// start=i-1 cut is the exact inverse.
 	if !strings.HasSuffix(txt, "\n") {
 		txt += "\n"
 	} else {
 		// File already ends with "\n": still add ONE separator so the begin
-		// marker starts on its own line; the cut in removeBlock removes it.
+		// marker starts on its own line; the cut in removeManaged removes it.
 		txt += "\n"
 	}
 	return txt + block, true

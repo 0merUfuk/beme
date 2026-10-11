@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/contracts"
@@ -66,41 +63,11 @@ func explainCmd(rt *app.Runtime, traceID, profile string, jsonOut bool) {
 	}
 }
 
-// PersistTrace writes a trace to the cache for explain (bounded retention:
-// keep the newest 200; traces are derived cache, always discardable).
+// PersistTrace is the legacy CLI callback. Session.Resolve already persisted
+// the sanitized, policy-bound trace; the shared cache writer is idempotent.
 func PersistTrace(cacheDir, traceRef string, steps []resolver.TraceStep) {
-	dir := filepath.Join(cacheDir, "traces")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return // trace persistence is best-effort; resolution never fails on it
-	}
-	id := strings.TrimPrefix(traceRef, "trace_")
-	data, err := json.Marshal(steps)
-	if err != nil {
-		return
-	}
-	tmp := filepath.Join(dir, id+".tmp")
-	if os.WriteFile(tmp, data, 0o600) != nil {
-		return
-	}
-	os.Rename(tmp, filepath.Join(dir, id+".json"))
-	pruneTraces(dir, 200)
-}
-
-func pruneTraces(dir string, keep int) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	names := []string{}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names) // trace ids sort chronologically (time-based ids)
-	for len(names) > keep {
-		os.Remove(filepath.Join(dir, names[0]))
-		names = names[1:]
+	if traceRef != "" {
+		_ = app.PersistTrace(cacheDir, traceRef, steps)
 	}
 }
 

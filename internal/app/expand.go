@@ -65,11 +65,9 @@ func (s *Session) registerPack(pack resolver.Pack, tc policy.TaskContext) {
 		return
 	}
 	ids := map[string]bool{}
-	for _, section := range [][]resolver.ContextItem{pack.Constraints, pack.Guidance, pack.Precedents, pack.LearnedExperimental} {
-		for _, it := range section {
-			if it.RecordID != "" {
-				ids[it.RecordID] = true
-			}
+	for _, it := range pack.DeliveredItems() {
+		if it.RecordID != "" {
+			ids[it.RecordID] = true
 		}
 	}
 	gen, _ := s.Store.GetMeta("build_generation")

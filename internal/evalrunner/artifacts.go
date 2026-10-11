@@ -79,16 +79,23 @@ type environment struct {
 //     bootstrap digests, corpus file hashes, deployment revision, model
 //     settings, and the manifest's own digest;
 //   - raw/        owner-side: score, generated text, and the rendered prompt;
-//   - blinded/    grader-visible: opaque arm IDs only (never condition
-//     labels), score and generated text; not written for dry runs;
+//   - blinded/    owner-side sample contents: random IDs, task, gold and answer;
+//     export ONLY ReviewerPacket for reviewers (file timestamps leak order);
+//     never condition labels or machine scores; not written for dry runs;
 //   - arm_key.json (opaque→condition, withheld from graders), summary.json,
 //     and bundle_index.json (sha256 of every other artifact).
 func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader, corpus *Corpus) error {
 	if cfg.OutputDir == "" {
 		return nil // caller opted out of artifacts (unit tests may)
 	}
+	if err := os.MkdirAll(cfg.OutputDir, 0o700); err != nil {
+		return err
+	}
 	root := filepath.Join(cfg.OutputDir, s.RunID)
-	for _, d := range []string{"raw", "blinded", "manifests", "evidence"} {
+	if err := os.Mkdir(root, 0o700); err != nil {
+		return err
+	} // never overwrite a run
+	for _, d := range []string{"raw", "blinded", "manifests", "evidence", "corpus", "retrieval"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o700); err != nil {
 			return err
 		}
@@ -108,6 +115,9 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 		settings = provider.Settings()
 	}
 	evaluatorID, evaluatorVersion := fmt.Sprintf("%T", grader), "unversioned"
+	if grader == nil {
+		evaluatorID, evaluatorVersion = "pending-independent-offline-grades", "offline-blind-v1"
+	}
 	if id, ok := grader.(Identified); ok {
 		evaluatorID, evaluatorVersion = id.ID(), id.Version()
 	}
@@ -118,7 +128,8 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 		NetworkPolicy: s.NetworkPolicy, Harness: cfg.Harness, HarnessVersion: cfg.HarnessVersion,
 	}
 	envJSON, _ := json.Marshal(env)
-	// Generation requests carry no tools; the policy is the network policy.
+	// These are declarations about the request, not an observed sandbox.
+	// A command process can inherit tools/network access from its environment.
 	toolPolicy, _ := json.Marshal(struct {
 		Tools         []string `json:"tools"`
 		NetworkPolicy string   `json:"network_policy"`
@@ -134,7 +145,7 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 		if err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(filepath.Join(root, rel), b, 0o600); err != nil {
+		if err := writeExclusive(filepath.Join(root, rel), b); err != nil {
 			return "", err
 		}
 		digest := sha256Hex(string(b))
@@ -142,6 +153,10 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 		return digest, nil
 	}
 
+	if err := writeRunEvidence(s, cfg, corpus, root, index, write); err != nil {
+		return err
+	}
+	bindings := []SampleBinding{}
 	for _, cr := range s.CaseResults {
 		for _, rep := range cr.PerRepeat {
 			u, ok := units[unitKey(cr.CaseID, cr.Arm, rep.Repeat)]
@@ -223,31 +238,50 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 
 			// raw result (owner-visible)
 			if _, err := write(filepath.Join("raw", name), map[string]any{
-				"case_id":       cr.CaseID,
-				"repeat":        rep.Repeat,
-				"score":         rep.Score,
-				"text":          rep.Text,
-				"prompt_sha256": u.PromptSHA,
-				"prompt":        u.Prompt,
+				"case_id":         cr.CaseID,
+				"repeat":          rep.Repeat,
+				"mechanism_score": rep.Score,
+				"text":            rep.Text,
+				"prompt_sha256":   u.PromptSHA,
+				"prompt":          u.Prompt,
 			}); err != nil {
 				return err
 			}
 			if s.DryRun {
 				continue // nothing generated, nothing to grade
 			}
-			// blinded result (grader-visible: opaque arm)
-			if _, err := write(filepath.Join("blinded", name), map[string]any{
-				"case_id": cr.CaseID,
-				"arm":     armKeys[cr.Arm],
-				"repeat":  rep.Repeat,
-				"score":   rep.Score,
-				"text":    rep.Text,
-			}); err != nil {
+			// Fresh per-sample random IDs, no machine scores or condition
+			// labels. Salt the context commitment so the empty B0 hash does
+			// not unblind the arm. Owner key and salt stay outside blinded/.
+			id, salt := opaqueID("sample"), opaqueID("salt")
+			binding := SampleBinding{SampleID: id, CaseID: cr.CaseID, Arm: cr.Arm, Repeat: rep.Repeat,
+				AnswerSHA: sha256Hex(rep.Text), ContextSHA: sha256Hex(salt + u.ContextSHA),
+				ManifestSHA: manifestDigest, ContextSalt: salt, RawContextSHA: u.ContextSHA}
+			var cs Case
+			for _, c := range corpus.Cases {
+				if c.ID == cr.CaseID {
+					cs = c
+					break
+				}
+			}
+			binding.ArtifactPath = filepath.ToSlash(filepath.Join("blinded", id+".json"))
+			digest, err := write(binding.ArtifactPath, map[string]any{
+				"sample_id": id, "case_id": cr.CaseID, "repeat": rep.Repeat,
+				"task": cs.Scenario.Task, "gold": cs.Gold, "rubric_version": RubricVersion,
+				"answer_sha256": binding.AnswerSHA, "context_sha256": binding.ContextSHA,
+				"text": rep.Text,
+			})
+			if err != nil {
 				return err
 			}
+			binding.ArtifactSHA = digest
+			bindings = append(bindings, binding)
 		}
 	}
 
+	if _, err := write("grading_index.json", bindings); err != nil {
+		return err
+	}
 	// the arm key: withheld from the grader (blinding contract, §18.7.1)
 	if _, err := write("arm_key.json", blindArms); err != nil {
 		return err
@@ -259,7 +293,7 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, "bundle_index.json"), b, 0o600)
+	return writeExclusive(filepath.Join(root, "bundle_index.json"), b)
 }
 
 func unitKey(caseID string, arm Arm, repeat int) string {

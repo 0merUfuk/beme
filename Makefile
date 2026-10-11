@@ -1,4 +1,4 @@
-.PHONY: help validate validate-private test build vet fmt scan bench check
+.PHONY: help validate validate-private test build vet fmt scan bench check brain-live
 
 help:
 	@echo "validate          — public contract fixtures vs schemas (repo-local only, CI-safe)"
@@ -7,6 +7,7 @@ help:
 	@echo "scan              — private-data leakage scan (public patterns + local terms)"
 	@echo "bench             — NFR-008 benchmark on the public seed corpus (writes evals/benchmarks/seed-baseline.json)"
 	@echo "check             — full public gate: validate + build + vet + test + scan"
+	@echo "brain-live        — owner-run real harness/model calls (paid/quota; never part of check)"
 
 # Public contract validation. Repo-local only: no home-directory reads, no
 # private corpus dependency (ADR-023). Safe on any clean checkout/CI runner.
@@ -40,3 +41,7 @@ bench:
 	go run ./cmd/beme-bench --seed testdata/synthetic/records.json --out evals/benchmarks/seed-baseline.json
 
 check: validate build vet test scan
+
+# Owner-run only: real model calls starting at stage 2 (see docs/BRAIN.md).
+brain-live:
+	bash scripts/brain_live_e2e.sh

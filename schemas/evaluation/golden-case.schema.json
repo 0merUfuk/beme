@@ -12,6 +12,7 @@
     "gold_type",
     "category",
     "risk",
+    "capability",
     "scenario",
     "gold",
     "provenance",
@@ -138,6 +139,9 @@
             "type": "string"
           }
         },
+        "optional_evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "forbidden_evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "relevance_labels_complete": {"type": "boolean"},
         "required_evidence_refs": {
           "type": "array",
           "items": {

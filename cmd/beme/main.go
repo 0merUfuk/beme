@@ -103,13 +103,13 @@ performed by writing a descriptor under <config>/sources/ yourself.
 See "Registering a source" in docs/OPERATIONS.md.
 `, cmd)
 		os.Exit(2)
-	case "adapter", "candidate":
+	case "adapter", "candidate", "brain":
 		// handled directly below (need raw positional args)
 	default:
 		usage()
 		os.Exit(2)
 	}
-	if cmd != "adapter" {
+	if cmd != "adapter" && cmd != "brain" {
 		if err := fs.Parse(args[1:]); err != nil {
 			os.Exit(2)
 		}
@@ -189,7 +189,7 @@ See "Registering a source" in docs/OPERATIONS.md.
 		}
 		capID := capability
 		if capID == "" {
-			capID = "cap_" + profile + "_default"
+			capID = "cap_" + strings.ReplaceAll(profile, "-", "") + "default"
 		}
 		sess, err := rt.Serve(contracts.Profile(profile), capID, false)
 		if err != nil {
@@ -243,6 +243,8 @@ See "Registering a source" in docs/OPERATIONS.md.
 		fmt.Printf("forgotten %s (tombstoned in the projection and the durable ledger; content stays on disk until `beme purge`)\n", key)
 	case "adapter":
 		adapterCmd(args[1:])
+	case "brain":
+		brainCmd(args[1:])
 	case "explain":
 		if task == "" {
 			fmt.Fprintln(os.Stderr, "error: --trace required")
@@ -373,6 +375,7 @@ Usage:
   beme adapter install|remove|verify codex|claude-code
   beme serve --projection P --capability NAME --transport stdio
   beme mcp      (alias of serve)
+  beme brain ...  second-brain work memory (init|project|capture|doctor|session-start|briefing|list|show|done|archive|hooks|install-hooks|adapter|status|backup|restore|freeze)
 
 Sources are registered by writing a descriptor under <config>/sources/ —
 see "Registering a source" in docs/OPERATIONS.md.

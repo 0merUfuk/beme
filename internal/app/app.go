@@ -30,6 +30,12 @@ type Config struct {
 	// DataDir hosts projections; CacheDir hosts indexes/packs (separable).
 	DataDir  string `yaml:"data_dir" json:"data_dir"`
 	CacheDir string `yaml:"cache_dir" json:"cache_dir"`
+	// BrainDir is the V2 second-brain vault (plain markdown; ADR-033).
+	// Defaults inside DataDir so an explicit config dir stays self-contained.
+	BrainDir string `yaml:"brain_dir" json:"brain_dir"`
+	// BrainMode is the session-briefing cost/recall trade-off:
+	// normal (default) | economy | manual.
+	BrainMode string `yaml:"brain_mode" json:"brain_mode"`
 }
 
 // Runtime is the assembled application.
@@ -77,54 +83,76 @@ func DefaultDirs() (configHome, dataHome, cacheHome string, err error) {
 	return configHome, dataHome, cacheHome, nil
 }
 
-// Load reads deployment config + registrations. Missing config = empty
-// runtime (degrades honestly, never invents sources).
-func Load(configDirOverride string) (*Runtime, error) {
+// ResolveConfig reads only the deployment config (no sources, no registry)
+// and applies the platform/isolation defaults. Session-continuity hooks use
+// it so a broken V1 source registration can never block a session start.
+// It also returns the config directory it resolved.
+func ResolveConfig(configDirOverride string) (Config, string, error) {
 	configDir := configDirOverride
 	if configDir == "" {
 		var err error
 		configDir, _, _, err = DefaultDirs()
 		if err != nil {
-			return nil, err
+			return Config{}, "", err
 		}
 	}
-	rt := &Runtime{Config: Config{SchemaVersion: contracts.SchemaVersion}}
+	cfg := Config{SchemaVersion: contracts.SchemaVersion}
 
 	cfgPath := filepath.Join(configDir, "config.yaml")
 	if data, err := os.ReadFile(cfgPath); err == nil {
-		if err := yaml.Unmarshal(data, &rt.Config); err != nil {
-			return nil, fmt.Errorf("config.yaml: %w", err)
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return Config{}, "", fmt.Errorf("config.yaml: %w", err)
 		}
 	}
-	if rt.Config.CanonicalRoot == "" {
-		rt.Config.CanonicalRoot = configDir
+	if cfg.CanonicalRoot == "" {
+		cfg.CanonicalRoot = configDir
 	}
-	if rt.Config.DataDir == "" {
+	if cfg.DataDir == "" {
 		// Isolation rule (ADR-026): an explicit config dir is a self-contained
 		// deployment root — derived data defaults INSIDE it, never to the
 		// operator's real data home. The user-home default applies only when
 		// Load() is called with no override (the real CLI deployment case).
 		if configDirOverride != "" {
-			rt.Config.DataDir = filepath.Join(configDir, "data")
+			cfg.DataDir = filepath.Join(configDir, "data")
 		} else {
 			_, dataHome, _, err := DefaultDirs()
 			if err != nil {
-				return nil, err
+				return Config{}, "", err
 			}
-			rt.Config.DataDir = dataHome
+			cfg.DataDir = dataHome
 		}
 	}
-	if rt.Config.CacheDir == "" {
+	if cfg.CacheDir == "" {
 		if configDirOverride != "" {
-			rt.Config.CacheDir = filepath.Join(configDir, "cache")
+			cfg.CacheDir = filepath.Join(configDir, "cache")
 		} else {
 			_, _, cacheHome, err := DefaultDirs()
 			if err != nil {
-				return nil, err
+				return Config{}, "", err
 			}
-			rt.Config.CacheDir = cacheHome
+			cfg.CacheDir = cacheHome
 		}
 	}
+	if cfg.BrainDir == "" {
+		// Same isolation rule (ADR-026/033): BEME_BRAIN_HOME applies only to
+		// the real deployment case, never to an explicit config dir.
+		if env := os.Getenv("BEME_BRAIN_HOME"); env != "" && configDirOverride == "" {
+			cfg.BrainDir = env
+		} else {
+			cfg.BrainDir = filepath.Join(cfg.DataDir, "brain")
+		}
+	}
+	return cfg, configDir, nil
+}
+
+// Load reads deployment config + registrations. Missing config = empty
+// runtime (degrades honestly, never invents sources).
+func Load(configDirOverride string) (*Runtime, error) {
+	cfg, _, err := ResolveConfig(configDirOverride)
+	if err != nil {
+		return nil, err
+	}
+	rt := &Runtime{Config: cfg}
 
 	// Sources: trusted registration only (FR-020).
 	srcDir := filepath.Join(rt.Config.CanonicalRoot, "sources")
@@ -241,6 +269,19 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 			report.Skipped = append(report.Skipped, sd.SourceID+": profile not allowed")
 			continue
 		}
+		if safeMode {
+			approved := false
+			for _, purpose := range sd.Purpose {
+				if purpose == "safe_declassified" {
+					approved = true
+				}
+			}
+			if !approved {
+				report.fail(sd.SourceID, "source is not in the approved safe manifest")
+				continue // never open an unapproved root, even just to hash it
+			}
+		}
+		builder.PolicySources = append(builder.PolicySources, sd)
 		// From here the source is registered for this profile: anything that
 		// stops it contributing is a failure, reported and persisted so the
 		// deployment cannot look healthy over a source it never ingested.
@@ -358,21 +399,6 @@ func (rt *Runtime) Serve(profile contracts.Profile, capabilityID string, experim
 	view := projection.NewView(store, capabilityID, profile)
 	cap := policy.Capability{CapabilityID: capabilityID, Profile: profile, ExperimentalLearnedGuidance: experimentalLearned && profile == contracts.ProfilePersonal}
 	sess := &Session{View: view, Capability: cap, Runtime: rt, Store: store, issued: &packRegistry{}}
-	// Freshness honesty (§13.7). The notice never says why a rebuild is
-	// needed, so it cannot reveal that suppressed (purged) records sit in a
-	// restored store; doctor gives the operator the specifics.
-	if _, restored, err := rt.EffectiveRevoked(profile, store); err == nil && restored {
-		sess.degradations = append(sess.degradations, resolver.DegradationInput{
-			Kind:   "stale_projection",
-			Detail: "projection is out of date; run `beme build --profile " + string(profile) + "` before relying on results",
-		})
-	}
-	if store.Count() == 0 {
-		sess.degradations = append(sess.degradations, resolver.DegradationInput{
-			Kind:   "stale_projection",
-			Detail: "projection store is empty; run `beme build --profile " + string(profile) + "` before relying on results",
-		})
-	}
 	return sess, nil
 }
 
@@ -388,9 +414,7 @@ type Session struct {
 	PackTTL time.Duration
 	Now     func() time.Time
 
-	// degradations carry honesty notices surfaced into every resolved pack.
-	degradations []resolver.DegradationInput
-	issued       *packRegistry
+	issued *packRegistry
 }
 
 // Resolve runs the two-stage pipeline for one request.
@@ -398,21 +422,9 @@ func (s *Session) Resolve(req contracts.ResolutionRequest) (resolver.Pack, []res
 	// Task-origin rule (ADR-016): without a trusted integrity binding, task
 	// text is a retrieval hint only — enforced downstream by precedence
 	// tiers, recorded here.
-	tc := policy.TaskContext{
-		Task:      req.Task,
-		TaskKinds: clampKinds(req.TaskKindHints),
-	}
-	// Workspace identity: untrusted hint -> trusted registry; ambiguity
-	// fails closed (FR-014).
-	if req.WorkspaceHint != "" {
-		m := s.Runtime.Registry.Resolve(req.WorkspaceHint)
-		if m.Ambiguous {
-			return resolver.Pack{}, nil, fmt.Errorf("workspace ambiguous: %s", m.Reason)
-		}
-		tc.WorkspaceID = m.WorkspaceID
-	}
-	if req.RiskHint == "low" || req.RiskHint == "medium" || req.RiskHint == "high" {
-		tc.Risk = req.RiskHint
+	tc, err := s.taskContext(req)
+	if err != nil {
+		return resolver.Pack{}, nil, err
 	}
 	// Store tombstones + durable ledger (ADR-027); an unreadable ledger
 	// fails closed for personalization.
@@ -420,15 +432,42 @@ func (s *Session) Resolve(req contracts.ResolutionRequest) (resolver.Pack, []res
 	if err != nil {
 		return resolver.Pack{}, nil, err
 	}
+	health, err := s.Health()
+	if err != nil {
+		return resolver.Pack{}, nil, err
+	}
+	policyDigest, err := s.effectivePolicyDigest(revoked)
+	if err != nil {
+		return resolver.Pack{}, nil, err
+	}
 	opts := resolver.Options{
+		PolicyDigest: policyDigest,
 		Policy:       policy.NewEngine(timeNowUTC()),
 		Revoked:      revoked,
 		Now:          timeNowUTC(),
-		Degradations: s.degradations,
+		Degradations: health.Degradations,
 	}
 	pack, trace := resolver.Resolve(s.View, s.Capability, tc, req, opts)
+	trace = safeTrace(trace)
+	s.recordTrace(&pack, trace, tc)
 	s.registerPack(pack, tc)
 	return pack, trace, nil
+}
+
+// taskContext is shared by serving and evaluation request entrypoints.
+func (s *Session) taskContext(req contracts.ResolutionRequest) (policy.TaskContext, error) {
+	tc := policy.TaskContext{Task: req.Task, TaskKinds: resolver.TaskKindsForRequest(req.Task, req.TaskKindHints)}
+	if req.WorkspaceHint != "" {
+		m := s.Runtime.Registry.Resolve(req.WorkspaceHint)
+		if m.Ambiguous {
+			return tc, fmt.Errorf("workspace ambiguous: %s", m.Reason)
+		}
+		tc.WorkspaceID = m.WorkspaceID
+	}
+	if req.RiskHint == "low" || req.RiskHint == "medium" || req.RiskHint == "high" {
+		tc.Risk = req.RiskHint
+	}
+	return tc, nil
 }
 
 func clampKinds(hints []string) []string {
@@ -446,8 +485,8 @@ func clampKinds(hints []string) []string {
 	return out
 }
 
-// ResolveOnly resolves a pack for a task without CLI output/trace-persistence
-// side effects — the interface evaluation harnesses use.
+// ResolveOnly resolves a pack without CLI output. Trace recording is shared
+// with every serving entrypoint and remains optional on cache-write failure.
 func (s *Session) ResolveOnly(task, workspaceHint string) (resolver.Pack, error) {
 	req := contracts.ResolutionRequest{
 		SchemaVersion: contracts.SchemaVersion,

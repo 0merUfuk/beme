@@ -94,6 +94,9 @@ func fixtureCorpus(t *testing.T) string {
 	}
 	b2, _ := json.MarshalIndent(c2, "", "  ")
 	os.WriteFile(filepath.Join(dir, "case2.json"), b2, 0o600)
+	if err := fx.WriteSyntheticSplit(dir); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -119,8 +122,8 @@ func syntheticCorpus(t *testing.T, d *fx.Deployment, repeats int) *evalrunner.Co
 // TestRunnerFullPipelineB0ThroughB4 proves the complete mechanism with
 // deterministic mocks and the public synthetic deployment (no paid calls):
 // every baseline and ablation runs, repeats work, manifests exist, blinded
-// packaging hides arm identity, and B4 (full pack) beats B0 (no pack) as the
-// contract's primary endpoint expects.
+// packaging hides condition labels. Constructed context-echo scores differ
+// by arm; this is mechanism evidence, never an observed benefit endpoint.
 func TestRunnerFullPipelineB0ThroughB4(t *testing.T) {
 	d := buildFixture(t, fx.Options{})
 	corpus := syntheticCorpus(t, d, 3)
@@ -248,16 +251,20 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 		c := map[string]any{
 			"id": id, "schema_version": "1", "status": "locked", "gold_type": "historical_truth",
 			"category": "architecture", "risk": "medium", "capability": "work-safe",
-			"scenario": map[string]any{"task": "Choose the storage engine for a single-writer local batch tool."},
-			"gold":     map[string]any{"acceptable_decisions": []string{"embedded database file"}, "required_evidence_refs": refs},
-			"grading":  map[string]any{"repeats": 1},
+			"scenario":   map[string]any{"task": "Choose the storage engine for a single-writer local batch tool."},
+			"gold":       map[string]any{"acceptable_decisions": []string{"embedded database file"}, "unacceptable_decisions": []string{"remote"}, "required_evidence_refs": refs},
+			"provenance": map[string]any{"approved_by_user": true},
+			"grading":    map[string]any{"rubric": "0-4 blind paired", "repeats": 1},
 		}
 		b, _ := json.Marshal(c)
 		os.WriteFile(filepath.Join(dir, name), b, 0o600)
 	}
-	write("a.json", "synthetic.retrieval.all-found", []string{"P-001", "P-002"})
-	write("b.json", "synthetic.retrieval.one-missing", []string{"P-001", "P-404"})
-	write("c.json", "synthetic.retrieval.no-refs", nil)
+	write("a.json", "decision.synthetic.retrieval.all-found.v1", []string{"P-001", "P-002"})
+	write("b.json", "decision.synthetic.retrieval.one-missing.v1", []string{"P-001", "P-404"})
+	write("c.json", "decision.synthetic.retrieval.no-refs.v1", []string{})
+	if err := fx.WriteSyntheticSplit(dir); err != nil {
+		t.Fatal(err)
+	}
 	corpus, err := evalrunner.LoadCorpus(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -290,18 +297,18 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 	for _, c := range sum.Retrieval.Cases {
 		byID[c.CaseID] = c
 	}
-	all := byID["synthetic.retrieval.all-found"]
+	all := byID["decision.synthetic.retrieval.all-found.v1"]
 	if all.Recall != 1 || all.Selected == 0 || all.Precision != float64(all.Relevant)/float64(all.Selected) {
 		t.Fatalf("all-found case: %+v", all)
 	}
-	miss := byID["synthetic.retrieval.one-missing"]
+	miss := byID["decision.synthetic.retrieval.one-missing.v1"]
 	if miss.Recall != 0.5 || miss.Retrieved != 1 || miss.Outcome != evalrunner.OutcomeFailed {
 		t.Fatalf("one-missing case must score recall 0.5 and fail the threshold: %+v", miss)
 	}
-	if none := byID["synthetic.retrieval.no-refs"]; none.Outcome != evalrunner.OutcomeNotRun {
-		t.Fatalf("a case without required refs must be not_run, got %+v", none)
+	if none := byID["decision.synthetic.retrieval.no-refs.v1"]; none.Outcome != evalrunner.OutcomeFailed {
+		t.Fatalf("negative control with delivered unrelated evidence must fail, got %+v", none)
 	}
-	if sum.Retrieval.Measured != 2 || sum.Retrieval.Recall != 0.75 || sum.Retrieval.ThresholdsMet {
+	if sum.Retrieval.Measured != 3 || sum.Retrieval.Recall != 0.75 || sum.Retrieval.ThresholdsMet {
 		t.Fatalf("aggregate retrieval: %+v", sum.Retrieval)
 	}
 	if code := sum.ExitCode(); code != 1 {
@@ -323,7 +330,7 @@ func TestRunnerRetrievalMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sum3.CaseResults) != 0 || sum3.Retrieval.Measured != 2 || sum3.ExitCode() != 1 {
+	if len(sum3.CaseResults) != 0 || sum3.Retrieval.Measured != 3 || sum3.ExitCode() != 1 {
 		t.Fatalf("retrieval-only run: results=%d retrieval=%+v exit=%d", len(sum3.CaseResults), sum3.Retrieval, sum3.ExitCode())
 	}
 }
@@ -485,6 +492,7 @@ func TestSummaryExitCodeContract(t *testing.T) {
 		s    evalrunner.Summary
 		want int
 	}{
+		{"empty is not success", evalrunner.Summary{}, 3},
 		{"all passed", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass, pass}}, 0},
 		{"not_run only", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{pass, notRun}}, 3},
 		{"failure beats not_run", evalrunner.Summary{CaseResults: []evalrunner.CaseResult{notRun, fail}}, 1},
