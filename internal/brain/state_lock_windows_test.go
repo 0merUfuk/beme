@@ -11,8 +11,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// A delete-sharing handle deterministically keeps a deleted lock pending. This
-// is the native CreateFile error boundary, not a mock of RecordSession's result.
+// Explicit classic disposition keeps the lock delete-pending until h closes.
+// DeleteFile may instead use POSIX deletion and free the name while h is open.
+// This is the native CreateFile boundary, not a mock of RecordSession's result.
 func TestSessionAccountingWindowsDeletePendingRecovers(t *testing.T) {
 	v, _ := newVault(t)
 	lock := filepath.Join(v.Root, ".state", "demo.lock")
@@ -23,7 +24,7 @@ func TestSessionAccountingWindowsDeletePendingRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE,
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.DELETE,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
@@ -31,11 +32,16 @@ func TestSessionAccountingWindowsDeletePendingRecovers(t *testing.T) {
 	}
 	defer func() {
 		if h != windows.InvalidHandle {
-			windows.CloseHandle(h)
+			if err := windows.CloseHandle(h); err != nil {
+				t.Error("close synthetic delete-pending handle:", err)
+			}
 		}
 	}()
-	if err := windows.DeleteFile(name); err != nil {
-		t.Fatal(err)
+	// FILE_DISPOSITION_INFO contains one BOOLEAN byte, not a Win32 BOOL.
+	// Use FileDispositionInfo, not FileDispositionInfoEx with POSIX semantics.
+	deleteFile := byte(1)
+	if err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, &deleteFile, 1); err != nil {
+		t.Fatal("set classic delete-pending disposition:", err)
 	}
 	f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if f != nil {
@@ -44,7 +50,7 @@ func TestSessionAccountingWindowsDeletePendingRecovers(t *testing.T) {
 	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		t.Fatalf("fixture did not establish delete-pending access denial: %v", err)
 	}
-	t.Logf("native delete-pending exclusive create: %v", err)
+	t.Logf("native classic FileDispositionInfo exclusive create: %v", err)
 
 	var changes, commits atomic.Int32
 	done := make(chan error, 1)
@@ -62,17 +68,23 @@ func TestSessionAccountingWindowsDeletePendingRecovers(t *testing.T) {
 		finished = true
 	case <-time.After(50 * time.Millisecond):
 	}
-	before := changes.Load()
+	changesBefore, commitsBefore := changes.Load(), commits.Load()
 	closeErr := windows.CloseHandle(h)
-	h = windows.InvalidHandle
+	if closeErr == nil {
+		h = windows.InvalidHandle
+	}
 	if !finished {
-		early = <-done
+		select {
+		case early = <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("accounting did not finish after releasing delete-pending handle: close=%v", closeErr)
+		}
 	}
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	if finished || before != 0 {
-		t.Fatalf("must wait for acquired ownership, not refuse/enter during delete-pending: finished=%t callbacks=%d error=%v", finished, before, early)
+	if finished || changesBefore != 0 || commitsBefore != 0 {
+		t.Fatalf("must wait for acquired ownership, not refuse/enter during delete-pending: finished=%t change=%d commit=%d error=%v", finished, changesBefore, commitsBefore, early)
 	}
 	if early != nil || changes.Load() != 1 || commits.Load() != 1 {
 		t.Fatalf("released delete-pending lock did not commit once: change=%d commit=%d error=%v", changes.Load(), commits.Load(), early)

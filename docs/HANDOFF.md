@@ -1,6 +1,6 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 22 — 2026-10-11
+**Revision:** 23 — 2026-10-11
 **Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
 publication preparation follows ADR-041. The separately authorized local rollout
 verified installed CLI and fresh configured MCP connections, not model use.
@@ -166,9 +166,14 @@ merge boundary.
 passed all five native source/archive targets, Linux/macOS full suites and the
 privacy scan. Windows full Go failed only the new delete-pending fixture's
 precondition: its initial exclusive create returned no error. The log did not
-report failures in the original twelve-event or permanent-ACL controls. Correct
-the fixture's established native state rather than weakening either invariant;
-that failed run remains RED evidence, not release acceptance.
+report failures in the original twelve-event or permanent-ACL controls. The
+fixture now requests classic `FileDispositionInfo` explicitly with `DELETE`
+access rather than assuming `DeleteFile` retains a blocked name. Its strict
+access-denial precondition and exactly-one recovery remain, with both callbacks
+checked before release. Parent verified the API contract, changed-file hash,
+unchanged permanent-denial controls and Windows-targeted compile/vet. This is a
+Windows-test-only correction, not another production change; it still requires
+native execution. The failed run remains RED evidence, not release acceptance.
 
 The independent reader also found an unsupported managed Cursor command in a
 secondary guide. Parent traced the shared target selector and replayed all four
