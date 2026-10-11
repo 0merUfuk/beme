@@ -59,23 +59,38 @@ func TestStaleAccountingLockRecovers(t *testing.T) {
 
 func TestConcurrentSessionInvocationsDoNotLoseUpdates(t *testing.T) {
 	v, _ := newVault(t)
+	const invocations = 12
+	results := make(chan error, invocations)
 	var wg sync.WaitGroup
-	for i := 0; i < 12; i++ {
+	for i := 0; i < invocations; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); v.RecordSession("demo", t0) }()
+		go func() { defer wg.Done(); results <- v.RecordSession("demo", t0) }()
 	}
 	wg.Wait()
-	// A no-ID event is an invocation, not an independently identified session.
-	st := v.loadState("demo")
-	// Access persisted JSON status so the test requires truthful public labels.
-	s := v.Status()
-	_ = st
-	if s.SilentSession["demo"] != 0 {
-		t.Fatal("unknown-ID starts are not distinct sessions")
+	close(results)
+	refused := 0
+	for err := range results {
+		if err == nil {
+			continue
+		}
+		// A bounded lock refusal is explicitly before any write. It is not a
+		// lost successful event. Any other error needs investigation, not retry.
+		if err.Error() != "session accounting locked; event not recorded" {
+			t.Fatalf("unexpected accounting error: %v", err)
+		}
+		refused++
+		t.Logf("explicit pre-write refusal: %v", err)
 	}
-	if s.Invocations["demo"] != 12 {
-		t.Fatalf("lost concurrent events: %+v", s.Invocations)
+	assertKnownInvocations(t, v, invocations-refused)
+	// Retry only explicitly refused events, sequentially after contention has
+	// ended. Preserve the original requirement of all twelve persisted events;
+	// never retry a successful/ambiguous write or lower the final expected count.
+	for i := 0; i < refused; i++ {
+		if err := v.RecordSession("demo", t0); err != nil {
+			t.Fatal("quiescent retry failed:", err)
+		}
 	}
+	assertKnownInvocations(t, v, invocations)
 }
 
 func TestFrozenPartialVaultCannotBeReinitialized(t *testing.T) {

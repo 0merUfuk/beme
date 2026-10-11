@@ -88,7 +88,8 @@ func verifyBundle(root string) (verifiedBundle, error) {
 		return v, fmt.Errorf("empty bundle index")
 	}
 	for name, digest := range v.Index {
-		if !fs.ValidPath(name) || strings.Contains(name, "\\") || name == "bundle_index.json" {
+		path, err := bundleFilePath(root, name)
+		if err != nil || name == "bundle_index.json" {
 			return v, fmt.Errorf("unsafe bundle path")
 		}
 		// Check every ancestor against symlink substitution, not just the file.
@@ -100,7 +101,7 @@ func verifyBundle(root string) (verifiedBundle, error) {
 				return v, fmt.Errorf("unreadable or linked artifact")
 			}
 		}
-		data, err := readBounded(filepath.Join(root, filepath.FromSlash(name)))
+		data, err := readBounded(path)
 		if err != nil || sha256Hex(string(data)) != digest {
 			return v, fmt.Errorf("artifact hash mismatch: %s", name)
 		}
@@ -156,10 +157,14 @@ func verifyBundle(root string) (verifiedBundle, error) {
 	return v, nil
 }
 func (v verifiedBundle) read(name string, out any) error {
+	path, err := bundleFilePath(v.Root, name)
+	if err != nil {
+		return err
+	}
 	if v.Index[name] == "" {
 		return fmt.Errorf("bundle missing %s", name)
 	}
-	b, err := readBounded(filepath.Join(v.Root, name))
+	b, err := readBounded(path)
 	if err != nil {
 		return err
 	}

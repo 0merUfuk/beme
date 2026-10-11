@@ -336,8 +336,13 @@ func TestExtendedLint(t *testing.T) {
 	n, _ := readNote(p)
 	n.Supersedes = []string{"dec-19990101-ghost-0000"}
 	v.writeNote(p, n)
-	// identity pointer to a missing document
-	os.WriteFile(filepath.Join(v.Root, "identity.md"), []byte("# Identity\n\nRole: engineer.\n\n## Pointers\n\n- /definitely/not/here/FOUNDATIONS.md — operating model\n- <placeholder ignored>\n"), 0o600)
+	// Use an actual native absolute path: /definitely/... is volume-relative,
+	// not absolute, on Windows. A missing pointer still has to be flagged.
+	missing := filepath.Join(t.TempDir(), "missing documents", "FOUNDATIONS.md")
+	identity := "# Identity\n\nRole: engineer.\n\n## Pointers\n\n- `" + missing + "` — operating model\n- <placeholder ignored>\n- https://example.invalid/FOUNDATIONS.md — external reference\n"
+	if err := os.WriteFile(filepath.Join(v.Root, "identity.md"), []byte(identity), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	r := mustDoctor(t, v, t0.Add(200*24*time.Hour)) // 200 days later
 	for _, kind := range []string{"broken_ref", "identity_pointer", "aging"} {
@@ -353,6 +358,64 @@ func TestExtendedLint(t *testing.T) {
 	}
 	if idents != 1 {
 		t.Errorf("only the real path is checked (placeholder ignored), got %d flags", idents)
+	}
+}
+
+func TestIdentityPointersNativePathsOnly(t *testing.T) {
+	v, _ := newVault(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	native := filepath.Join(home, "canonical documents", "FOUNDATIONS.md")
+	if !filepath.IsAbs(native) {
+		t.Fatal("fixture is not native absolute:", native)
+	}
+	cases := []struct{ name, text, want string }{
+		{"absolute", native, native},
+		{"backticks-description", "`" + native + "` — operating model", native},
+		{"quoted-description", "\"" + native + "\" -- operating model", native},
+		{"home-relative", "~/FOUNDATIONS.md", filepath.Join(home, "FOUNDATIONS.md")},
+		{"https", "https://example.invalid/FOUNDATIONS.md", ""},
+		{"file-url", "file:///canonical/FOUNDATIONS.md", ""},
+		{"placeholder", "<absolute path to canonical foundations>", ""},
+		{"relative", "canonical/FOUNDATIONS.md", ""},
+	}
+	if runtime.GOOS == "windows" {
+		cases = append(cases, []struct{ name, text, want string }{
+			{"slash-drive", filepath.ToSlash(native), filepath.ToSlash(native)},
+			{"unc", `\\server\share\FOUNDATIONS.md`, `\\server\share\FOUNDATIONS.md`},
+			{"volume-relative", `/canonical/FOUNDATIONS.md`, ""},
+			{"drive-relative", `C:FOUNDATIONS.md`, ""},
+		}...)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(v.Root, "identity.md"), []byte("## Pointers\n- "+tc.text+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got := v.identityPointers() // Parse only; never access a UNC/URL target.
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("non-local pointer treated as local: %q", got)
+				}
+			} else if len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("native pointer: got %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// The lint control must distinguish present and missing actual documents,
+	// not simply emit a warning for every pointer-shaped input.
+	if err := os.MkdirAll(filepath.Dir(native), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("canonical fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.Root, "identity.md"), []byte("## Pointers\n- `"+native+"`\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if r := mustDoctor(t, v, t0); hasFlag(r, "identity_pointer") {
+		t.Fatalf("existing native pointer falsely flagged: %+v", r.Flags)
 	}
 }
 

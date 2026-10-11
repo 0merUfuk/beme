@@ -140,16 +140,22 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 		units[unitKey(u.CaseID, u.Arm, u.Repeat)] = u
 	}
 	index := map[string]string{}
+	// rel is a wire identifier everywhere, including the summary and indices.
+	// Convert to an OS-native path only at the filesystem boundary.
 	write := func(rel string, v any) (string, error) {
+		path, err := bundleFilePath(root, rel)
+		if err != nil {
+			return "", err
+		}
 		b, err := json.MarshalIndent(v, "", "  ")
 		if err != nil {
 			return "", err
 		}
-		if err := writeExclusive(filepath.Join(root, rel), b); err != nil {
+		if err := writeExclusive(path, b); err != nil {
 			return "", err
 		}
 		digest := sha256Hex(string(b))
-		index[filepath.ToSlash(rel)] = digest
+		index[rel] = digest
 		return digest, nil
 	}
 
@@ -209,13 +215,14 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 				"ended_at":                s.EndedAt,
 			}
 			name := fmt.Sprintf("%s_%s_rep%02d.json", sanitize(cr.CaseID), armKeys[cr.Arm], rep.Repeat)
-			manifestDigest, err := write(filepath.Join("manifests", name), m)
+			manifestPath := "manifests/" + name
+			manifestDigest, err := write(manifestPath, m)
 			if err != nil {
 				return err
 			}
-			s.ManifestPaths = append(s.ManifestPaths, filepath.Join("manifests", name))
+			s.ManifestPaths = append(s.ManifestPaths, manifestPath)
 
-			if _, err := write(filepath.Join("evidence", name), map[string]any{
+			if _, err := write("evidence/"+name, map[string]any{
 				"case_id":          cr.CaseID,
 				"arm":              string(cr.Arm),
 				"opaque_arm":       armKeys[cr.Arm],
@@ -237,7 +244,7 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 			}
 
 			// raw result (owner-visible)
-			if _, err := write(filepath.Join("raw", name), map[string]any{
+			if _, err := write("raw/"+name, map[string]any{
 				"case_id":         cr.CaseID,
 				"repeat":          rep.Repeat,
 				"mechanism_score": rep.Score,
@@ -264,7 +271,7 @@ func writeArtifacts(s *Summary, cfg RunConfig, provider Provider, grader Grader,
 					break
 				}
 			}
-			binding.ArtifactPath = filepath.ToSlash(filepath.Join("blinded", id+".json"))
+			binding.ArtifactPath = "blinded/" + id + ".json"
 			digest, err := write(binding.ArtifactPath, map[string]any{
 				"sample_id": id, "case_id": cr.CaseID, "repeat": rep.Repeat,
 				"task": cs.Scenario.Task, "gold": cs.Gold, "rubric_version": RubricVersion,

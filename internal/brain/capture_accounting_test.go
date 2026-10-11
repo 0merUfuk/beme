@@ -270,7 +270,7 @@ func TestCaptureAccountingBoundedInterruptedIntents(t *testing.T) {
 }
 
 func TestCaptureAccountingRefusedAndPartialIntentsStayUnknown(t *testing.T) {
-	for _, kind := range []string{"empty", "partial", "oversized", "directory", "symlink", "legacy-mismatch"} {
+	for _, kind := range []string{"empty", "partial", "oversized", "directory", "nonempty-directory", "symlink", "file-symlink", "directory-symlink", "readonly", "legacy-mismatch"} {
 		t.Run(kind, func(t *testing.T) {
 			v, _ := newVault(t)
 			path := v.captureIntentPath("demo", 0)
@@ -287,8 +287,27 @@ func TestCaptureAccountingRefusedAndPartialIntentsStayUnknown(t *testing.T) {
 				err = os.WriteFile(path, []byte(strings.Repeat("x", maxDocumentBytes+1)), 0600)
 			case "directory":
 				err = os.Mkdir(path, 0700)
+			case "nonempty-directory":
+				if err = os.Mkdir(path, 0700); err == nil {
+					err = os.WriteFile(filepath.Join(path, "retained"), []byte("do not remove"), 0600)
+				}
 			case "symlink":
 				err = os.Symlink(filepath.Join(t.TempDir(), "absent"), path)
+			case "file-symlink":
+				target := filepath.Join(t.TempDir(), "retained")
+				if err = os.WriteFile(target, []byte("do not replace"), 0600); err == nil {
+					err = os.Symlink(target, path)
+				}
+				t.Cleanup(func() {
+					if data, err := os.ReadFile(target); err != nil || string(data) != "do not replace" {
+						t.Error("symlink target changed", err)
+					}
+				})
+			case "directory-symlink":
+				err = os.Symlink(t.TempDir(), path)
+			case "readonly":
+				err = os.WriteFile(path, []byte("unfinished\n"), 0400)
+				t.Cleanup(func() { os.Chmod(path, 0600) })
 			case "legacy-mismatch":
 				path = v.captureMarker("demo")
 				err = os.WriteFile(path, []byte("legacy-unacknowledged\n"), 0600)
@@ -296,15 +315,105 @@ func TestCaptureAccountingRefusedAndPartialIntentsStayUnknown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !v.loadState("demo").AccountingUnknown {
-				t.Fatal("refused intent claimed known")
+			assertRefusedIntentPreserved(t, v, path)
+		})
+	}
+}
+
+func assertRefusedIntentPreserved(t *testing.T, v *Vault, path string) {
+	t.Helper()
+	before, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contents []byte
+	if before.Mode().IsRegular() {
+		contents, err = os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !v.loadState("demo").AccountingUnknown {
+		t.Fatal("refused intent claimed known")
+	}
+	// Occupancy consumes this slot, not the other free slots. Allocation alone
+	// must neither read/follow the refused node nor authorize its reclamation.
+	intent, err := v.markCapture("demo", "free-slot-control")
+	if err != nil {
+		t.Fatal("occupied intent prevented allocation of free capacity:", err)
+	}
+	if intent.path == path {
+		t.Fatal("allocated an occupied intent")
+	}
+	v.cancelCapture(intent)
+	n := mustCapture(t, v, sqliteDecision, t0)
+	if !fileExists(n.Path) {
+		t.Fatal("free capacity did not publish an accepted proposal")
+	}
+	if !v.loadState("demo").AccountingUnknown || len(v.Status().AccountingUnknown) != 1 {
+		t.Fatal("another reset acknowledged an interrupted/refused intent")
+	}
+	after, err := os.Lstat(path)
+	if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("refused intent changed or was removed", err)
+	}
+	if before.Mode().IsRegular() {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(contents) {
+			t.Fatal("refused intent contents changed", err)
+		}
+	}
+}
+
+func TestCaptureAccountingOccupiedDirectoriesExhaustOnlyTheirSlots(t *testing.T) {
+	v, _ := newVault(t)
+	for slot := 0; slot < captureIntentLimit-1; slot++ {
+		if err := os.MkdirAll(v.captureIntentPath("demo", slot), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last, err := v.markCapture("demo", "last-free-slot")
+	if err != nil || last.path != v.captureIntentPath("demo", captureIntentLimit-1) {
+		t.Fatalf("last free slot unavailable: %+v %v", last, err)
+	}
+	in := sqliteDecision
+	in.Project = "demo"
+	if n, err := v.Capture(in, t0); err == nil || n != nil || !strings.Contains(err.Error(), "capacity") {
+		t.Fatalf("occupied capacity must refuse before publication: %+v %v", n, err)
+	}
+	if notes, err := filepath.Glob(filepath.Join(v.inboxDir(), "*.md")); err != nil || len(notes) != 0 {
+		t.Fatal("capacity refusal published a proposal", notes, err)
+	}
+	if !v.loadState("demo").AccountingUnknown {
+		t.Fatal("occupied capacity became known")
+	}
+}
+
+func TestCaptureAccountingRefusedParentCannotAuthorizePublication(t *testing.T) {
+	for _, kind := range []string{"file", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			v, _ := newVault(t)
+			stateDir := filepath.Join(v.Root, ".state")
+			outside := t.TempDir()
+			var err error
+			if kind == "file" {
+				err = os.WriteFile(stateDir, []byte("not a directory"), 0600)
+			} else {
+				err = os.Symlink(outside, stateDir)
 			}
-			mustCapture(t, v, sqliteDecision, t0)
-			if !v.loadState("demo").AccountingUnknown {
-				t.Fatal("another reset acknowledged an interrupted/refused intent")
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := os.Lstat(path); err != nil {
-				t.Fatal("refused intent was removed", err)
+			in := sqliteDecision
+			in.Project = "demo"
+			if n, err := v.Capture(in, t0); err == nil || n != nil {
+				t.Fatalf("refused accounting parent authorized publication: %+v %v", n, err)
+			}
+			if notes, err := filepath.Glob(filepath.Join(v.inboxDir(), "*.md")); err != nil || len(notes) != 0 {
+				t.Fatal("accounting refusal published a proposal", notes, err)
+			}
+			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+				t.Fatal("accounting wrote through a refused parent", entries, err)
 			}
 		})
 	}

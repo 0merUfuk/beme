@@ -162,11 +162,81 @@ func TestRetrievalCommandMeasuresDeployment(t *testing.T) {
 	if code != 1 || rep.ExitCode != 1 {
 		t.Fatalf("a below-threshold measurement must exit 1; got %d (%d)", code, rep.ExitCode)
 	}
-	if rep.Artifacts != filepath.Join(out, rep.Summary.RunID) {
-		t.Fatalf("artifacts at %s, want under --out", rep.Artifacts)
+	if err := checkReportedArtifacts(out, rep.Summary.RunID, rep.Artifacts); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(rep.Artifacts, "summary.json")); err != nil {
 		t.Fatalf("summary.json missing: %v", err)
+	}
+}
+
+// CanonicalOutputPath may resolve a symlink, case alias or Windows short name.
+// Compare existing directory identities, not spellings or string prefixes. The
+// report must still name this exact run with its immediate parent at --out.
+func checkReportedArtifacts(out, runID, reported string) error {
+	parent, err := os.Stat(out)
+	if err != nil {
+		return err
+	}
+	reportedParent, err := os.Stat(filepath.Dir(reported))
+	if err != nil {
+		return err
+	}
+	if !parent.IsDir() || !reportedParent.IsDir() || !os.SameFile(parent, reportedParent) {
+		return fmt.Errorf("artifact parent %q is not --out %q", filepath.Dir(reported), out)
+	}
+	want, err := os.Lstat(filepath.Join(out, runID))
+	if err != nil {
+		return err
+	}
+	got, err := os.Lstat(reported)
+	if err != nil {
+		return err
+	}
+	if !want.IsDir() || !got.IsDir() || !os.SameFile(want, got) {
+		return fmt.Errorf("artifacts %q are not the run directory under --out %q", reported, out)
+	}
+	return nil
+}
+
+func TestReportedArtifactsRequireExactDirectoryIdentity(t *testing.T) {
+	out := t.TempDir()
+	const runID = "run_synthetic123"
+	runDir := filepath.Join(out, runID)
+	otherRoot := t.TempDir()
+	otherRun := filepath.Join(otherRoot, runID)
+	sibling := filepath.Join(out, "run_other123")
+	for _, dir := range []string{runDir, otherRun, sibling} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	realRun, err := filepath.EvalSymlinks(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(out, "not-a-directory")
+	if err := os.WriteFile(file, []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, id, reported string
+		valid              bool
+	}{
+		{"literal", runID, runDir, true},
+		{"canonical-alias", runID, realRun, true},
+		{"same-name-outside", runID, otherRun, false},
+		{"wrong-run-inside", runID, sibling, false},
+		{"parent-not-run", runID, out, false},
+		{"missing", runID, filepath.Join(out, "missing"), false},
+		{"regular-file", "not-a-directory", file, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkReportedArtifacts(out, tc.id, tc.reported)
+			if (err == nil) != tc.valid {
+				t.Fatalf("directory identity valid=%v: %v", tc.valid, err)
+			}
+		})
 	}
 }
 

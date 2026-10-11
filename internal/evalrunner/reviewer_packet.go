@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"math/big"
-	"path/filepath"
 )
 
 // ReviewerPacket is the ONLY shareable review surface. One content-only JSON
@@ -27,7 +26,11 @@ func ExportReviewerPacket(bundle, evaluator string) (ReviewerPacket, error) {
 	p.SchemaVersion = "1"
 	p.Template = templateFrom(v, evaluator)
 	for _, b := range v.Bindings {
-		data, err := readBounded(filepath.Join(v.Root, b.ArtifactPath))
+		path, err := bundleFilePath(v.Root, b.ArtifactPath)
+		if err != nil {
+			return ReviewerPacket{}, err
+		}
+		data, err := readBounded(path)
 		if err != nil {
 			return ReviewerPacket{}, err
 		}

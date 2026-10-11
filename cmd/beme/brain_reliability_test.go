@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +16,62 @@ import (
 	"github.com/0merUfuk/beme/internal/brain"
 )
 
+func brainReliabilityBinaryPath(original string) string {
+	return filepath.Join(filepath.Dir(original), "synthetic tools' directory", "beme"+filepath.Ext(original))
+}
+
+func TestBrainReliabilityPortableFixture(t *testing.T) {
+	for _, name := range []string{"beme-helper", "beme-helper.exe"} {
+		original := filepath.Join(t.TempDir(), name)
+		if got := brainReliabilityBinaryPath(original); filepath.Ext(got) != filepath.Ext(original) {
+			t.Fatalf("relocation dropped executable extension: %s -> %s", original, got)
+		}
+	}
+}
+
+func brainReliabilityEnv(home string) []string {
+	// Retain OS process-launch essentials, not ambient deployment/model settings.
+	return []string{
+		"HOME=" + home, "USERPROFILE=" + home, "PATH=" + os.Getenv("PATH"),
+		"TMPDIR=" + home, "TMP=" + home, "TEMP=" + home,
+		"SystemRoot=" + os.Getenv("SystemRoot"), "COMSPEC=" + os.Getenv("COMSPEC"),
+		"PATHEXT=" + os.Getenv("PATHEXT"),
+		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=commit.gpgsign", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=tag.gpgsign", "GIT_CONFIG_VALUE_1=false",
+	}
+}
+
+func TestBrainReliabilityPortableEnvironment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SystemRoot", "synthetic-system-root")
+	t.Setenv("BEME_CONFIG_HOME", "must-not-inherit")
+	env := map[string]string{}
+	for _, entry := range brainReliabilityEnv(home) {
+		key, value, _ := strings.Cut(entry, "=")
+		env[key] = value
+	}
+	for key, want := range map[string]string{
+		"HOME": home, "USERPROFILE": home, "TMPDIR": home, "TEMP": home, "TMP": home,
+		"PATH": os.Getenv("PATH"), "SystemRoot": "synthetic-system-root",
+		"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1",
+	} {
+		if env[key] != want {
+			t.Errorf("%s = %q, want %q", key, env[key], want)
+		}
+	}
+	if _, present := env["BEME_CONFIG_HOME"]; present {
+		t.Fatal("test inherited a deployment override")
+	}
+}
+
 func TestBrainReliabilityEndToEnd(t *testing.T) {
 	r := newBrainRig(t)
 	// Exercise shell quoting, not just an executable path with no whitespace.
-	bin := filepath.Join(filepath.Dir(r.bin), "synthetic tools' directory", "beme")
-	os.MkdirAll(filepath.Dir(bin), 0700)
+	bin := brainReliabilityBinaryPath(r.bin)
+	if err := os.MkdirAll(filepath.Dir(bin), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Rename(r.bin, bin); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +91,7 @@ func TestBrainReliabilityEndToEnd(t *testing.T) {
 		defer cancel()
 		c := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 		c.Dir = cwd
-		c.Env = []string{"HOME=" + r.home, "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+		c.Env = brainReliabilityEnv(r.home)
 		c.Stdin = strings.NewReader(stdin)
 		out, err := c.CombinedOutput()
 		return string(out), err
@@ -54,6 +106,9 @@ func TestBrainReliabilityEndToEnd(t *testing.T) {
 		return ""
 	}
 	t.Run("manual-pull-and-executable-continuity", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("generated command execution requires a POSIX shell")
+		}
 		proj := fixture("manual")
 		os.WriteFile(filepath.Join(r.cfg, "config.yaml"), []byte("brain_mode: manual\n"), 0600)
 		text := r.sessionStart(proj)
@@ -102,7 +157,7 @@ func TestBrainReliabilityEndToEnd(t *testing.T) {
 			go func(i int) {
 				payload, _ := json.Marshal(map[string]string{"cwd": proj, "source": "resume", "session_id": string(rune('a' + i/2))})
 				cmd := exec.Command(r.bin, "brain", "session-start", "--format", "claude-hook", "--no-doctor", "--config", r.cfg)
-				cmd.Env = []string{"HOME=" + r.home, "PATH=/usr/bin:/bin"}
+				cmd.Env = brainReliabilityEnv(r.home)
 				cmd.Stdin = bytes.NewReader(payload)
 				out, err := cmd.CombinedOutput()
 				if err == nil && bytes.Contains(out, []byte("accounting not recorded")) {
@@ -150,6 +205,9 @@ func TestBrainReliabilityEndToEnd(t *testing.T) {
 		}
 	})
 	t.Run("generated-hook-and-hookless-commands", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("generated command execution requires a POSIX shell")
+		}
 		proj := fixture("generated")
 		var hooks struct {
 			Hooks map[string][]struct {
@@ -193,6 +251,9 @@ func TestBrainReliabilityEndToEnd(t *testing.T) {
 		}
 	})
 	t.Run("permission-and-unreadable-vault-fail-open", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Unix permission bits do not establish Windows ACL behavior")
+		}
 		if os.Geteuid() == 0 {
 			t.Skip("filesystem permission fixture does not bind root")
 		}
@@ -214,6 +275,9 @@ func TestBrainReliabilityEndToEnd(t *testing.T) {
 		}
 	})
 	t.Run("fifo-unrelated-and-scoped-reads", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("named-pipe fixture requires POSIX mkfifo")
+		}
 		proj := fixture("fifo")
 		other := filepath.Join(r.home, "fifo-other")
 		os.MkdirAll(other, 0700)
@@ -247,7 +311,7 @@ func TestBrainRealWorktreeIdentity(t *testing.T) {
 	git := func(args ...string) {
 		t.Helper()
 		c := exec.Command("git", append([]string{"-C", root}, args...)...)
-		c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		c.Env = brainReliabilityEnv(root)
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("git fixture: %s %v", out, err)
 		}

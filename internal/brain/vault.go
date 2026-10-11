@@ -137,6 +137,7 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	name := tmp.Name()
+	defer os.Remove(name) // Also clean up a refused rename; never remove the destination.
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(name)

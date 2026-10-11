@@ -203,6 +203,14 @@ func (v *Vault) markCapture(slug, id string) (captureObligation, error) {
 			continue
 		}
 		if err != nil {
+			// Exclusive create need not report ErrExist for every occupied
+			// node (Windows reports EISDIR for a directory). Lstat confirms
+			// occupancy without following a link or opening a special file.
+			// Preserve that obligation and try the remaining bounded slots;
+			// an unconfirmed IO/permission failure still refuses publication.
+			if _, statErr := os.Lstat(path); statErr == nil {
+				continue
+			}
 			return intent, err
 		}
 		info, err := f.Stat()

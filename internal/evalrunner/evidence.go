@@ -48,8 +48,12 @@ func caseEvidence(cs Case, cfg RunConfig, req contracts.ResolutionRequest, in re
 
 func writeRunEvidence(s *Summary, cfg RunConfig, c *Corpus, root string, index map[string]string, write func(string, any) (string, error)) error {
 	for name, b := range c.Bytes {
-		rel := filepath.ToSlash(filepath.Join("corpus", name))
-		if err := writeExclusive(filepath.Join(root, rel), b); err != nil {
+		rel := "corpus/" + name
+		path, err := bundleFilePath(root, rel)
+		if err != nil {
+			return err
+		}
+		if err := writeExclusive(path, b); err != nil {
 			return err
 		}
 		index[rel] = sha256Hex(string(b))
@@ -71,7 +75,7 @@ func writeRunEvidence(s *Summary, cfg RunConfig, c *Corpus, root string, index m
 		return err
 	}
 	for id, e := range s.caseEvidence {
-		if _, err := write(filepath.Join("retrieval", sanitize(id)+".json"), e); err != nil {
+		if _, err := write("retrieval/"+sanitize(id)+".json", e); err != nil {
 			return err
 		}
 	}
