@@ -15,7 +15,10 @@ adds exact regression and lifecycle evidence. Its final bounded review found
 one remaining BFR-006 overlapping-publication defect. Corrective cycle 2 changes
 only that accounting protocol and focused regressions; parent independent
 source-bound rechecks now pass. See HANDOFF §1 for exact
-synthetic gates. Installed use and human decision benefit remain unmeasured.
+synthetic gates. A separately authorized local rollout verified CLI and fresh
+MCP connection mechanics; native model use and human decision benefit remain
+unmeasured. Publication preparation, including platform-fixture and artifact
+verification, is tracked separately under ADR-041–042 and RELEASE_VERIFICATION.md.
 
 **Corrective evidence (ADR-039–040):** FR-073/074 use
 `TestFinalBoundedBacklogKeepsLatestRecapture`,
@@ -150,13 +153,13 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 
 | ID | Requirement (summary) | Verification method | Evidence | Status |
 |---|---|---|---|---|
-| NFR-001 Reliability | No completion claim without required evidence; incomplete runs cannot mark state complete | Process gate: evidence recorded in HANDOFF | `docs/HANDOFF.md` | active |
+| NFR-001 Reliability | No completion claim without required evidence; incomplete runs cannot mark state complete | Process gate: evidence recorded in HANDOFF | `docs/HANDOFF.md`, `docs/RELEASE_VERIFICATION.md`, release workflow/helper regressions and checked native-command failure controls (ADR-041) | active |
 | NFR-002 Determinism | Identical source revisions, capability, request, policy, index version → structurally stable packs | Pack snapshot stability tests (WP5) | `TestDeterministicPacks`| implemented |
 | NFR-003 Privacy | Forbidden profile leakage rate zero in the defined regression corpus | Privacy corpus runner (WP10) | Shared threat registry (`privacycorpus.NewSuite`): all §19 cases plus supplementary S1–S4 executed and passing behind positive controls, none `not_run` (`TestPrivacyCorpusDeterministic`, runner `TestThreatCorpusRunner`); work-safe construction test; scan gate| implemented |
 | NFR-004 Security | Authority and scope assigned by trusted config/ingestion paths, never source content or model arguments | Threat corpus 100% pass (WP10) | Injection-clamp + elevation-rejection + capability-binding tests| implemented |
 | NFR-005 Inspectability | Every selected material item and exclusion class has a traceable reason | Trace assertions in resolver tests | Every Stage-A exclusion carries a reason; pack items carry selection_reason (schema-required)| implemented |
 | NFR-006 Reversibility | Configuration, projection build, adapter install, candidate review, schema migration have rollback/rebuild paths | Rollback tests per area | Migrations rollback-aware; Wipe rebuild; adapter uninstall preserves; candidate review reversible| implemented |
-| NFR-007 Portability | macOS, Linux, and Windows verified by the full test suite in CI; released-binary behavior inside Windows harnesses stays unverified until tested | Platform matrix | Full Go test suite in CI on macOS, Ubuntu, and Windows (`test-windows` job, ADR-028); released-binary use inside Windows harnesses not exercised| implemented |
+| NFR-007 Portability | macOS, Linux, and Windows verified by the full test suite in CI; released-binary behavior inside Windows harnesses stays unverified until tested | Platform matrix | Native CI matrix and source/archive smoke; portable wire paths, directory-identity controls, occupied intent nodes and explicit accounting refusals (ADR-042). Each final source needs its own green CI; historical/cross-build results do not satisfy that gate. Windows harness-model use remains unmeasured | implemented |
 | NFR-008 Performance | Interactive resolution targets sub-second on seed corpus after warm index; correctness gates outrank; budgets set at calibration | Benchmark evidence (WP10) | `internal/benchmark` + `cmd/beme-bench` (`make bench`); `evals/benchmarks/seed-baseline.json` — warm resolution p95 far below the 1 s target at 1×, 20×, and 200× seed scale| implemented |
 | NFR-009 Boundedness | File ingestion and context output enforce explicit size/time/depth limits | Bounds fixtures (threat case 29) | Ingestion Limits + `TestBoundsEnforced`; brain bounded regular-file/scoped scans, identity guards, archive limits (ADR-036)| implemented |
 | NFR-010 Maintainability | Domain logic independent of CLI, MCP, storage driver, harness adapter | Dependency-direction audit | `internal/` domain packages import no CLI/MCP/SDK (grep-verified); MCP SDK isolated to `cmd/beme`| implemented |

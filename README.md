@@ -29,7 +29,7 @@ inspectable `ContextPack` objects for AI coding agents.
   continuity tooling — Be Me reads them through adapters and never takes
   ownership.
 
-## V2: second brain (unreleased)
+## V2: second brain
 
 The same `beme` executable now includes the existing V2 plain-Markdown work
 memory: decisions, open work, summaries and learnings; gated capture, Brain
@@ -38,23 +38,26 @@ Notes remain non-canonical and **do not enter V1 ContextPacks**. The newer
 runtime, privacy ledger, retrieval and evaluation tooling are preserved.
 See [`docs/BRAIN.md`](docs/BRAIN.md), ADR-033–035, and
 [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for candidate verification and limits.
-This is a **locally verified source candidate**, not an installed deployment
-or release. Independent review and parent production-path replays closed the
-tracked audit defects, including two corrective cycles (ADR-036–040).
+Independent review and parent production-path replays closed the tracked audit
+defects, including two corrective cycles (ADR-036–040). The accepted integration
+is committed and proposed in [PR #3](https://github.com/0merUfuk/beme/pull/3).
+A separately authorized local rollout verified installed CLI and fresh MCP
+connections; that does not establish native model consumption or user benefit.
 Generated answers remain `grading_pending` until independent grade import;
 synthetic grades never establish live benefit. See
 [`EVALUATION_USAGE.md`](docs/EVALUATION_USAGE.md) for the frozen-split and grading protocol.
 
 ## Status
 
-**Alpha.** `v0.1.0-alpha.1` is released: contracts, runtime, narrow MCP
-surface, CLI, adapter contracts, and the learning-review pipeline are
-implemented and tested. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for the
-canonical current status and [`docs/ROADMAP.md`](docs/ROADMAP.md) for
-work-package state. Known alpha.1 limitations (advisory-only adapter
-assurance, no live-model behavioral evaluation yet) are listed in the
-[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1);
-since alpha.1 the full test suite also runs on Windows in CI (ADR-028).
+**Alpha source version: `v0.1.0-alpha.2`.** Contracts, context runtime, narrow
+MCP surface, CLI, learning review and non-canonical work memory are implemented.
+The [GitHub releases](https://github.com/0merUfuk/beme/releases) list is the
+authority for published versions and downloadable assets; a source version
+alone is not a publication claim. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1
+for current evidence and [`docs/ROADMAP.md`](docs/ROADMAP.md) for work-package
+state. Adapters remain advisory and live-model benefit is unmeasured. Release
+verification and the commit/push/versioned-package policy are documented in
+[`RELEASE_VERIFICATION.md`](docs/RELEASE_VERIFICATION.md).
 
 ```
 beme/

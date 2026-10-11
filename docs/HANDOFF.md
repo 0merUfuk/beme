@@ -1,11 +1,12 @@
 # Be Me — Handoff (current execution snapshot)
 
-**Revision:** 18 — 2026-10-09
-**Position:** local engineering acceptance complete — not deployed or released. V2 brain
-is integrated onto the newer public PR2 runtime; no commit, push, merge,
-installation, hook/settings change or deployment is part of this pass.
-Canonical current status and fresh candidate evidence are in §1. Prior
-continuation/release results below are historical, not candidate acceptance.
+**Revision:** 19 — 2026-10-11
+**Position:** accepted integration committed and pushed; `v0.1.0-alpha.2`
+publication preparation follows ADR-041. The separately authorized local rollout
+verified installed CLI and fresh configured MCP connections, not model use.
+Canonical source/evidence status is in §1. Live merge, CI and publication state
+must be read from the linked GitHub objects; historical results are not evidence
+for a different release commit.
 
 ### Historical V1 continuation notes
 
@@ -78,7 +79,65 @@ release decision (see §1).
 
 ## 1. Status
 
-**Current (2026-10-09): corrective-cycle-2 candidate; parent independent review and local acceptance complete.**
+**Source delivery (2026-10-11):** the accepted integration is recorded in
+[`bbb63fe`](https://github.com/0merUfuk/beme/commit/bbb63feaa4a4728fd6c3a05f4db0aa4f9dca4128)
+(functional source) and
+[`ed7de4f`](https://github.com/0merUfuk/beme/commit/ed7de4f1e0e39203aeeb90d158600123588e6e28)
+(contracts and acceptance docs), proposed in
+[PR #3](https://github.com/0merUfuk/beme/pull/3). Both remote commit identities
+were read back. The branch preserves all public PR #1/#2 dependencies rather
+than cherry-picking their dependents onto older main.
+
+**Publication is a separate gate:** the source version is `v0.1.0-alpha.2`.
+Use the [release list](https://github.com/0merUfuk/beme/releases) and exact-head
+CI to establish what is actually published. The publication review identified
+POSIX-only fixtures accidentally selected on Windows, missing intermediate
+native-command exit checks in Windows smoke, and an inherited private-marker
+residue. Their corrections and release automation require separate verification;
+the earlier source seal does not cover those new bytes. The historical explicit
+merge hold must be lifted by the owner before landing the package on main.
+
+**First native publication CI:** run
+[38154574257](https://github.com/0merUfuk/beme/actions/runs/38154574257) tested
+the PR at `ed7de4f`. Linux's full suite passed. macOS exposed an output-path
+alias assertion; Windows exposed the executable-extension fixture, evaluator
+manifest-path handling, refused intent-directory handling, identity-pointer
+lint and concurrent event accounting. The old installed-smoke jobs passed but
+did not establish coverage of those new paths. These failures are retained as
+RED evidence; a corrected exact-head matrix must pass before release, without
+skipping portable cases or weakening their invariants.
+
+**Corrections prepared (ADR-042):** evaluator wire identifiers and output
+containment now respect native filesystem identity without relaxing evidence
+joins. Brain intent allocation preserves refused occupants while using other
+slots; failed replacement cleans its temporary file only. Native path fixtures
+and explicit pre-write accounting refusals are tested rather than hidden. All
+implementation writers released their scopes and parent verified their source
+hashes and inspected the changes. The fresh combined local run reports
+`go test -json -count=1 -timeout=300s ./...`: 361 top-level tests, 672 passing
+test/subtest events and 18 packages, with two opt-in installed-harness tests
+skipped. Public validation reports `19 passed, 0 failed`; docs, synthetic
+separation, release-helper checks, build, vet, format, private scan, threat corpus
+and the combined brain/app/durable/learning/storage/evaluator race run exit 0.
+The late release-instructions edit is documentation-only; production/test bytes
+remain bound to that run. The bounded independent release-automation review also
+passed its ten-file scope, including real native archive execution and adversarial
+controls; parent verified the same file hashes. New exact-head native CI remains
+a separate gate. The original failed run remains evidence, not a green result.
+
+**Local installation:** the earlier accepted snapshot was installed through
+existing entrypoints with rollback copies. Installed CLI, a synthetic
+capture/Doctor/briefing and fork-hook fixture, a read-only real briefing, and
+fresh connections through both configured MCP routes passed. Existing real
+note bytes and metadata were preserved. Existing AI sessions were not killed;
+old loaded servers require a session restart. Private receipts remain outside
+this repository. These checks do not prove native model consumption or task
+benefit (`not_run`).
+
+**Engineering baseline (2026-10-09): parent independent review and local
+acceptance complete.** The full Go suite and public static gates were rerun
+successfully before publication preparation on 2026-10-11. The detailed
+cycle-2 evidence below remains bound to its original accepted snapshot.
 The bounded final review and parent both reproduced one remaining BFR-006
 overlap on the first corrective seal: A paused after intent, B completed, two
 starts were recorded, then A published but failed its reset. Both notes survived,
@@ -132,15 +191,16 @@ private scan, vet and fmt passed. Final closure edits are documentation-only and
 are separately sealed; product code/tests and exercised executable bytes remain
 unchanged. The final external receipt binds these identities and reused evidence.
 
-**Not claimed / not_run:** installed or native harness/fork delivery,
+**Not claimed / not_run:** native model consumption or native harness/fork delivery,
 live/private-corpus/model benefit, power-loss
 transactionality, hostile same-user isolation, mixed-version concurrent writers,
 retroactive reconstruction of lost legacy obligations, or native Linux/Windows
-runtime acceptance. No staging, product commit, push, PR, merge, installation,
-real vault/settings/credentials access, network/model/paid call or release occurred.
-No confirmed blocker remains in the reviewed deterministic scope. Publication,
-controlled deployment and real effectiveness measurement are separate steps;
-passing this gate neither performs nor authorizes them. No new PR was created.
+runtime acceptance from the historical local suite alone. The original local
+engineering pass performed no publication or deployment; the later independently
+authorized installation and source publication are recorded above. The bounded
+deterministic review closed its tracked defects, not every future portability
+or release concern. Final release CI, artifact verification and real effectiveness
+measurement remain separate evidence levels.
 
 ### Historical first corrective pass (superseded by cycle 2 above)
 

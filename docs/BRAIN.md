@@ -2,10 +2,11 @@
 
 > Short note for operators and agents. Decisions: ADR-033 (MVP), ADR-034
 > (completion), ADR-035 (`briefing` read-only fix) in [`DECISIONS.md`](DECISIONS.md).
-> **Locally verified source candidate; independent review and parent recheck complete.**
+> **Committed integration; independent review and parent recheck complete.**
 > ADR-036 corrects restore, equivalence, chronology, scope, bounded reads and
-> accounting. Synthetic regressions exercise these production paths; installation,
-> native harness delivery and real task benefit remain `not_run`/unmeasured.
+> accounting. Synthetic regressions exercise these production paths. A separately
+> authorized local rollout verified installed CLI and fresh MCP connections;
+> native model consumption and real task benefit remain `not_run`/unmeasured.
 > Canonical current status: [`HANDOFF.md`](HANDOFF.md) §1.
 
 ## What changed

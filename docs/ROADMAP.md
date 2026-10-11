@@ -39,17 +39,20 @@ WP3 Contracts/schemas ─▶ WP2B Frozen fixtures + thresholds ─▶ [PRODUCTIO
 | WP11 | Public release | **v0.1.0-alpha.1 published** (verification defects of alpha corrected post-publish; clean history, tarball artifacts, honest platform labels) |
 
 **V2 integration:** WP12 adopts the existing brain source onto this newer
-runtime (ADR-033–035), with FR-070..089 tracked separately. It is an unreleased
-review candidate; synthetic gates are not live adoption evidence. Brain notes
+runtime (ADR-033–035), with FR-070..089 tracked separately. The integration is
+committed in PR #3; synthetic gates are not live adoption evidence. Brain notes
 inside V1 packs, embeddings, new MCP tools and provider runs are out of scope.
 See HANDOFF §1 for the exact verification state.
 
 **Current engineering state:** the 2026-10-09 tracked audit defects have source
 fixes and synthetic regressions in the combined candidate (ADR-036–040).
 Independent review and parent source-bound rechecks are complete, including the
-overlapping-capture correction. This local engineering acceptance is not merge,
-deployment or release approval. Previous WP completion records describe narrower
-historical gates, not measured personal effectiveness.
+overlapping-capture correction. A separately authorized local rollout verified
+installed CLI and fresh MCP connections. Publication preparation follows the
+standing commit/push/verified-release policy in ADR-041; exact-head native CI,
+any explicit merge hold and artifact verification remain separate gates.
+Previous WP completion records describe narrower historical gates, not measured
+personal effectiveness.
 
 **Separately owner-gated, after remediation:** live-model B4-vs-B0 behavioral evaluation (paid
 API runs); private-corpus retrieval measurement (owner-run, ADR-023);

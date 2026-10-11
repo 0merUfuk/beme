@@ -17,7 +17,7 @@ import (
 	"github.com/0merUfuk/beme/internal/contracts"
 )
 
-const version = "0.1.0-alpha.1"
+const version = "0.1.0-alpha.2"
 
 func main() {
 	if len(os.Args) < 2 {

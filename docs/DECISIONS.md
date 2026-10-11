@@ -1352,6 +1352,105 @@ as historical, export a new reviewer packet without changing its source bundle.
 **Reopen:** contradictory evidence becomes gradeable, metadata predicts condition
 order on the actual shared packet, or separately authorized roster requirements.
 
+## ADR-041 — Close verified development through commits, push and immutable alpha releases
+
+**Date:** 2026-10-11 · **Status:** standing delivery policy authorized; publication
+mechanics and each release remain evidence-gated
+**Owner:** owner instruction for commit/push/versioned publication; maintainer
+chooses the reversible implementation and prerelease increment.
+
+**Decision:** completed product changes must be committed in coherent conventional
+commits and pushed. Each verified delivery package must be assigned an appropriate
+immutable version and released; local installation, a source archive and an open
+PR are not substitutes. Authenticated publication uses the personal repository
+owner's account. Current source targets `v0.1.0-alpha.2`, the next existing alpha
+line, rather than claiming beta/stable readiness or a stable V2 API.
+
+The accepted brain/runtime/evaluation snapshot is preserved in `bbb63fe` and
+`ed7de4f`, including the complete public PR #1/#2 ancestry. Publication preparation
+is a separate delta: platform-safe fixtures, immediate native-command error
+propagation in Windows smoke tests, removal of an inherited private marker,
+version/changelog agreement, and source-bound artifact/release controls. Tests
+and real CI must verify that delta before it can be called complete.
+
+**Gates and authority:** release from a commit reachable from `main`, with exact
+source identity and complete required native CI. Verify archive contents,
+checksums and host-native behavior. Preserve all older tags/releases. A pipeline
+may package and publish an authorized alpha, but must not auto-merge, lower a
+test threshold, publish an unmerged topic commit, or overwrite a published
+release. A pre-existing explicit merge hold requires its own owner decision;
+an unanswered request does not lift it. Stable/non-alpha publication, paid
+model runs, real-data erasure, private-corpus access and scope widening remain
+separate approvals. Release authorization is not proof of real task benefit.
+
+**Alternatives rejected:** leaving completed source local-only; treating a
+successful local build as a release; publishing directly from the topic branch
+to evade the merge hold; moving an older tag; adding a large release framework;
+and interpreting cross-compilation as native execution.
+**Consequences:** version, changelog, commit, CI and asset identities form a
+verifiable delivery chain. Native shell-specific tests remain on the platforms
+that implement those semantics; portable behavior stays tested everywhere.
+The public source contains no deployment inventory or authentication receipts.
+**Reversibility:** revert a source/workflow change with a new commit before
+publication; after publication issue a new version or correction notice rather
+than deleting/moving the existing tag or silently replacing its assets.
+**Reopen:** an artifact cannot be tied to its tested source, CI can mask a native
+failure, release automation can bypass a gate, or the owner changes the delivery
+or non-alpha approval policy.
+
+## ADR-042 — Portable evidence identifiers and explicit filesystem outcomes
+
+**Date:** 2026-10-11 · **Status:** implemented with local regression evidence;
+native CI acceptance is required on the final combined revision
+**Owner:** maintainer (GREEN correctness/fixture repair within existing contracts).
+**Context:** the first publication CI at `ed7de4f` exposed OS-specific path and
+fixture assumptions that local macOS tests and cross-compilation had not proved.
+
+**Decision:** evaluation artifact identifiers are canonical slash-separated wire
+names, not native filenames. Producers use the same literal name in summaries,
+indices and bindings; consumers validate it before converting at filesystem
+access. Malformed paths/IDs are rejected, never cleaned into acceptable evidence.
+The semantic reconciliation and original independent-grading controls remain
+unchanged. Output containment compares existing directory identities, including
+ancestors of missing output suffixes, so case/short-path aliases cannot write
+inside an immutable bundle. A fixture's reported output is checked against the
+exact run directory and immediate output-parent identities rather than spelling.
+
+An exclusive-create failure may identify an occupied intent node without being
+`ErrExist` on every OS. Confirm occupancy using `Lstat`, preserve the node and its
+unknown obligation, and try remaining bounded slots; unconfirmed I/O errors still
+refuse publication. A failed atomic rename cleans only its temporary file, never
+the destination. The session-accounting lock remains bounded at 500 ms. Tests
+count successful operations exactly, surface unexpected errors, and retry only
+explicit pre-write refusals before requiring the unchanged final event count.
+They do not call a refused operation a successful lost update or hide a silent
+failure by lowering expectations. Native absolute-path fixtures replace POSIX
+spelling assumptions; genuinely POSIX-only shell/node/permission cases remain
+explicitly platform-constrained.
+
+**Evidence:** `TestArtifactWirePathsRoundTrip`,
+`TestReindexedArtifactPathsAndIDsAreNotNormalized`,
+`TestGradeOutputsCannotUseBundleDirectoryAlias`,
+`TestOutputBoundaryUsesDirectoryIdentity`,
+`TestCaptureAccountingRefusedAndPartialIntentsStayUnknown`,
+`TestSessionAccountingLockedEventIsExplicitAndRetryable`,
+`TestSessionAccountingAcrossProcesses`,
+`TestSessionAccountingReplaceWithOpenReader`,
+`TestAtomicReplaceFailurePreservesDestinationAndCleansTemp`, and
+`TestIdentityPointersNativePathsOnly`. Native initial CI failures, local
+RED/GREEN and mutation controls are retained separately from later green runs.
+**Alternatives rejected:** weakening evidence joins, silently repairing malformed
+Windows bundles, skipping portable tests, increasing the lock bound to hide
+contention, or treating cross-compilation as native execution.
+**Consequences:** previously malformed Windows bundles require canonical
+regeneration. Stable filesystem aliases are covered; hostile concurrent same-user
+path replacement remains outside this guarantee. An old log without individual
+operation errors cannot establish the exact original native refusal mechanism.
+**Reversibility:** changes are independently revertible before release; preserve
+old evidence and never rewrite its identifiers or hashes in place.
+**Reopen:** native CI contradicts the modeled OS behavior, successful events are
+lost, malformed evidence becomes gradeable, or aliases evade output containment.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

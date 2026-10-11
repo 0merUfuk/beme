@@ -159,9 +159,10 @@ this gate passed. Item-level status:
       alpha limitations documented).
 - [x] License, compatibility matrix, support boundaries, threat model, and
       limitations published.
-- [ ] User approval of external release (RED) — v0.1.0-alpha.1 publication
-      was authorized by ADR-022 delegation; a *non-alpha* release still
-      requires explicit approval.
+- [x] User approval of verified alpha-package publication — the standing
+      commit/push/versioned-release instruction is recorded in ADR-041.
+      It does not satisfy the actual CI/artifact gates, lift a separate merge
+      hold, or authorize a *non-alpha* release.
 
 ## 7a. Completion ledger
 
@@ -175,16 +176,21 @@ threshold is lowered here.
 
 The 2026-10-09 combined candidate now contains source fixes and synthetic
 regressions for the independently reproduced runtime/evaluation and brain
-failures (ADR-036–038; EFFECTIVENESS_REVIEW.md). Current gates are in HANDOFF §1;
-final independent review is still required. Historical V1 continuation evidence
-below remains historical and does not establish current installed/live behavior.
+failures (ADR-036–038; EFFECTIVENESS_REVIEW.md). The bounded corrective review
+and parent acceptance are complete (ADR-039–040). The accepted source is now
+committed and pushed in PR #3. Publication review separately identified a
+Windows test fixture, native-command smoke error propagation and an inherited
+private-marker residue to correct before release. Current gates are in HANDOFF
+§1. Historical V1 evidence below does not establish the new package's CI,
+downloaded-artifact behavior or native model use.
 
 ### Readiness (reported independently)
 
 | Category | State | Evidence / blocker |
 |---|---|---|
-| Engineering ready for merge | not approved — remediated source pending independent review | combined synthetic regressions and source-bound evidence must be independently accepted |
-| Release verification complete | no — independent and owner gates remain | historical P1–P5 results are not current installed/release acceptance |
+| Engineering acceptance | accepted source committed; publication corrections tracked separately | independent corrective review and parent replay complete; final release head still requires its own CI |
+| Merge authorization | historical explicit hold remains until the owner lifts it | an unanswered approval request is not consent |
+| Release verification | governed by exact-head CI, artifact checks and the actual GitHub release | historical P1–P5 results are not evidence for a newer package; see RELEASE_VERIFICATION.md |
 | Personal effectiveness demonstrated | not_run / unmeasured | truthful mechanisms and constructed grades are not separately approved real-task measurement |
 
 ### Safety and data-integrity invariants

@@ -4,7 +4,19 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2]
+
+Integrated alpha delivery. This section identifies the package's source changes;
+the GitHub tag, release and successful release workflow establish publication.
+Live-model benefit and assured harness use remain unmeasured.
+
 ### Added
+- Verified alpha-release automation (ADR-041): immutable tag/CLI/changelog/source
+  binding, reusable exact-source CI, native archive checks for five targets,
+  four-command bundles with manifests and checksums, and readback-verified
+  publication of a pre-created owner draft. Existing published releases and
+  mismatched assets are never overwritten. PR CI exercises packaging without
+  publishing; `make release-check` runs the synthetic helper regressions.
 - Effectiveness remediation (ADR-036–038): strict frozen corpus/split binding,
   immutable retrieval evidence, independent offline grade import/adjudication,
   paired quality/high-risk/safety gates, and pending generation rather than
@@ -109,6 +121,32 @@ All notable changes. Format: Keep a Changelog; versioning: semantic.
   inherited sensitivity (FR-054).
 
 ### Fixed
+- Evaluation artifact names are now portable wire identifiers rather than host
+  path spellings; malformed identifiers still fail closed. Immutable-bundle
+  output protection recognizes filesystem aliases, including alternate casing.
+  Native `--out` tests compare exact directory identities (ADR-042).
+- Windows occupied intent directories no longer block unused accounting slots.
+  Refused atomic replacements clean temporary files without removing the prior
+  destination; bounded session-lock refusals are distinguished from lost
+  successful writes. Native path fixtures and Windows command-exit controls no
+  longer assume POSIX behavior or permit false-green smoke tests (ADR-042).
+- Brain correctness: restore preserves material note changes, paged recapture
+  keeps the newest capture chronology, global warnings withhold unrelated IDs,
+  malformed/newer schema markers refuse writes, and long-lived metadata stays
+  within the production reader's bounds. Generated wrapper commands retain the
+  executable and deployment identity (ADR-036, ADR-039).
+- Overlapping accepted captures no longer erase each other's bookkeeping
+  uncertainty. Independent bounded obligations preserve accepted notes, suppress
+  false silence nudges and reconcile completed publications safely; ordinary
+  status and briefing reads remain write-free (ADR-039).
+- Runtime evidence: Markdown selection respects matching fence markers, visible
+  provenance order is stable, budgets cover the complete compact JSON pack,
+  partial-source failures remain visible, and explain uses the actual persisted
+  trace (ADR-037).
+- Evaluation no longer treats generation or contradictory evidence as a passed
+  behavioral result. Corpus/split/population/arm evidence is reconciled before
+  grading; reviewers receive a content-only shuffled packet, not the owner
+  directory with revealing metadata (ADR-038, ADR-040).
 - Packs contained every eligible record whatever the task, and reported
   nothing when none applied. Stage B now retrieves (ADR-032): constraints and
   unscoped principles always apply; other records need task evidence; each

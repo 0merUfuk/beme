@@ -5,9 +5,10 @@
 > implementing agent must follow. Blueprint-derived. Maintained alongside
 > `docs/DECISIONS.md`.
 
-**Status:** Alpha — `v0.1.0-alpha.1` released. The runtime, contracts,
-MCP surface, CLI, adapter contracts, and learning-review pipeline are
-implemented. Canonical current status lives in
+**Status:** Alpha. The runtime, contracts, MCP surface, CLI, adapter contracts,
+learning-review pipeline and non-canonical work memory are implemented.
+Published versions are identified by GitHub releases, not by this product
+contract. Canonical current status lives in
 [`docs/HANDOFF.md`](HANDOFF.md) §1; work-package state in
 [`docs/ROADMAP.md`](ROADMAP.md). Production engine code was authorized at
 the WP2B freeze (2026-09-14) and has shipped; this document records the
