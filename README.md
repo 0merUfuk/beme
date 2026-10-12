@@ -9,6 +9,10 @@ inspectable `ContextPack` objects for AI coding agents.
 > without inventing preferences, leaking unrelated data, or making you restate
 > context on every session.
 
+## Project film
+
+An illustrative project film about capability-bound evidence selection and a provenance-aware ContextPack for a coding decision. It uses reconstructed visuals and synthetic examples, not a live screen recording; adapter guidance remains advisory.
+
 ## What Be Me is
 
 - A **context runtime**: it resolves *what an agent should know before a
