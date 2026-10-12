@@ -11,6 +11,8 @@ inspectable `ContextPack` objects for AI coding agents.
 
 ## Project film
 
+https://github.com/user-attachments/assets/78a1214e-08c6-47f5-8d94-e50f5df6cbd0
+
 An illustrative project film about capability-bound evidence selection and a provenance-aware ContextPack for a coding decision. It uses reconstructed visuals and synthetic examples, not a live screen recording; adapter guidance remains advisory.
 
 ## What Be Me is
