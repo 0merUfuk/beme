@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/0merUfuk/beme/internal/contracts"
 	"github.com/0merUfuk/beme/internal/ingestion"
@@ -28,6 +30,12 @@ type Config struct {
 	// DataDir hosts projections; CacheDir hosts indexes/packs (separable).
 	DataDir  string `yaml:"data_dir" json:"data_dir"`
 	CacheDir string `yaml:"cache_dir" json:"cache_dir"`
+	// BrainDir is the V2 second-brain vault (plain markdown; ADR-033).
+	// Defaults inside DataDir so an explicit config dir stays self-contained.
+	BrainDir string `yaml:"brain_dir" json:"brain_dir"`
+	// BrainMode is the session-briefing cost/recall trade-off:
+	// normal (default) | economy | manual.
+	BrainMode string `yaml:"brain_mode" json:"brain_mode"`
 }
 
 // Runtime is the assembled application.
@@ -37,64 +45,114 @@ type Runtime struct {
 	Sources  []contracts.SourceDescriptor
 }
 
-// Dirs resolves platform-appropriate directories (macOS first, NFR-007).
+// DefaultDirs resolves platform-appropriate directories (NFR-007, FR-062):
+//   - macOS: ~/Library/Application Support/beme (config+data), ~/Library/Caches/beme
+//   - Windows: %AppData%\beme (config+data), %LocalAppData%\beme (cache)
+//   - Linux/other: XDG — $XDG_CONFIG_HOME/beme, $XDG_DATA_HOME/beme,
+//     $XDG_CACHE_HOME/beme (defaults ~/.config, ~/.local/share, ~/.cache)
+//
 // All overridable via env: BEME_CONFIG_HOME, BEME_DATA_HOME, BEME_CACHE_HOME.
 func DefaultDirs() (configHome, dataHome, cacheHome string, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", "", err
 	}
-	configHome = os.Getenv("BEME_CONFIG_HOME")
-	if configHome == "" {
+	envOr := func(key, fallback string) string {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+		return fallback
+	}
+	switch runtime.GOOS {
+	case "darwin":
 		configHome = filepath.Join(home, "Library", "Application Support", "beme")
-	}
-	dataHome = os.Getenv("BEME_DATA_HOME")
-	if dataHome == "" {
-		dataHome = filepath.Join(home, "Library", "Application Support", "beme")
-	}
-	cacheHome = os.Getenv("BEME_CACHE_HOME")
-	if cacheHome == "" {
+		dataHome = configHome
 		cacheHome = filepath.Join(home, "Library", "Caches", "beme")
+	case "windows":
+		configHome = filepath.Join(envOr("APPDATA", filepath.Join(home, "AppData", "Roaming")), "beme")
+		dataHome = configHome
+		cacheHome = filepath.Join(envOr("LOCALAPPDATA", filepath.Join(home, "AppData", "Local")), "beme")
+	default:
+		configHome = filepath.Join(envOr("XDG_CONFIG_HOME", filepath.Join(home, ".config")), "beme")
+		dataHome = filepath.Join(envOr("XDG_DATA_HOME", filepath.Join(home, ".local", "share")), "beme")
+		cacheHome = filepath.Join(envOr("XDG_CACHE_HOME", filepath.Join(home, ".cache")), "beme")
 	}
+	configHome = envOr("BEME_CONFIG_HOME", configHome)
+	dataHome = envOr("BEME_DATA_HOME", dataHome)
+	cacheHome = envOr("BEME_CACHE_HOME", cacheHome)
 	return configHome, dataHome, cacheHome, nil
 }
 
-// Load reads deployment config + registrations. Missing config = empty
-// runtime (degrades honestly, never invents sources).
-func Load(configDirOverride string) (*Runtime, error) {
+// ResolveConfig reads only the deployment config (no sources, no registry)
+// and applies the platform/isolation defaults. Session-continuity hooks use
+// it so a broken V1 source registration can never block a session start.
+// It also returns the config directory it resolved.
+func ResolveConfig(configDirOverride string) (Config, string, error) {
 	configDir := configDirOverride
 	if configDir == "" {
 		var err error
 		configDir, _, _, err = DefaultDirs()
 		if err != nil {
-			return nil, err
+			return Config{}, "", err
 		}
 	}
-	rt := &Runtime{Config: Config{SchemaVersion: contracts.SchemaVersion}}
+	cfg := Config{SchemaVersion: contracts.SchemaVersion}
 
 	cfgPath := filepath.Join(configDir, "config.yaml")
 	if data, err := os.ReadFile(cfgPath); err == nil {
-		if err := yaml.Unmarshal(data, &rt.Config); err != nil {
-			return nil, fmt.Errorf("config.yaml: %w", err)
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return Config{}, "", fmt.Errorf("config.yaml: %w", err)
 		}
 	}
-	if rt.Config.CanonicalRoot == "" {
-		rt.Config.CanonicalRoot = configDir
+	if cfg.CanonicalRoot == "" {
+		cfg.CanonicalRoot = configDir
 	}
-	if rt.Config.DataDir == "" {
-		_, dataHome, _, err := DefaultDirs()
-		if err != nil {
-			return nil, err
+	if cfg.DataDir == "" {
+		// Isolation rule (ADR-026): an explicit config dir is a self-contained
+		// deployment root — derived data defaults INSIDE it, never to the
+		// operator's real data home. The user-home default applies only when
+		// Load() is called with no override (the real CLI deployment case).
+		if configDirOverride != "" {
+			cfg.DataDir = filepath.Join(configDir, "data")
+		} else {
+			_, dataHome, _, err := DefaultDirs()
+			if err != nil {
+				return Config{}, "", err
+			}
+			cfg.DataDir = dataHome
 		}
-		rt.Config.DataDir = dataHome
 	}
-	if rt.Config.CacheDir == "" {
-		_, _, cacheHome, err := DefaultDirs()
-		if err != nil {
-			return nil, err
+	if cfg.CacheDir == "" {
+		if configDirOverride != "" {
+			cfg.CacheDir = filepath.Join(configDir, "cache")
+		} else {
+			_, _, cacheHome, err := DefaultDirs()
+			if err != nil {
+				return Config{}, "", err
+			}
+			cfg.CacheDir = cacheHome
 		}
-		rt.Config.CacheDir = cacheHome
 	}
+	if cfg.BrainDir == "" {
+		// Same isolation rule (ADR-026/033): BEME_BRAIN_HOME applies only to
+		// the real deployment case, never to an explicit config dir.
+		if env := os.Getenv("BEME_BRAIN_HOME"); env != "" && configDirOverride == "" {
+			cfg.BrainDir = env
+		} else {
+			cfg.BrainDir = filepath.Join(cfg.DataDir, "brain")
+		}
+	}
+	return cfg, configDir, nil
+}
+
+// Load reads deployment config + registrations. Missing config = empty
+// runtime (degrades honestly, never invents sources).
+func Load(configDirOverride string) (*Runtime, error) {
+	cfg, _, err := ResolveConfig(configDirOverride)
+	if err != nil {
+		return nil, err
+	}
+	rt := &Runtime{Config: cfg}
 
 	// Sources: trusted registration only (FR-020).
 	srcDir := filepath.Join(rt.Config.CanonicalRoot, "sources")
@@ -147,6 +205,13 @@ func (rt *Runtime) ProjectionPath(profile contracts.Profile) string {
 // exists but cannot be opened (corruption), it is deleted and recreated from
 // the registered sources. Canonical sources are never touched.
 func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error) {
+	// Serialized with forget, purge, and learning writes: a build never
+	// re-ingests content a concurrent purge is erasing (ADR-030).
+	lk, err := rt.lock()
+	if err != nil {
+		return nil, err
+	}
+	defer lk.Release()
 	storePath := rt.ProjectionPath(profile)
 
 	// Detect an unusable existing store and recreate it (recovery path).
@@ -165,6 +230,18 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 		}
 	}
 
+	// Durable tombstones (ADR-027): purged content is never re-ingested,
+	// whatever the source, sync, or backup state. Unreadable ledger → fail
+	// closed.
+	ledger, err := rt.LoadLedger()
+	if err != nil {
+		return nil, err
+	}
+	erased, err := rt.eraseHiddenObservations(ledger)
+	if err != nil {
+		return nil, err
+	}
+
 	store, err := storage.Open(storePath)
 	if err != nil {
 		return nil, err
@@ -177,7 +254,7 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 	safeMode := profile == contracts.ProfileWorkSafe
 	builder := &projection.Builder{Store: store, SafeManifestMode: safeMode}
 	walker := ingestion.NewWalker(ingestion.DefaultLimits())
-	report := &BuildReport{Profile: string(profile)}
+	report := &BuildReport{Profile: string(profile), PurgedObservationsErased: erased}
 	ingestedIDs := []string{}
 
 	for _, sd := range rt.Sources {
@@ -192,13 +269,29 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 			report.Skipped = append(report.Skipped, sd.SourceID+": profile not allowed")
 			continue
 		}
+		if safeMode {
+			approved := false
+			for _, purpose := range sd.Purpose {
+				if purpose == "safe_declassified" {
+					approved = true
+				}
+			}
+			if !approved {
+				report.fail(sd.SourceID, "source is not in the approved safe manifest")
+				continue // never open an unapproved root, even just to hash it
+			}
+		}
+		builder.PolicySources = append(builder.PolicySources, sd)
+		// From here the source is registered for this profile: anything that
+		// stops it contributing is a failure, reported and persisted so the
+		// deployment cannot look healthy over a source it never ingested.
 		if sd.Type != "git_repository" && sd.Type != "directory" {
-			report.Skipped = append(report.Skipped, sd.SourceID+": non-filesystem source (contract only in v1)")
+			report.fail(sd.SourceID, "non-filesystem source (contract only in v1)")
 			continue
 		}
 		files, err := walker.Walk(sd.Root, sd.Include, sd.Exclude)
 		if err != nil {
-			report.Skipped = append(report.Skipped, sd.SourceID+": "+err.Error())
+			report.fail(sd.SourceID, err.Error())
 			continue
 		}
 		recs := []contracts.Record{}
@@ -215,6 +308,10 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 			entry := ingestion.MarkdownEntry{Frontmatter: fm, Body: body, RelPath: f.RelPath, Hash: f.Hash}
 			rec, ok := ingestion.NormalizeEntry(sd, entry)
 			if !ok {
+				continue
+			}
+			if ledger.Purged(rec) {
+				report.PurgeBlocked++
 				continue
 			}
 			prov := contracts.Provenance{
@@ -240,6 +337,19 @@ func (rt *Runtime) BuildProfile(profile contracts.Profile) (*BuildReport, error)
 	if err := builder.Finalize(ingestedIDs); err != nil {
 		return nil, err
 	}
+	// A fresh generation per build invalidates ContextPacks issued against
+	// earlier projection contents (pack-bound expansion, ADR-029).
+	if err := store.SetMeta("build_generation", newOpaqueToken()); err != nil {
+		return nil, err
+	}
+	// The last build's source failures, read back by doctor.
+	failures, err := json.Marshal(report.Failed)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.SetMeta(buildFailuresMetaKey, string(failures)); err != nil {
+		return nil, err
+	}
 	report.SourcesIngested = ingestedIDs
 	return report, nil
 }
@@ -250,6 +360,30 @@ type BuildReport struct {
 	SourcesIngested []string `json:"sources_ingested"`
 	Skipped         []string `json:"skipped,omitempty"`
 	SecretRejected  []string `json:"secret_rejected,omitempty"`
+	// PurgeBlocked counts entries refused because they match a physical-purge
+	// tombstone (anti-resurrection, ADR-027).
+	PurgeBlocked int `json:"purge_blocked,omitempty"`
+	// PurgedObservationsErased counts restored copies of purged observation
+	// files the build erased.
+	PurgedObservationsErased int `json:"purged_observations_erased,omitempty"`
+	// Failed lists sources registered for this profile that contributed
+	// nothing because ingestion failed. A build with failures is persisted
+	// (the other sources still serve), reported, and makes doctor degraded
+	// until a build succeeds for every registered source.
+	Failed []SourceFailure `json:"failed,omitempty"`
+}
+
+// SourceFailure is one registered source that did not ingest.
+type SourceFailure struct {
+	SourceID string `json:"source_id"`
+	Reason   string `json:"reason"`
+}
+
+const buildFailuresMetaKey = "build_source_failures"
+
+func (r *BuildReport) fail(sourceID, reason string) {
+	r.Failed = append(r.Failed, SourceFailure{SourceID: sourceID, Reason: reason})
+	r.Skipped = append(r.Skipped, sourceID+": "+reason)
 }
 
 // Serve opens a projection store read-only and binds one immutable
@@ -264,16 +398,7 @@ func (rt *Runtime) Serve(profile contracts.Profile, capabilityID string, experim
 	}
 	view := projection.NewView(store, capabilityID, profile)
 	cap := policy.Capability{CapabilityID: capabilityID, Profile: profile, ExperimentalLearnedGuidance: experimentalLearned && profile == contracts.ProfilePersonal}
-	sess := &Session{View: view, Capability: cap, Runtime: rt, Store: store}
-	// Freshness honesty: an unbuilt (empty) projection must not resolve as
-	// if it were a complete index (§13.7): resolution works but carries an
-	// explicit degradation notice.
-	if store.Count() == 0 {
-		sess.degradations = append(sess.degradations, resolver.DegradationInput{
-			Kind:   "stale_projection",
-			Detail: "projection store is empty; run `beme build --profile " + string(profile) + "` before relying on results",
-		})
-	}
+	sess := &Session{View: view, Capability: cap, Runtime: rt, Store: store, issued: &packRegistry{}}
 	return sess, nil
 }
 
@@ -283,8 +408,13 @@ type Session struct {
 	Capability policy.Capability
 	Runtime    *Runtime
 	Store      *storage.Store
-	// degradations carry honesty notices surfaced into every resolved pack.
-	degradations []resolver.DegradationInput
+	// PackTTL bounds how long an issued ContextPack authorizes expansion
+	// (DefaultPackTTL when zero). Now overrides the clock; both are
+	// verification hooks.
+	PackTTL time.Duration
+	Now     func() time.Time
+
+	issued *packRegistry
 }
 
 // Resolve runs the two-stage pipeline for one request.
@@ -292,30 +422,52 @@ func (s *Session) Resolve(req contracts.ResolutionRequest) (resolver.Pack, []res
 	// Task-origin rule (ADR-016): without a trusted integrity binding, task
 	// text is a retrieval hint only — enforced downstream by precedence
 	// tiers, recorded here.
-	tc := policy.TaskContext{
-		Task:      req.Task,
-		TaskKinds: clampKinds(req.TaskKindHints),
+	tc, err := s.taskContext(req)
+	if err != nil {
+		return resolver.Pack{}, nil, err
 	}
-	// Workspace identity: untrusted hint -> trusted registry; ambiguity
-	// fails closed (FR-014).
+	// Store tombstones + durable ledger (ADR-027); an unreadable ledger
+	// fails closed for personalization.
+	revoked, _, err := s.Runtime.EffectiveRevoked(s.Capability.Profile, s.Store)
+	if err != nil {
+		return resolver.Pack{}, nil, err
+	}
+	health, err := s.Health()
+	if err != nil {
+		return resolver.Pack{}, nil, err
+	}
+	policyDigest, err := s.effectivePolicyDigest(revoked)
+	if err != nil {
+		return resolver.Pack{}, nil, err
+	}
+	opts := resolver.Options{
+		PolicyDigest: policyDigest,
+		Policy:       policy.NewEngine(timeNowUTC()),
+		Revoked:      revoked,
+		Now:          timeNowUTC(),
+		Degradations: health.Degradations,
+	}
+	pack, trace := resolver.Resolve(s.View, s.Capability, tc, req, opts)
+	trace = safeTrace(trace)
+	s.recordTrace(&pack, trace, tc)
+	s.registerPack(pack, tc)
+	return pack, trace, nil
+}
+
+// taskContext is shared by serving and evaluation request entrypoints.
+func (s *Session) taskContext(req contracts.ResolutionRequest) (policy.TaskContext, error) {
+	tc := policy.TaskContext{Task: req.Task, TaskKinds: resolver.TaskKindsForRequest(req.Task, req.TaskKindHints)}
 	if req.WorkspaceHint != "" {
 		m := s.Runtime.Registry.Resolve(req.WorkspaceHint)
 		if m.Ambiguous {
-			return resolver.Pack{}, nil, fmt.Errorf("workspace ambiguous: %s", m.Reason)
+			return tc, fmt.Errorf("workspace ambiguous: %s", m.Reason)
 		}
 		tc.WorkspaceID = m.WorkspaceID
 	}
 	if req.RiskHint == "low" || req.RiskHint == "medium" || req.RiskHint == "high" {
 		tc.Risk = req.RiskHint
 	}
-	opts := resolver.Options{
-		Policy:       policy.NewEngine(timeNowUTC()),
-		Revoked:      s.Store.RevokedSet(),
-		Now:          timeNowUTC(),
-		Degradations: s.degradations,
-	}
-	pack, trace := resolver.Resolve(s.View, s.Capability, tc, req, opts)
-	return pack, trace, nil
+	return tc, nil
 }
 
 func clampKinds(hints []string) []string {
@@ -333,11 +485,14 @@ func clampKinds(hints []string) []string {
 	return out
 }
 
-// OpenStoreForProfile opens a projection store for administrative
-// inspection (export, explain). Read-only intent; the store is derived.
-func OpenStoreForProfile(rt *Runtime, profile contracts.Profile) (*storage.Store, error) {
-	if profile != contracts.ProfilePersonal && profile != contracts.ProfileWorkSafe {
-		return nil, fmt.Errorf("invalid profile %q", profile)
+// ResolveOnly resolves a pack without CLI output. Trace recording is shared
+// with every serving entrypoint and remains optional on cache-write failure.
+func (s *Session) ResolveOnly(task, workspaceHint string) (resolver.Pack, error) {
+	req := contracts.ResolutionRequest{
+		SchemaVersion: contracts.SchemaVersion,
+		Task:          task,
+		WorkspaceHint: workspaceHint,
 	}
-	return storage.Open(rt.ProjectionPath(profile))
+	pack, _, err := s.Resolve(req)
+	return pack, err
 }

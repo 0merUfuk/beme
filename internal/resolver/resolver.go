@@ -34,6 +34,21 @@ type TraceStep struct {
 // Resolve produces a ContextPack. Deterministic: identical inputs produce
 // structurally identical packs (NFR-002).
 func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req contracts.ResolutionRequest, opts Options) (Pack, []TraceStep) {
+	return resolveWith(store, cap, tc, req, opts, policyEvaluator(opts))
+}
+
+// eligibilityFunc is the Stage-A gate applied to one record.
+type eligibilityFunc func(rec contracts.Record, cap policy.Capability, tc policy.TaskContext) policy.EligibilityResult
+
+// policyEvaluator is the serving Stage-A gate: the full policy engine.
+func policyEvaluator(opts Options) eligibilityFunc {
+	return func(rec contracts.Record, cap policy.Capability, tc policy.TaskContext) policy.EligibilityResult {
+		return opts.Policy.Evaluate(rec, cap, tc, opts.Revoked, cap.ExperimentalLearnedGuidance)
+	}
+}
+
+// resolveWith runs the two-stage pipeline with the given Stage-A gate.
+func resolveWith(store Store, cap policy.Capability, tc policy.TaskContext, req contracts.ResolutionRequest, opts Options, evaluate eligibilityFunc) (Pack, []TraceStep) {
 	trace := []TraceStep{}
 	now := opts.Now
 	if now.IsZero() {
@@ -42,19 +57,13 @@ func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req cont
 
 	trace = append(trace, TraceStep{Step: "capability", Outcome: fmt.Sprintf("bound profile=%s capability=%s", cap.Profile, cap.CapabilityID)})
 
-	// Stage A over every record.
-	eligible := []contracts.Record{}
-	excluded := map[string]string{}
-	for _, rec := range store.Records() {
-		res := opts.Policy.Evaluate(rec, cap, tc, opts.Revoked, cap.ExperimentalLearnedGuidance)
-		if res.Eligible {
-			eligible = append(eligible, rec)
-			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "eligible"})
-		} else {
-			excluded[rec.RecordID] = strings.Join(res.Reasons, "; ")
-			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "excluded", Reasons: res.Reasons})
-		}
+	// Task applicability is derived before eligibility, never from ranking.
+	if len(tc.TaskKinds) == 0 {
+		tc.TaskKinds = TaskKindsForRequest(req.Task, req.TaskKindHints)
 	}
+
+	// Stage A over every record.
+	eligible, trace := stageA(store, cap, tc, evaluate, trace)
 
 	// Stage B: facet classification (deterministic lexical).
 	facets := classifyFacets(req.Task, tc.TaskKinds)
@@ -62,6 +71,15 @@ func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req cont
 
 	// Retrieval scoring: relevance to task text + facet + decision_key.
 	scored := scoreCandidates(eligible, req, facets, tc)
+
+	// Retrieval: advisory records need task evidence; constraints and
+	// globally applicable principles always apply (relevance.go).
+	scored, excluded := retainRelevant(scored, req, facets, tc)
+	// One step per record, like Stage A, so explain shows each exclusion and
+	// read surfaces can drop steps naming records that are no longer visible.
+	for _, id := range excluded {
+		trace = append(trace, TraceStep{Step: "relevance", RecordID: id, Outcome: "not relevant to task"})
+	}
 
 	// Precedence resolution per decision_key group.
 	groups := groupByDecisionKey(scored)
@@ -72,19 +90,62 @@ func Resolve(store Store, cap policy.Capability, tc policy.TaskContext, req cont
 	return pack, trace
 }
 
+// stageA applies the Stage-A gate to every record, recording each outcome in
+// the trace, and returns the eligible records in store order.
+func stageA(store Store, cap policy.Capability, tc policy.TaskContext, evaluate eligibilityFunc, trace []TraceStep) ([]contracts.Record, []TraceStep) {
+	eligible := []contracts.Record{}
+	for _, rec := range store.Records() {
+		res := evaluate(rec, cap, tc)
+		if res.Eligible {
+			eligible = append(eligible, rec)
+			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "eligible"})
+		} else {
+			trace = append(trace, TraceStep{Step: "stage_a", RecordID: rec.RecordID, Outcome: "excluded", Reasons: res.Reasons})
+		}
+	}
+	return eligible, trace
+}
+
 // Options carries trusted resolver inputs.
 type Options struct {
 	Policy       *policy.Engine
 	Revoked      map[string]bool
 	Now          time.Time
 	BudgetTokens int
+	PolicyDigest string // optional digest of effective serving policy facts
 	Degradations []DegradationInput
 }
 
 // DegradationInput is resolver-visible degradation (blueprint §13.7).
 type DegradationInput struct {
-	Kind   string
-	Detail string
+	Kind   string `json:"kind"`
+	Detail string `json:"detail"`
+}
+
+// TaskKindsForRequest derives task applicability independently of relevance.
+// Explicit hints narrow applicability: lexical inference cannot override a
+// mismatched hint. Capability, sensitivity and workspace checks remain hard gates.
+func TaskKindsForRequest(task string, hints []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, h := range hints {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" {
+			continue
+		}
+		if len(h) > 64 {
+			h = h[:64]
+		}
+		if !seen[h] {
+			out = append(out, h)
+			seen[h] = true
+		}
+	}
+	if len(out) == 0 {
+		return classifyFacets(task, nil)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func classifyFacets(task string, hints []string) []string {
@@ -114,9 +175,8 @@ func classifyFacets(task string, hints []string) []string {
 			facets[h] = true
 		}
 	}
-	if len(facets) == 0 {
-		facets["implementation"] = true
-	}
+	// No lexical evidence means unknown task kind, not an assumed
+	// implementation task. A fallback must not widen task-scope eligibility.
 	out := make([]string, 0, len(facets))
 	for f := range facets {
 		out = append(out, f)
@@ -131,7 +191,7 @@ type scoredRecord struct {
 }
 
 func scoreCandidates(recs []contracts.Record, req contracts.ResolutionRequest, facets []string, tc policy.TaskContext) []scoredRecord {
-	taskLower := strings.ToLower(req.Task)
+	taskTokens := contentTokens(req.Task)
 	out := make([]scoredRecord, 0, len(recs))
 	for _, rec := range recs {
 		s := 0.0
@@ -145,13 +205,8 @@ func scoreCandidates(recs []contracts.Record, req contracts.ResolutionRequest, f
 				}
 			}
 		}
-		// lexical overlap
-		text := strings.ToLower(rec.Title + " " + rec.Statement + " " + rec.CompactText + " " + rec.Key)
-		for _, w := range strings.FieldsFunc(taskLower, func(r rune) bool { return !unicodeIsWord(r) }) {
-			if len(w) > 3 && strings.Contains(text, w) {
-				s += 0.5
-			}
-		}
+		// lexical overlap on normalized content words (relevance.go)
+		s += 0.5 * float64(contentOverlap(taskTokens, recordText(rec)))
 		// workspace specificity
 		if len(rec.Scope.WorkspaceIDs) > 0 {
 			s += 1

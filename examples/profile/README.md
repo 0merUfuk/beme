@@ -4,7 +4,8 @@ A fully synthetic example of a Be Me deployment configuration. All names,
 paths, and sources are fictional. Real deployment configuration lives
 outside this repository, under the platform user-config directory.
 
-Structure (once WP4 implements it):
+Synthetic deployment layout; see [OPERATIONS.md](../../docs/OPERATIONS.md)
+for executable setup instructions:
 
 ```
 <beme-config>/

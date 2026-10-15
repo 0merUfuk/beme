@@ -3,10 +3,7 @@
 package projection
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/0merUfuk/beme/internal/contracts"
@@ -16,11 +13,9 @@ import (
 // View is a read-only adapter over a projection store, bound to one
 // capability. It implements resolver.Store.
 type View struct {
-	store         *storage.Store
-	capabilityID  string
-	profile       contracts.Profile
-	policyDigest  string
-	indexRevision string
+	store        *storage.Store
+	capabilityID string
+	profile      contracts.Profile
 }
 
 func NewView(store *storage.Store, capabilityID string, profile contracts.Profile) *View {
@@ -31,25 +26,29 @@ func (v *View) Records() []contracts.Record                       { return v.sto
 func (v *View) Provenance(id string) (contracts.Provenance, bool) { return v.store.Provenance(id) }
 
 func (v *View) IndexRevision() string {
-	if v.indexRevision != "" {
-		return v.indexRevision
+	if v.profile == contracts.ProfileWorkSafe {
+		return "withheld"
 	}
 	if s, ok := v.store.GetMeta("index_revision"); ok {
-		v.indexRevision = s
 		return s
 	}
 	return "unknown"
 }
 
 func (v *View) PolicyDigest() string {
-	if v.policyDigest != "" {
-		return v.policyDigest
+	if v.profile == contracts.ProfileWorkSafe {
+		return "withheld"
 	}
-	h := sha256.Sum256([]byte("policy-v1:" + v.capabilityID))
-	return "sha256:" + hex.EncodeToString(h[:])
+	if s, ok := v.store.GetMeta("policy_digest"); ok {
+		return s
+	}
+	return "unknown"
 }
 
 func (v *View) SourceRevisionDigest() string {
+	if v.profile == contracts.ProfileWorkSafe {
+		return ""
+	}
 	if s, ok := v.store.GetMeta("source_revision_digest"); ok {
 		return s
 	}
@@ -70,6 +69,11 @@ type Builder struct {
 	// SafeManifestMode: when true, only descriptors with
 	// purpose safe_declassified are ingested.
 	SafeManifestMode bool
+	// PolicySources includes registered sources that failed ingestion too.
+	// PolicyContext holds trusted workspace policy (owner-local only).
+	PolicySources   []contracts.SourceDescriptor
+	PolicyContext   any
+	ingestedSources []contracts.SourceDescriptor
 }
 
 // IngestResult reports what a build produced.
@@ -118,6 +122,7 @@ func (b *Builder) IngestSource(sd contracts.SourceDescriptor, recs []contracts.R
 			}
 		}
 	}
+	b.ingestedSources = append(b.ingestedSources, sd)
 	return b.Store.PutRecords(recs, provs)
 }
 
@@ -147,11 +152,5 @@ func sensitivityRank(s string) int {
 
 // Finalize computes deterministic index metadata for the built store.
 func (b *Builder) Finalize(sourceIDs []string) error {
-	sort.Strings(sourceIDs)
-	h := sha256.Sum256([]byte("index-v1:" + strings.Join(sourceIDs, ",")))
-	if err := b.Store.SetMeta("index_revision", "idx_"+hex.EncodeToString(h[:8])); err != nil {
-		return err
-	}
-	sh := sha256.Sum256([]byte("sources:" + strings.Join(sourceIDs, ",")))
-	return b.Store.SetMeta("source_revision_digest", "sha256:"+hex.EncodeToString(sh[:]))
+	return b.finalizeSnapshot(sourceIDs)
 }

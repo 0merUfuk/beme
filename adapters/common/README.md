@@ -1,8 +1,9 @@
 # Be Me — Shared Adapter Assets (common)
 
-The common block every harness adapter installs. Managed content is minimal,
-idempotently installable/removable, and never copies the user's profile —
-it points at the runtime (blueprint §13.1).
+The common block installed by the managed Codex and Claude Code adapters.
+Other harnesses have manual integration contracts, not managed installers.
+Managed content is minimal, idempotently installable/removable, and never
+copies the user's profile — it points at the runtime (blueprint §13.1).
 
 ## Managed bootstrap block (v1)
 

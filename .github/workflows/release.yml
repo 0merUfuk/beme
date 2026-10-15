@@ -1,0 +1,165 @@
+name: alpha-release
+
+on:
+  push:
+    tags: ['v*-alpha.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing numbered alpha tag already reachable from main
+        required: true
+        type: string
+
+# Read-only until all source and native-artifact gates have passed.
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  GOTOOLCHAIN: local
+  GOWORK: "off"
+  GOTELEMETRY: "off"
+  GOFLAGS: -mod=readonly
+
+jobs:
+  gate:
+    if: >-
+      github.repository == '0merUfuk/beme' && github.repository_owner == '0merUfuk' &&
+      github.actor == '0merUfuk' && github.triggering_actor == '0merUfuk'
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      tag: ${{ steps.source.outputs.tag }}
+    steps:
+      - name: Validate requested tag before checkout
+        env:
+          EVENT: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha\.([1-9][0-9]*)', tag):
+              raise SystemExit('Only numbered alpha tags are accepted')
+          event, ref = os.environ['EVENT'], os.environ['WORKFLOW_REF']
+          if not ((event == 'push' and ref == 'refs/tags/' + tag) or
+                  (event == 'workflow_dispatch' and ref == 'refs/heads/main')):
+              raise SystemExit('Dispatch must use the main workflow; topic workflows cannot release')
+          PY
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Version agreement, remote tag identity and main ancestry
+        id: source
+        run: python3 scripts/release.py gate --tag "$RELEASE_TAG"
+
+  # Re-run the COMPLETE existing native matrix, not a lookup of old green CI.
+  # Dispatch github.sha points to main: explicitly forward the validated tag SHA.
+  ci:
+    needs: gate
+    uses: ./.github/workflows/ci.yml
+    with:
+      source-ref: ${{ needs.gate.outputs.sha }}
+    permissions:
+      contents: read
+
+  artifacts:
+    needs: [gate, ci]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15-intel, target: darwin_amd64}
+          - {os: macos-15, target: darwin_arm64}
+          - {os: ubuntu-24.04, target: linux_amd64}
+          - {os: ubuntu-24.04-arm, target: linux_arm64}
+          - {os: windows-latest, target: windows_amd64}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Keep fixtures byte-exact (no CRLF conversion)
+        if: runner.os == 'Windows'
+        run: |
+          git config --global core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Package and execute the actual native archive
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-release-artifacts
+        run: python scripts/release.py package --target "$TARGET" --out "$ARTIFACT_DIR" --smoke
+      - name: Package and execute the actual Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-release-artifacts
+        run: |
+          $ErrorActionPreference = "Stop"
+          . ./scripts/native.ps1
+          Invoke-CheckedNative -Command python -Arguments @('scripts/release.py', 'package', '--target', $env:TARGET, '--out', $env:ARTIFACT_DIR, '--smoke')
+      - uses: actions/upload-artifact@v7
+        with:
+          name: alpha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/beme-release-artifacts/*
+          if-no-files-found: error
+          overwrite: false
+          archive: true
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: [gate, ci, artifacts]
+    if: >-
+      needs.gate.result == 'success' && needs.ci.result == 'success' &&
+      needs.artifacts.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+      RELEASE_SOURCE_SHA: ${{ needs.gate.outputs.sha }}
+      RELEASE_CI_RESULT: ${{ needs.ci.result }}
+      RELEASE_ARTIFACT_RESULT: ${{ needs.artifacts.result }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: alpha-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/beme-release-bundle
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Verify all five source-bound archives and generate SHA256SUMS
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-release-bundle
+        run: python3 scripts/release.py checksums --out "$ARTIFACT_DIR" --tag "$RELEASE_TAG"
+      # Owner creates the draft and reviewed notes before this job. The helper
+      # never creates/deletes a release or changes a tag, body, name or author.
+      - name: Upload missing matching assets and publish the owner draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-release-bundle
+        run: python3 scripts/release.py publish --out "$ARTIFACT_DIR" --tag "$RELEASE_TAG"

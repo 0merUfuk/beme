@@ -23,3 +23,6 @@ scripts/private_scan_terms.local
 
 # Local validation environment (documented bootstrap)
 .venv/
+
+# Rebuildable Python helper bytecode, never release source
+__pycache__/

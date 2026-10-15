@@ -6,10 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"testing"
+
+	"github.com/0merUfuk/beme/internal/contracts"
 )
 
-// TestToolSurfaceContract pins ADR-009: exactly the four narrow tools.
+// TestToolSurfaceContract pins ADR-009/FR-041: the shared tool list is
+// exactly the four narrow tools, and mcp.go registers exactly that list.
 func TestToolSurfaceContract(t *testing.T) {
 	expected := map[string]bool{
 		"beme.resolve_context":  true,
@@ -17,24 +21,38 @@ func TestToolSurfaceContract(t *testing.T) {
 		"beme.report_feedback":  true,
 		"beme.status":           true,
 	}
+	if len(contracts.MCPTools) != len(expected) {
+		t.Fatalf("contracts.MCPTools must list exactly %d tools; got %v", len(expected), contracts.MCPTools)
+	}
+	for _, name := range contracts.MCPTools {
+		if !expected[name] {
+			t.Errorf("unexpected tool %s in contracts.MCPTools — ADR-009 violation (narrow surface)", name)
+		}
+	}
 	data, err := os.ReadFile("mcp.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	re := regexp.MustCompile(`Name:\s*"(beme\.[a-z_]+)"`)
-	got := map[string]bool{}
-	for _, m := range re.FindAllStringSubmatch(string(data), -1) {
-		got[m[1]] = true
+	if regexp.MustCompile(`Name:\s*"beme\.`).Match(data) {
+		t.Error("mcp.go registers a tool by string literal; use the contracts constants")
 	}
-	for name := range expected {
-		if !got[name] {
-			t.Errorf("expected tool %s missing from server registration", name)
-		}
+	registered := regexp.MustCompile(`Name:\s*contracts\.(Tool\w+)`).FindAllStringSubmatch(string(data), -1)
+	if len(registered) != len(contracts.MCPTools) {
+		t.Fatalf("mcp.go must register exactly %d tools; found %d", len(contracts.MCPTools), len(registered))
 	}
-	for name := range got {
-		if !expected[name] {
-			t.Errorf("unexpected tool %s registered — ADR-009 violation (narrow surface)", name)
+	consts := map[string]string{
+		"ToolResolveContext": contracts.ToolResolveContext,
+		"ToolGetContextItem": contracts.ToolGetContextItem,
+		"ToolReportFeedback": contracts.ToolReportFeedback,
+		"ToolStatus":         contracts.ToolStatus,
+	}
+	seen := map[string]bool{}
+	for _, m := range registered {
+		name, ok := consts[m[1]]
+		if !ok || seen[name] {
+			t.Fatalf("mcp.go registers unknown or duplicate tool constant %s", m[1])
 		}
+		seen[name] = true
 	}
 }
 
@@ -73,6 +91,9 @@ func TestElevationNotRepresentable(t *testing.T) {
 // TestStdioOnlyTransport: ADR-014 — network transports rejected in v1.
 func TestStdioOnlyTransport(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "beme-bin")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir, _ = os.Getwd()
 	if out, err := build.CombinedOutput(); err != nil {

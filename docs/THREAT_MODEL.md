@@ -1,7 +1,7 @@
 # Be Me — Threat Model
 
-> Contracts-phase document. Data-flow, attacker, boundary, misuse,
-> mitigation, and non-goal analysis. The 30 ship-blocking regression cases map
+> Data-flow, attacker, boundary, misuse, mitigation, and non-goal analysis
+> for the implemented runtime. The 30 ship-blocking regression cases map
 > to the invariants in `evals/EVALUATION_CONTRACT.md` §7.
 
 ## 1. Security thesis
@@ -77,6 +77,31 @@ intentionally irreversible, non-content anti-resurrection tombstone only, no
 reactivation path). Restore/rollback never reactivates revoked/purged data
 without deliberate reauthorization (FR-055, P7.5).
 
+Implementation (ADR-027): the durable ledger lives under the canonical root,
+outside derived data. Purge tombstones are keyed HMAC fingerprints of record
+identity only, so a leaked ledger cannot confirm guessed private content or
+IDs without the separately stored key. A purge that fails part-way leaves a
+content-free journal; re-running it completes every remaining deletion, and
+completed purges are idempotent. Provenance is removed through the record's
+actual refs, never an ID convention. Misuse and failure cases covered: an
+interrupted purge stranding derived copies, resurrection through
+multi-provenance records, and offline dictionary tests against the ledger
+(corpus cases S1–S3).
+
+Read surfaces (ADR-027 §7, ADR-029): resolve, export, explain, doctor, MCP
+status counts, and context-item expansion all apply the ledger at read time,
+so a restored pre-purge backup cannot surface purged or revoked records in
+content, provenance, counts, or metadata, and an unusable ledger or purge key
+fails every one of them closed (case S4). Expansion is bound to a pack the
+same session issued: guessed, replayed, unselected, expired, rebuilt, and
+revoked combinations share one refusal (case 24). The ledger and journal
+cross a documented durability boundary (file and parent-directory flush;
+write-through rename on Windows) before any erasure; storage that
+acknowledges flushes it does not perform is outside that guarantee.
+Residuals: restored observations are hidden by identity (ADR-030); a
+paraphrase recreated under a new identity cannot be matched to purged content
+(the ledger holds none). Refusal timing is not equalized.
+
 ## 7. Non-goals (explicitly not claimed)
 
 - No protection against a compromised OS or a deliberate same-user process
@@ -85,3 +110,47 @@ without deliberate reauthorization (FR-055, P7.5).
 - No guarantee data stays on-device after a pack is sent to a cloud model.
 - No universal impossibility proof: zero observed failures in the locked
   corpus is evidence for the defined threat set only.
+
+## 8. Brain boundary (V2)
+
+Brain memory is a separate non-canonical CLI surface (ADR-033–035), not a new
+MCP tool or a new source in either V1 projection. Agent-authored notes are
+untrusted evidence. Capture/Doctor/briefing screens are heuristic; a plausible
+false note can pass. A same-user filesystem writer can bypass capture. Review
+notes and identity pointers before giving a briefing to a cloud harness.
+
+Brain logs, archive and backups retain content; the V1 purge ledger does not
+cover them. Checksums are corruption checks, not authenticated snapshots.
+Unix file modes do not establish Windows ACL isolation. Fail-open session
+startup means context may be unavailable, not that V1 capability or project
+trust expands. Synthetic regression coverage is not proof of live use or
+protection against every injection or filesystem race.
+
+ADR-036 adds component-aware no-symlink/regular-file guards for identity,
+metadata and notes, scope selection before content loading, scan and byte
+budgets, complete registration/bookkeeping freeze/schema gates and atomic
+no-clobber proposals. Cooperative-local pathname checks cannot defeat a
+hostile same-user process replacing components concurrently. Scan deadlines
+are checked between operations, not preemptions of stalled filesystem calls.
+
+Restore stages checksum-verified bytes before retention or live mutation.
+Ordinary install errors roll back and preserve recovery data on rollback
+failure. Entry-wise installation is not a whole-tree power-loss transaction;
+operator recovery may be necessary after process/power interruption. Snapshots
+and logs retain content independently of the V1 purge boundary.
+
+## 9. Evidence integrity and optional observability
+
+Generated ContextPacks and independently imported grades must be distinguished
+from real task benefit. ADR-037/038 bind delivered evidence and frozen corpus
+bytes, reject absent/invalid review coverage, and keep safety blockers separate
+from aggregate scores. Approval and independent-review declarations are not
+identity-authenticated signatures; application-level exclusive/hashed bundles
+are not OS tamper-proof storage. Provider/network declarations are not a
+sandbox or proof the baseline lacked other memory/tools.
+
+Work-safe output withholds correlatable policy/index/source fingerprints and
+sorts provenance by visible fields only. Trace-cache failure advertises no
+usable handle and returns class-level reduced assurance rather than inventing
+observability. Brain hook invocation, harness delivery, agent use and causal
+benefit remain separate evidence levels.

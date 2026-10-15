@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Frozen corpus membership and evaluator protocol v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "approved_by_user",
+    "frozen",
+    "approval_ref",
+    "evidence_class",
+    "dataset_version",
+    "evaluator_protocol",
+    "rubric_version",
+    "bootstrap_seed",
+    "bootstrap_samples",
+    "members"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "approved_by_user": {
+      "const": true
+    },
+    "frozen": {
+      "const": true
+    },
+    "approval_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_class": {
+      "enum": [
+        "synthetic_mechanism",
+        "owner_corpus"
+      ]
+    },
+    "dataset_version": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "evaluator_protocol": {
+      "const": "offline-blind-v1"
+    },
+    "rubric_version": {
+      "const": "0-4-blind-paired"
+    },
+    "bootstrap_seed": {
+      "type": "integer"
+    },
+    "bootstrap_samples": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 100000
+    },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "file_sha256",
+          "family",
+          "split"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "file_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "family": {
+            "type": "string",
+            "minLength": 1
+          },
+          "split": {
+            "enum": [
+              "calibration",
+              "development",
+              "locked_holdout",
+              "privacy_red_team"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

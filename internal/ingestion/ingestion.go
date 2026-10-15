@@ -10,20 +10,30 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/0merUfuk/beme/internal/contracts"
+	"gopkg.in/yaml.v3"
 )
 
 // Limits bound ingestion (NFR-009, threat case 29).
 type Limits struct {
-	MaxFileBytes  int64
+	MaxFileBytes int64
+	// MaxFiles bounds the files a source contributes: only files that pass
+	// the hard excludes, the descriptor excludes and the include patterns
+	// count. Files the descriptor never selects do not use up the budget.
 	MaxFiles      int
 	MaxDepth      int
 	MaxTotalBytes int64
-	Timeout       time.Duration
+	// MaxVisited bounds traversal itself — every file entry examined,
+	// selected or not — so a narrow include over a very large tree stays
+	// bounded. Zero means no traversal cap (the timeout still applies).
+	MaxVisited int
+	Timeout    time.Duration
 }
 
 // DefaultLimits are the conservative v1 bounds.
@@ -33,6 +43,7 @@ func DefaultLimits() Limits {
 		MaxFiles:      5000,
 		MaxDepth:      12,
 		MaxTotalBytes: 100 << 20, // 100 MiB per source
+		MaxVisited:    200000,
 		Timeout:       30 * time.Second,
 	}
 }
@@ -75,6 +86,7 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 	files := []File{}
 	total := int64(0)
 	count := 0
+	visited := 0
 
 	err = filepath.WalkDir(realRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -83,8 +95,10 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ingestion timeout exceeded")
 		}
+		// Relative paths are slash-separated on every platform: globs,
+		// excludes, and provenance locators are portable (NFR-007).
 		rel := strings.TrimPrefix(path, realRoot)
-		rel = strings.TrimPrefix(rel, string(filepath.Separator))
+		rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
 		if d.IsDir() {
 			if rel == "" {
 				return nil
@@ -92,14 +106,14 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 			if matchAny(rel, HardExcludes) || matchAny(rel, exclude) {
 				return fs.SkipDir
 			}
-			if strings.Count(rel, string(filepath.Separator))+1 > w.limits.MaxDepth {
+			if strings.Count(rel, "/")+1 > w.limits.MaxDepth {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		count++
-		if count > w.limits.MaxFiles {
-			return fmt.Errorf("file count limit exceeded (%d)", w.limits.MaxFiles)
+		visited++
+		if w.limits.MaxVisited > 0 && visited > w.limits.MaxVisited {
+			return fmt.Errorf("traversal limit exceeded (%d entries examined): narrow the source root", w.limits.MaxVisited)
 		}
 		if matchAny(rel, HardExcludes) || matchAny(rel, exclude) {
 			return nil
@@ -114,6 +128,13 @@ func (w *Walker) Walk(root string, include, exclude []string) ([]File, error) {
 		}
 		if len(include) > 0 && !matchAny(rel, include) {
 			return nil
+		}
+		// Only files the descriptor selects count toward the source-size
+		// limit; counting unselected files made a narrow include over a
+		// large repository abort the whole source.
+		count++
+		if count > w.limits.MaxFiles {
+			return fmt.Errorf("file count limit exceeded (%d)", w.limits.MaxFiles)
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -148,55 +169,61 @@ func matchAny(rel string, patterns []string) bool {
 		if matchGlob(p, rel) {
 			return true
 		}
-		if matchGlob(p, filepath.Base(rel)) {
+		if matchGlob(p, path.Base(rel)) {
 			return true
 		}
 		// directory-tree excludes: a plain name matching a leading path
 		// segment excludes the whole subtree ("secrets", ".git").
-		if !strings.Contains(p, "*") && strings.HasPrefix(rel, p+string(filepath.Separator)) {
+		if !strings.Contains(p, "*") && strings.HasPrefix(rel, p+"/") {
 			return true
 		}
 	}
 	return false
 }
 
-// matchGlob supports ** as a zero-or-more-segment wildcard (gitignore
-// semantics): "a/**/*.md" matches both "a/x.md" and "a/b/c/x.md".
+// matchGlob matches a slash-separated relative path against a pattern
+// segment by segment (gitignore semantics). "**" matches zero or more whole
+// segments anywhere in the pattern, including before a multi-segment tail
+// such as "a/**/b/*.md"; every other segment uses path.Match, so "*" never
+// crosses "/". Paths containing ".." never match.
 func matchGlob(pattern, rel string) bool {
-	if !strings.Contains(pattern, "**") {
-		ok, _ := filepath.Match(pattern, rel)
-		return ok
+	if rel == "" {
+		return false
 	}
-	segs := strings.Split(pattern, "**")
-	first := strings.TrimSuffix(segs[0], string(filepath.Separator))
-	lastSegs := strings.Split(segs[len(segs)-1], string(filepath.Separator))
-	// last part keeps its glob (e.g. "*.md"); match against the basename
-	last := lastSegs[len(lastSegs)-1]
-	if first != "" {
-		if !strings.HasPrefix(rel, first+string(filepath.Separator)) {
+	rs := strings.Split(rel, "/")
+	for _, seg := range rs {
+		if seg == ".." {
 			return false
 		}
-		rel = rel[len(first)+1:]
 	}
-	if last != "" && last != "." {
-		base := filepath.Base(rel)
-		ok, _ := filepath.Match(last, base)
-		if !ok {
-			return false
-		}
-		if len(lastSegs) > 1 {
-			// multi-segment tail beyond the glob: require it as suffix
-			tail := strings.Join(lastSegs, string(filepath.Separator))
-			tail = strings.TrimSuffix(tail, string(filepath.Separator)+last)
-			if tail != "" && !strings.HasSuffix(rel, tail) {
-				return false
+	return matchSegments(strings.Split(strings.Trim(pattern, "/"), "/"), rs)
+}
+
+func matchSegments(ps, rs []string) bool {
+	for len(ps) > 0 {
+		if ps[0] == "**" {
+			for len(ps) > 1 && ps[1] == "**" {
+				ps = ps[1:]
 			}
+			if len(ps) == 1 {
+				return true // trailing ** matches any remainder
+			}
+			for i := 0; i <= len(rs); i++ {
+				if matchSegments(ps[1:], rs[i:]) {
+					return true
+				}
+			}
+			return false
 		}
+		if len(rs) == 0 {
+			return false
+		}
+		if ok, err := path.Match(ps[0], rs[0]); err != nil || !ok {
+			return false
+		}
+		ps, rs = ps[1:], rs[1:]
 	}
-	if len(segs) > 2 {
-		return !strings.Contains(rel, "..")
-	}
-	return !strings.Contains(rel, "..")
+	return len(rs) == 0
 }
 
 func isTextFile(rel string) bool {
@@ -245,8 +272,8 @@ type MarkdownEntry struct {
 // ParseMarkdown splits frontmatter and body. It never interprets content
 // as instructions (ADR-006): frontmatter values are data only.
 func ParseMarkdown(content []byte) (map[string]any, string) {
-	txt := string(content)
-	if !strings.HasPrefix(txt, "---") {
+	txt := strings.ReplaceAll(string(content), "\r\n", "\n")
+	if !strings.HasPrefix(txt, "---\n") {
 		return map[string]any{}, txt
 	}
 	rest := txt[3:]
@@ -255,26 +282,13 @@ func ParseMarkdown(content []byte) (map[string]any, string) {
 		return map[string]any{}, txt
 	}
 	fm := rest[:end]
-	// crude but safe YAML subset parse: key: value lines, lists
+	// Bounded YAML data, not instructions. Reject malformed metadata rather
+	// than flattening nested applicability constraints into global records.
 	front := map[string]any{}
-	for _, line := range strings.Split(fm, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "-") {
-			continue
-		}
-		kv := strings.SplitN(line, ":", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		k := strings.TrimSpace(kv[0])
-		v := strings.TrimSpace(kv[1])
-		v = strings.Trim(v, "\"'")
-		if strings.Contains(v, "#") && !strings.HasPrefix(v, "\"") {
-			v = strings.TrimSpace(strings.SplitN(v, "#", 2)[0])
-		}
-		front[k] = v
+	if len(fm) > 64<<10 || yaml.Unmarshal([]byte(fm), &front) != nil {
+		return map[string]any{}, txt
 	}
-	body := rest[end+3:]
+	body := rest[end+4:] // skip "\n---" entirely (end points at the newline; +4 passes the closing dashes)
 	return front, body
 }
 
@@ -309,6 +323,9 @@ func NormalizeEntry(sd contracts.SourceDescriptor, entry MarkdownEntry) (contrac
 	// Statement from body: first paragraph under Summary if present, else first line.
 	rec.Statement = firstMeaningful(entry.Body)
 	rec.CompactText = truncate(rec.Statement, 240)
+	if rec.Statement == "" || !applyMetadata(&rec, sd, fm) {
+		return contracts.Record{}, false
+	}
 	if rec.Status != contracts.StatusActive {
 		// keep deprecated entries out of the index entirely
 		return contracts.Record{}, false
@@ -352,10 +369,10 @@ func mapKind(v any) contracts.Kind {
 
 func mapStatus(v any) contracts.Status {
 	s, _ := v.(string)
-	if strings.TrimSpace(s) == "deprecated" {
-		return contracts.StatusDeprecated
+	if strings.TrimSpace(s) == "" {
+		return contracts.StatusActive
 	}
-	return contracts.StatusActive
+	return contracts.Status(strings.TrimSpace(s))
 }
 
 func mapConfidence(v any) contracts.Confidence {
@@ -384,23 +401,105 @@ func mapRole(sd contracts.SourceDescriptor) contracts.SourceRole {
 	return contracts.RoleTrustedReference
 }
 
+var markdownLinks = regexp.MustCompile(`!?\[[^\]\n]*\]\([^\)\n]*\)|\[\[[^\]\n]+\]\]`)
+
+func navigationOnly(line string) bool {
+	withoutLinks := markdownLinks.ReplaceAllString(line, "")
+	return withoutLinks != line && strings.Trim(withoutLinks, " 	|·>-/") == ""
+}
+
 func firstMeaningful(body string) string {
-	for _, para := range strings.Split(body, "\n\n") {
-		p := strings.TrimSpace(para)
-		p = strings.TrimPrefix(p, "#")
-		p = strings.TrimSpace(p)
-		if len(p) > 0 && !strings.HasPrefix(p, "[") && !strings.HasPrefix(p, "!") {
-			return truncate(p, 600)
+	// Entry summaries/ADR decisions take precedence over background text.
+	// Headings, navigation, comments and fenced examples are not decisions.
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	first, preferred := "", ""
+	paragraph := []string{}
+	section := ""
+	var fence byte
+	fenceLength := 0
+	comment := false
+	flush := func() {
+		p := strings.TrimSpace(strings.Join(paragraph, " "))
+		paragraph = nil
+		if p == "" {
+			return
+		}
+		if first == "" {
+			first = p
+		}
+		if preferred == "" && (section == "summary" || section == "decision") {
+			preferred = p
 		}
 	}
-	return ""
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		// A fence closes only with the opening character, at least the
+		// opening run length, and whitespace after the marker. Mixed or
+		// shorter markers inside an example are example content, not exits.
+		marker, run := byte(0), 0
+		if len(line) > 0 && (line[0] == '`' || line[0] == '~') {
+			marker = line[0]
+			for run < len(line) && line[run] == marker {
+				run++
+			}
+		}
+		if fence != 0 {
+			if marker == fence && run >= fenceLength && strings.TrimSpace(line[run:]) == "" {
+				fence, fenceLength = 0, 0
+			}
+			continue
+		}
+		if !comment && run >= 3 && (marker != '`' || !strings.Contains(line[run:], "`")) {
+			flush()
+			fence, fenceLength = marker, run
+			continue
+		}
+		if strings.Contains(line, "<!--") {
+			comment = true
+		}
+		if comment {
+			if strings.Contains(line, "-->") {
+				comment = false
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			flush()
+			section = strings.ToLower(strings.TrimSpace(strings.Trim(line, "#")))
+			continue
+		}
+		// Setext headings are headings too (Title followed by === or ---).
+		if i+1 < len(lines) {
+			next := strings.TrimSpace(lines[i+1])
+			if len(next) >= 3 && (strings.Trim(next, "=") == "" || strings.Trim(next, "-") == "") {
+				flush()
+				section = strings.ToLower(line)
+				continue
+			}
+		}
+		if line == "" || strings.Trim(line, "-=_*") == "" {
+			flush()
+			continue
+		}
+		if navigationOnly(line) {
+			flush()
+			continue
+		}
+		paragraph = append(paragraph, line)
+	}
+	flush()
+	if preferred != "" {
+		return truncate(preferred, 600)
+	}
+	return truncate(first, 600)
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(runes[:n-1]) + "…"
 }
 
 // ContentDigestOrCommit helper on SourceRevision.

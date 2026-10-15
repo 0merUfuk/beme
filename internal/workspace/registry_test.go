@@ -79,7 +79,9 @@ func TestSymlinkedHintResolvesRealPath(t *testing.T) {
 		SensitivityNamespace: "work_restricted", AuthorityCeiling: contracts.AuthorityDefault,
 	})
 	link := filepath.Join(t.TempDir(), "link")
-	os.Symlink(root, link)
+	if err := os.Symlink(root, link); err != nil {
+		t.Skip("symlinks unavailable on this platform/user: " + err.Error())
+	}
 	m := reg.Resolve(link)
 	if m.WorkspaceID != "ws-alpha" {
 		t.Fatalf("symlinked path must resolve through real path to registered root: %+v", m)

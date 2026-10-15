@@ -3,6 +3,7 @@ package resolver
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -126,41 +127,6 @@ func newOpaqueID(prefix string) string {
 func buildPack(winners []scoredRecord, conflicts []ConflictInfo, req contracts.ResolutionRequest,
 	cap policy.Capability, tc policy.TaskContext, store Store, opts Options,
 	facets []string, now time.Time, trace *[]TraceStep) Pack {
-
-	packID := newOpaqueID("ctx")
-	traceRef := newOpaqueID("trace")
-
-	constraints := []ContextItem{}
-	guidance := []ContextItem{}
-	precedents := []ContextItem{}
-	learned := []ContextItem{}
-
-	// learned observations go to the dedicated non-normative section only
-	// (never constraints), and only when explicitly enabled.
-	for _, sr := range winners {
-		rec := sr.rec
-		item := toContextItem(rec, sr.score, facets, tc, cap)
-		switch {
-		case rec.SourceRole == contracts.RoleLearnedObservation:
-			learned = append(learned, item)
-		case rec.SourceRole == contracts.RoleTrustedProjectPolicy:
-			constraints = append(constraints, item)
-		case rec.Kind == contracts.KindPrecedent:
-			precedents = append(precedents, item)
-		case rec.Authority == contracts.AuthorityDefault && (rec.Kind == contracts.KindDirective || rec.Kind == contracts.KindPrinciple) && rec.Criticality == "high":
-			constraints = append(constraints, item)
-		default:
-			guidance = append(guidance, item)
-		}
-	}
-
-	// Deterministic section ordering (NFR-002).
-	sortContextItems(constraints)
-	sortContextItems(guidance)
-	sortContextItems(precedents)
-	sortContextItems(learned)
-
-	// Budget: mandatory = constraints + conflicts + unknowns + degradations.
 	budget := req.BudgetHintTokens
 	if budget <= 0 {
 		budget = opts.BudgetTokens
@@ -168,115 +134,145 @@ func buildPack(winners []scoredRecord, conflicts []ConflictInfo, req contracts.R
 	if budget <= 0 {
 		budget = 3000
 	}
-	mandatoryTokens := estimateTokens(constraints)
-	for _, c := range conflicts {
-		mandatoryTokens += tokenLen(c.DecisionKey) + tokenLen(c.WinnerID) + tokenLen(c.LoserID)
-	}
-	unknowns := deriveUnknowns(winners, req, tc, facets)
-	mandatoryTokens += tokenLen(unknownsText(unknowns))
-
-	remaining := budget - mandatoryTokens
-	omitted := 0
-	truncated := false
-	if remaining < 0 {
-		// Mandatory content does not fit: completeness incomplete + explicit
-		// degradation (never silently dropped, FR-035).
-		truncated = true
-		*trace = append(*trace, TraceStep{Step: "budget", Outcome: fmt.Sprintf("mandatory %d > budget %d", mandatoryTokens, budget)})
-	} else {
-		// Advisory sections fill the remainder in priority order:
-		// guidance -> precedents -> learned (explicitly enabled only).
-		used := 0
-		g2, gUsed, gOmit := budgetSection(guidance, remaining-used)
-		used += gUsed
-		omitted += gOmit
-		p2, pUsed, pOmit := budgetSection(precedents, remaining-used)
-		used += pUsed
-		omitted += pOmit
-		l2, lUsed, lOmit := budgetSection(learned, remaining-used)
-		used += lUsed
-		omitted += lOmit
-		guidance, precedents, learned = g2, p2, l2
-		if omitted > 0 {
-			truncated = true
+	sort.SliceStable(winners, func(i, j int) bool {
+		if winners[i].score != winners[j].score {
+			return winners[i].score > winners[j].score
+		}
+		return winners[i].rec.RecordID < winners[j].rec.RecordID
+	})
+	items := map[string]ContextItem{}
+	selected := []scoredRecord{}
+	advisory := []scoredRecord{}
+	for _, sr := range winners {
+		items[sr.rec.RecordID] = toContextItem(sr.rec, sr.score, facets, tc, cap)
+		if sr.rec.SourceRole != contracts.RoleLearnedObservation && isMandatory(sr.rec) {
+			selected = append(selected, sr)
+		} else {
+			advisory = append(advisory, sr)
 		}
 	}
-
-	degradations := []PackDegradation{}
-	for _, d := range opts.Degradations {
-		degradations = append(degradations, PackDegradation{Kind: d.Kind, Detail: d.Detail})
+	base := Pack{SchemaVersion: contracts.SchemaVersion, PackID: newOpaqueID("ctx"), GeneratedAt: now.Format(time.RFC3339),
+		Request:    PackRequest{TaskSummary: summarize(req.Task), TaskKinds: facets, Harness: req.Harness, Risk: strPtrOrNil(tc.Risk)},
+		Resolution: PackResolution{CapabilityID: cap.CapabilityID, Profile: string(cap.Profile), ProfileCeiling: string(cap.Profile), Completeness: "complete", PolicyDigest: store.PolicyDigest(), SourceRevisionDigest: strPtrOrNil(store.SourceRevisionDigest()), IndexRevision: store.IndexRevision()},
+		Knowledge:  []KnowledgeRef{}, Conflicts: conflictsSection(conflicts), Assumptions: []string{}, TraceRef: newOpaqueID("trace"),
 	}
-	if truncated {
-		degradations = append(degradations, PackDegradation{Kind: "reduced_assurance", Detail: fmt.Sprintf("token budget %d: advisory truncation=%d omissions, mandatory content preserved", budget, omitted)})
+	if opts.PolicyDigest != "" {
+		base.Resolution.PolicyDigest = opts.PolicyDigest
 	}
-
-	// provenance manifest (safe view under work-safe: omit private IDs)
-	prov := provenanceManifest(winners, cap, store)
-
-	var harnessP *string
-	if req.Harness != nil {
-		h := *req.Harness
-		harnessP = &h
+	if cap.Profile == contracts.ProfileWorkSafe {
+		base.Resolution.PolicyDigest = "withheld"
+		base.Resolution.IndexRevision = "withheld"
+		base.Resolution.SourceRevisionDigest = nil
 	}
-	var riskP *string
-	if tc.Risk != "" {
-		r := tc.Risk
-		riskP = &r
+	// Admission costs the actual compact JSON envelope, including explanations,
+	// unknowns, provenance, section labels and the omission notice. Stable opaque
+	// IDs are allocated once, so probing admission cannot change size or ranking.
+	assemble := func(delivered []scoredRecord, omitted int) Pack {
+		p := base
+		p.Constraints = []ContextItem{}
+		p.Guidance = []ContextItem{}
+		p.Precedents = []ContextItem{}
+		evidence := make([]scoredRecord, 0, len(delivered))
+		for _, sr := range delivered {
+			item := items[sr.rec.RecordID]
+			switch {
+			case sr.rec.SourceRole == contracts.RoleLearnedObservation:
+				p.LearnedExperimental = append(p.LearnedExperimental, item)
+			case isMandatory(sr.rec):
+				p.Constraints = append(p.Constraints, item)
+			case sr.rec.Kind == contracts.KindPrecedent:
+				p.Precedents = append(p.Precedents, item)
+			default:
+				p.Guidance = append(p.Guidance, item)
+			}
+			// Only delivered text can answer a material unknown; not an omitted full
+			// statement, title or semantic key living solely in the index.
+			sr.rec.Statement = item.Text
+			sr.rec.Title = ""
+			sr.rec.Key = ""
+			evidence = append(evidence, sr)
+		}
+		sortContextItems(p.Constraints)
+		sortContextItems(p.Guidance)
+		sortContextItems(p.Precedents)
+		sortContextItems(p.LearnedExperimental)
+		p.Unknowns = deriveUnknowns(evidence, req, tc, facets)
+		p.Provenance = provenanceManifest(delivered, cap, store)
+		p.Degradations = []PackDegradation{}
+		for _, d := range opts.Degradations {
+			p.Degradations = append(p.Degradations, PackDegradation{Kind: d.Kind, Detail: d.Detail})
+		}
+		if len(opts.Degradations) > 0 {
+			p.Resolution.Completeness = "incomplete"
+		}
+		p.Budget = PackBudget{RequestedTokens: budget, OmittedAdvisoryCount: omitted, Truncated: omitted > 0}
+		if omitted > 0 {
+			p.Degradations = append(p.Degradations, PackDegradation{Kind: "reduced_assurance", Detail: fmt.Sprintf("token budget %d: %d advisory items omitted; mandatory content preserved", budget, omitted)})
+			for i := range p.Unknowns {
+				p.Unknowns[i].WhyMaterial += " Relevant evidence may have been omitted by the token budget; absence from this pack is not absence from the sources."
+			}
+		}
+		p.RecountTokens()
+		return p
 	}
-
-	completeness := "complete"
-	if truncated && omitted > 0 {
-		// advisory truncation is budgeted, not incomplete
-		completeness = "complete"
+	p := assemble(selected, len(advisory))
+	// Mandatory content (including honest unknowns/degradations) is never
+	// dropped. It cannot license an unlimited advisory tail when it overflows.
+	// Try complete candidate packs even if the empty pack's unknowns would
+	// overflow: delivering evidence can replace an unknown and cost less.
+	omitted := len(advisory)
+	for _, sr := range advisory {
+		trial := append(append([]scoredRecord{}, selected...), sr)
+		candidate := assemble(trial, omitted-1)
+		if candidate.Budget.EstimatedTokens <= budget {
+			selected = trial
+			p = candidate
+			omitted--
+		}
 	}
-	if truncated && mandatoryTokens > budget {
-		completeness = "incomplete"
+	if p.Budget.EstimatedTokens > budget {
+		p.Resolution.Completeness = "incomplete"
+		p.Budget.Truncated = true
+		p.Degradations = append(p.Degradations, PackDegradation{Kind: "reduced_assurance", Detail: "mandatory content and output metadata exceed the token budget; no advisory evidence admitted"})
+		p.RecountTokens()
 	}
-
-	p := Pack{
-		SchemaVersion: contracts.SchemaVersion,
-		PackID:        packID,
-		GeneratedAt:   now.Format(time.RFC3339),
-		Request: PackRequest{
-			TaskSummary: summarize(req.Task),
-			TaskKinds:   facets,
-			Harness:     harnessP,
-			Risk:        riskP,
-		},
-		Resolution: PackResolution{
-			CapabilityID:         cap.CapabilityID,
-			Profile:              string(cap.Profile),
-			ProfileCeiling:       string(cap.Profile),
-			Completeness:         completeness,
-			PolicyDigest:         store.PolicyDigest(),
-			SourceRevisionDigest: strPtrOrNil(store.SourceRevisionDigest()),
-			IndexRevision:        store.IndexRevision(),
-		},
-		Constraints:  constraints,
-		Guidance:     guidance,
-		Precedents:   precedents,
-		Knowledge:    []KnowledgeRef{},
-		Unknowns:     unknowns,
-		Conflicts:    conflictsSection(conflicts),
-		Assumptions:  []string{},
-		Degradations: degradations,
-		Provenance:   prov,
-		Budget: PackBudget{
-			RequestedTokens:      budget,
-			EstimatedTokens:      mandatoryTokens + estimateTokens(guidance) + estimateTokens(precedents) + estimateTokens(learned),
-			Truncated:            truncated,
-			OmittedAdvisoryCount: omitted,
-		},
-		TraceRef: traceRef,
+	deliveredIDs := map[string]bool{}
+	for _, item := range p.DeliveredItems() {
+		deliveredIDs[item.RecordID] = true
 	}
-	if len(learned) > 0 {
-		p.LearnedExperimental = learned
+	for _, sr := range advisory {
+		if !deliveredIDs[sr.rec.RecordID] {
+			*trace = append(*trace, TraceStep{Step: "budget", RecordID: sr.rec.RecordID, Outcome: "omitted by token budget"})
+		}
 	}
-	*trace = append(*trace, TraceStep{Step: "pack", Outcome: fmt.Sprintf("pack %s: constraints=%d guidance=%d precedents=%d unknowns=%d conflicts=%d", packID, len(constraints), len(guidance), len(precedents), len(unknowns), len(p.Conflicts))})
+	*trace = append(*trace, TraceStep{Step: "pack", Outcome: fmt.Sprintf("pack %s: constraints=%d guidance=%d precedents=%d learned=%d unknowns=%d conflicts=%d", p.PackID, len(p.Constraints), len(p.Guidance), len(p.Precedents), len(p.LearnedExperimental), len(p.Unknowns), len(p.Conflicts))})
 	return p
 }
 
-// (degradationsHolder removed — DegradationInput lives in Options.)
+// DeliveredItems is the complete delivered evidence view, shared by metrics,
+// pack authorization and callers. It includes experimental learned evidence.
+func (p Pack) DeliveredItems() []ContextItem {
+	out := make([]ContextItem, 0, len(p.Constraints)+len(p.Guidance)+len(p.Precedents)+len(p.LearnedExperimental))
+	out = append(out, p.Constraints...)
+	out = append(out, p.Guidance...)
+	out = append(out, p.Precedents...)
+	out = append(out, p.LearnedExperimental...)
+	return out
+}
+
+// RecountTokens accounts for the entire compact serialized pack, not just
+// item text. This remains a deterministic byte/4 estimate, not a model tokenizer.
+// Call again after adding a serving-boundary degradation.
+func (p *Pack) RecountTokens() {
+	for {
+		b, _ := json.Marshal(p)
+		estimate := (len(b) + 3) / 4
+		if estimate == p.Budget.EstimatedTokens {
+			return
+		}
+		p.Budget.EstimatedTokens = estimate
+	}
+}
 
 func toContextItem(rec contracts.Record, score float64, facets []string, tc policy.TaskContext, cap policy.Capability) ContextItem {
 	force := "should"
@@ -324,22 +320,6 @@ func sortContextItems(items []ContextItem) {
 	sort.SliceStable(items, func(i, j int) bool { return items[i].RecordID < items[j].RecordID })
 }
 
-func budgetSection(items []ContextItem, budget int) ([]ContextItem, int, int) {
-	out := []ContextItem{}
-	used := 0
-	omitted := 0
-	for _, it := range items {
-		cost := len(it.Text) / 4
-		if used+cost > budget {
-			omitted++
-			continue
-		}
-		used += cost
-		out = append(out, it)
-	}
-	return out, used, omitted
-}
-
 func conflictsSection(conflicts []ConflictInfo) []PackConflict {
 	out := []PackConflict{}
 	seen := map[string]bool{}
@@ -370,10 +350,10 @@ func deriveUnknowns(winners []scoredRecord, req contracts.ResolutionRequest, tc 
 		question string
 		why      string
 	}{
-		{"dialect", "Preferred SQL dialect beyond documented needs", "No approved evidence exists for dialect preference"},
-		{"vendor", "Preferred vendor for this component class", "No approved evidence exists for vendor preference"},
-		{"library", "Preferred library for this component class", "No approved evidence exists for library preference"},
-		{"framework", "Preferred framework for this component class", "No approved evidence exists for framework preference"},
+		{"dialect", "Preferred SQL dialect beyond documented needs", "No approved evidence is delivered in this pack for dialect preference"},
+		{"vendor", "Preferred vendor for this component class", "No approved evidence is delivered in this pack for vendor preference"},
+		{"library", "Preferred library for this component class", "No approved evidence is delivered in this pack for library preference"},
+		{"framework", "Preferred framework for this component class", "No approved evidence is delivered in this pack for framework preference"},
 	}
 	for _, pr := range probes {
 		if strings.Contains(t, pr.pattern) && !evidenceCovers(winners, pr.pattern) {
@@ -381,8 +361,22 @@ func deriveUnknowns(winners []scoredRecord, req contracts.ResolutionRequest, tc 
 			unknowns = append(unknowns, Unknown{Question: pr.question, WhyMaterial: pr.why, SuggestedEscalation: &esc})
 		}
 	}
+	// No retained record is task evidence: say so, so an agent does not read
+	// always-applicable principles or an empty pack as the owner's choice.
+	if !hasAdvisoryEvidence(winners) {
+		esc := "proceed_with_assumption"
+		unknowns = append(unknowns, Unknown{
+			Question:            NoEvidenceQuestion,
+			WhyMaterial:         "No approved personal preference, precedent or guidance is delivered for this task; any unsupported preference would be an assumption, not the owner's recorded choice",
+			SuggestedEscalation: &esc,
+		})
+	}
 	return unknowns
 }
+
+// NoEvidenceQuestion is the unknown a pack carries when no advisory record
+// supports the task.
+const NoEvidenceQuestion = "No recorded preference, precedent or guidance is available in this pack for this task"
 
 func evidenceCovers(winners []scoredRecord, pattern string) bool {
 	for _, w := range winners {
@@ -393,16 +387,6 @@ func evidenceCovers(winners []scoredRecord, pattern string) bool {
 	}
 	return false
 }
-
-func unknownsText(unknowns []Unknown) string {
-	n := 0
-	for _, u := range unknowns {
-		n += len(u.Question) / 4
-	}
-	return strings.Repeat("x", n)
-}
-
-func tokenLen(s string) int { return len(s) / 4 }
 
 func strPtrOrNil(s string) *string {
 	if s == "" {
@@ -442,6 +426,15 @@ func provenanceManifest(winners []scoredRecord, cap policy.Capability, store Sto
 	for _, sp := range bySource {
 		out = append(out, *sp)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].SourceRole < out[j].SourceRole })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].SourceRole != out[j].SourceRole {
+			return out[i].SourceRole < out[j].SourceRole
+		}
+		// Tie-break only on the already-redacted public tuple. Hidden source
+		// identifiers must never influence work-safe array order.
+		a, _ := json.Marshal(out[i])
+		b, _ := json.Marshal(out[j])
+		return string(a) < string(b)
+	})
 	return out
 }

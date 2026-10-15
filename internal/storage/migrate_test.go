@@ -107,9 +107,11 @@ func TestOpenOnLegacyStoreWithoutMeta(t *testing.T) {
 	// covered implicitly: Open() creates meta then migrates; version 0 -> latest
 	dir := t.TempDir()
 	path := filepath.Join(dir, "store.db")
-	if _, err := storage.Open(path); err != nil {
+	s1, err := storage.Open(path)
+	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	s1.Close() // an open handle blocks TempDir cleanup on Windows
 	s2, err := storage.Open(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
