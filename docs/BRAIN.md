@@ -25,6 +25,7 @@ Agent ── beme brain capture ──▶ inbox/ (proposal) ──▶ gate ─�
 
 SessionStart hook ──▶ doctor pass ──▶ bounded briefing (normal · economy · manual) ──▶ next session
 PreCompact / SessionEnd hooks ──▶ doctor --quiet
+Stop hook ──▶ stop-check: one reminder to capture once edits accumulate
 ```
 
 | Piece | Where / command | Rule |
@@ -35,6 +36,7 @@ PreCompact / SessionEnd hooks ──▶ doctor --quiet
 | Brain Doctor | `beme brain doctor [--dry-run] [--commit] [--strict]` | promote/reject, merge exact equivalence only, supersede by `topic` and capture time, newest 3 summaries, flags, `index.md`; snapshot before first change |
 | Session start | `beme brain session-start --format claude-hook` | maintenance pass, then briefing; **fail-open** |
 | Modes | `brain_mode` in `config.yaml` or `--mode` | `normal` ≤ 9 KB · `economy` ≤ 3 KB · `manual` two-line pointer |
+| Capture reminder | `beme brain stop-check --format claude-hook` (Stop hook) | at most one reminder per three edits since the last capture; registered projects only; honors `stop_hook_active`; fails open (ADR-044) |
 | Manual pull | `beme brain briefing --mode normal [--doctor]` | true read by default (no writes; safe under a read-only sandbox); `--doctor` also promotes pending captures, best-effort — a failure there degrades to a notice, never fails the read |
 | Audit trail | `log.md` | append-only, `## [date] op \| detail`; never injected |
 | Reversibility | `beme brain backup / restore / freeze` | checksummed snapshots in `<vault>.backups/`; restore validated/staged before live replacement, with rollback on install error; freeze gates writers (explicit restore is a recovery exception) |

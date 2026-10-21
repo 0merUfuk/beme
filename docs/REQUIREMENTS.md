@@ -37,7 +37,7 @@ not installed-harness or human-benefit acceptance.
 code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence).
 
 **Status counts** (derived from the rows below; CI-checked by
-`scripts/test_docs_consistency.py` D7): 83 rows — 77 implemented · 2 partial · 2 not-applicable-v1 · 2 active.
+`scripts/test_docs_consistency.py` D7): 85 rows — 79 implemented · 2 partial · 2 not-applicable-v1 · 2 active.
 
 ## Core and ownership
 
@@ -147,6 +147,8 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | FR-087 | Duplicate detection preserves all material content/rationale differences; summaries select the latest parsed capture instant | WP12 | Semantics tests | `TestContradictionIsNotMergedAsDuplicate`, `TestNewerSummaryIsNeverDroppedAsDuplicate` | implemented |
 | FR-088 | `install-hooks` merges idempotently into a Claude Code settings file preserving foreign settings and shapes (`.beme-bak`, `--remove`, `--dry-run`, refuses a go-run binary); a byte-exact instruction block serves hook-less harnesses; PreCompact hook | WP12 | Settings/adapter tests | `TestInstallSettingsHooksPreservesEverythingElse`, `TestInstallSettingsHooksEdgeCases`, `TestStripBrainHooksLeavesUnknownShapesAlone`, `TestInstallHooksRefusesTemporaryBinary`, `TestBrainAdapterBlockCoexistsWithV1BlockAndIsByteExact` | implemented |
 | FR-089 | Doctor + briefing has a synthetic latency regression target over 300 notes; production hook latency is measured separately | WP12 | Latency regression | `TestSessionStartLatencyAtScale`, `TestAuditRefsDoesNotParseTheWholeArchive`; no new production latency claim | implemented |
+| FR-090 | The MCP server sends static, path-free usage instructions at `initialize` that state when and how to call the resolver and carry no preference text | WP7 | Real-client initialize result | `TestMCPClientEndToEnd` (instructions assertions); ADR-044 | implemented |
+| FR-091 | A Stop-hook reminder raises at most one capture prompt per three accumulated edits, only for registered projects, honors the loop guard, and fails open on every error | WP12 | Real-binary stdin/transcript tests | `TestStopCheckRemindsOnlyWhenWorkAccumulatesWithoutCapture`, `TestStopCheckFailsOpen`; ADR-044; no behavioural-effect claim | implemented |
 
 
 ## Non-functional requirements

@@ -1498,6 +1498,60 @@ revertible; no schema, stored data, capabilities or publication permissions chan
 **Reopen:** native delete-pending/ACL controls fail, original errors disappear,
 callbacks execute without ownership, or successfully recorded events are lost.
 
+## ADR-044 — Deliver memory to agents: MCP usage instructions and a Stop-hook capture reminder
+
+**Status:** accepted (YELLOW — extends ADR-033/ADR-035; no ADR-001 or capability change)
+**Context:** A read-only behavioural baseline over the owner's non-TRYPIX Claude
+Code and Codex transcripts since the 2026-09-21 hook install (script and counts
+in the private deployment `verification/baseline/`; small samples, history
+partly pruned) showed: all 8 new Claude Code sessions received the briefing, yet
+0 of 12 called the resolver and 2 of 12 captured, against 5 of 8 for Codex on
+both. The MCP tools are deferred in Claude Code (names only until loaded) and
+the server shipped no `instructions`, so nothing told the agent when to call it.
+Capture was advisory only. The cause of the missing calls is a hypothesis, not
+a verified finding.
+**Decision:** (1) The MCP server sends static, path-free usage instructions at
+`initialize` (`mcpInstructions`): when to call `beme.resolve_context`, how to
+phrase the task, how to treat constraints/guidance/unknowns, and that the pack
+is data. They carry no preference text: preferences stay in their canonical
+sources and are only returned in a ContextPack (no second authoritative copy).
+(2) `beme brain stop-check` is installed as a Claude Code `Stop` hook. It reads
+the hook JSON and the transcript read-only and, for a registered project only,
+emits one `decision: block` reminder to record durable outcomes when at least
+three file edits (a `git commit` counts as three) have accumulated since the last
+`brain capture` in the transcript or the last reminder for that session. It
+honors `stop_hook_active`, keeps only a hash of the session ID and a counter
+(bounded to 64), and fails open on every error, a frozen vault and any state-write
+failure. The agent still writes the note and the capture gate still screens it.
+(3) Retrieval is unchanged: lexical overlap with a single shared content word
+remains sufficient for advisory relevance.
+**Evidence:** `TestMCPClientEndToEnd` asserts the initialize instructions;
+`TestStopCheckRemindsOnlyWhenWorkAccumulatesWithoutCapture` and
+`TestStopCheckFailsOpen` cover threshold, once-per-work-unit, capture reset,
+commit weight, loop guard, per-session baseline, unregistered directory, invalid
+input, frozen vault; hook-set tests include `Stop`. Layer-1 kit on the live build:
+6/6 recall on the original relevant cases, 6/6 on six paraphrased cases, 4/4
+negative controls silent. Mean extra advisory records per relevant task measured
+3.00 against 1.00 on the pre-integration build; the resolver diff between the two
+is the whole-pack budget change in `bbb63fe`, `relevance.go` is unchanged. This is
+recorded as an open precision regression, not tuned on eight records.
+**Alternatives rejected:** an LLM observer or transcript import (ADR-034: cost and
+poisoning surface); embeddings or fusion (no measured paraphrase miss);
+copying style preferences into the MCP instructions (duplicates canonical
+sources); a reminder on every turn (noise).
+**Consequences:** agents see how to use Be Me even while its tools are deferred,
+and sessions with real edits get at most one capture prompt per three further
+edits. Whether this changes behaviour is not yet established; the baseline must
+be re-run on sessions started after the rollout. Codex gains no Stop reminder
+here; its semantics are unverified.
+**Reversibility:** `beme brain install-hooks --remove` drops the hook; the
+instructions constant is a single revert; the state field is optional and ignored
+by older binaries.
+**Reopen:** reminders are declined or judged noisy, post-rollout baseline shows no
+change in resolver calls or capture rate, the initialize instructions are absent
+from a client system prompt, or a paraphrase miss appears on the larger private
+corpus.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |

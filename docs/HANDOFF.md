@@ -8,6 +8,16 @@ Canonical source/evidence status is in §1. Live merge, CI and publication state
 must be read from the linked GitHub objects; historical results are not evidence
 for a different release commit.
 
+**Rev 26 — 2026-10-21 (behaviour delivery, local branch `feat/always-on-and-capture-nudge`,
+not pushed):** a transcript baseline showed agents received the briefing but did not
+call the resolver (Claude Code) and rarely captured. ADR-044 adds MCP initialize
+usage instructions and a Stop-hook capture reminder (`beme brain stop-check`).
+Open: mean extra advisory records per relevant task rose from 1.00 to 3.00
+between the pre-integration and integrated builds (budget change in `bbb63fe`;
+relevance filter unchanged) — measure on the larger private corpus before tuning.
+Effect on behaviour is unproven until the baseline is re-run on sessions started
+after rollout. Nothing here is published.
+
 ### Historical V1 continuation notes
 
 **Rev 12 — purge reliability (owner review blockers, PR #1 not to be
