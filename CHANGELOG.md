@@ -14,8 +14,9 @@ Live-model benefit and assured harness use remain unmeasured.
 - MCP initialize usage instructions telling agents when and how to call the
   resolver (ADR-044).
 - `beme brain stop-check`: optional Claude Code Stop-hook capture reminder
-  (ADR-044). It fails open, prompts at most once per three accumulated edits,
-  and acts only in registered projects.
+  (ADR-044). It prompts once three weighted edits accumulate since the last
+  capture or reminder (a commit after uncaptured edits completes a unit), acts
+  only in registered projects, and the installed hook command always exits 0.
 - Build-provenance attestations for the five release archives (ADR-045), signed
   by a separate least-privilege `attest` job over the verified `SHA256SUMS`;
   the publisher runs only after attestation succeeds.

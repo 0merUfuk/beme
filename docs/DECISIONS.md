@@ -1518,18 +1518,27 @@ sources and are only returned in a ContextPack (no second authoritative copy).
 (2) `beme brain stop-check` is installed as a Claude Code `Stop` hook. It reads
 the hook JSON and the transcript read-only and, for a registered project only,
 emits one `decision: block` reminder to record durable outcomes when at least
-three file edits (a `git commit` counts as three) have accumulated since the last
-`brain capture` in the transcript or the last reminder for that session. It
-honors `stop_hook_active`, keeps only a hash of the session ID and a counter
-(bounded to 64), and fails open on every error, a frozen vault and any state-write
-failure. The agent still writes the note and the capture gate still screens it.
+three weighted edits have accumulated since the last `brain capture` in the
+transcript or the last reminder for that session. A `git commit` invocation (not
+the phrase inside echo or grep) raises the count to the threshold only when there
+are uncaptured edits, so capture-then-commit stays silent. It honors
+`stop_hook_active`, keeps only a hash of the session ID and a counter (bounded to
+64), reads only a regular transcript file within 256 MiB and a 3 s budget, and
+emits nothing on any error it observes, a frozen vault or a failed state write.
+Because a Stop hook that exits 2 blocks the agent, the installed command is
+`… brain stop-check … 2>/dev/null || true`: a usage error, a panic or an older
+binary without `stop-check` cannot block. The agent still writes the note and the
+capture gate still screens it.
 (3) Retrieval is unchanged: lexical overlap with a single shared content word
 remains sufficient for advisory relevance.
 **Evidence:** `TestMCPClientEndToEnd` asserts the initialize instructions;
 `TestStopCheckRemindsOnlyWhenWorkAccumulatesWithoutCapture` and
-`TestStopCheckFailsOpen` cover threshold, once-per-work-unit, capture reset,
-commit weight, loop guard, per-session baseline, unregistered directory, invalid
-input, frozen vault; hook-set tests include `Stop`. Layer-1 kit on the live build:
+`TestStopCheckFailsOpen`, `TestStopCheckCommitRulesAndProcessLevelFailOpen` and
+`TestStopHookCommandForcesExitZero` cover threshold, once-per-work-unit, capture
+reset, the commit rules, loop guard, per-session baseline, unregistered directory,
+invalid input, a usage error, a FIFO transcript and the exit-0 wrapper; the last
+two fail on the first implementation. An independent review found the unwrapped
+command and the commit false positive before release. Layer-1 kit on the live build:
 6/6 recall on the original relevant cases, 6/6 on six paraphrased cases, 4/4
 negative controls silent. Mean extra advisory records per relevant task measured
 3.00 against 1.00 on the pre-integration build; the resolver diff between the two
@@ -1544,9 +1553,11 @@ and sessions with real edits get at most one capture prompt per three further
 edits. Whether this changes behaviour is not yet established; the baseline must
 be re-run on sessions started after the rollout. Codex gains no Stop reminder
 here; its semantics are unverified.
-**Reversibility:** `beme brain install-hooks --remove` drops the hook; the
-instructions constant is a single revert; the state field is optional and ignored
-by older binaries.
+**Reversibility:** `beme brain install-hooks --remove` with this binary drops the
+hook (older binaries do not recognise `stop-check`; remove it before downgrading,
+although the exit-0 wrapper keeps a stale hook harmless); the instructions
+constant is a single revert; the state field is optional and ignored by older
+binaries.
 **Reopen:** reminders are declined or judged noisy, post-rollout baseline shows no
 change in resolver calls or capture rate, the initialize instructions are absent
 from a client system prompt, or a paraphrase miss appears on the larger private

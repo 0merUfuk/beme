@@ -117,7 +117,10 @@ as a release. Asset names are isolated to the current workflow run and attempt.
 The authorized order is: clear the merge hold → land verified source on main →
 verify exact-head CI → push a new immutable tag → create the owner-authored draft
 with reviewed notes before the publisher → complete native artifact gates and
-publication readback. A failed draft can be retried using the **whole workflow**:
+publication readback. Artifacts are bound to the run attempt, so a failed
+`attest` step (for example an attestation-service outage) is also retried with a
+whole new workflow run, not "re-run failed jobs". A failed draft can be retried
+using the **whole workflow**:
 
 ```sh
 gh workflow run release.yml --ref main -f tag=v0.1.0-alpha.2
@@ -201,7 +204,8 @@ draft. This template is not a claim that the release has been published.
 > - The MCP server sends usage instructions at initialize, telling agents when
 >   and how to call the resolver (ADR-044). The instructions are advisory.
 > - Optional Claude Code Stop-hook capture reminder, `beme brain stop-check`
->   (ADR-044). It fails open and prompts only in registered projects.
+>   (ADR-044). It prompts only in registered projects, and its installed hook
+>   command always exits 0, so it can never block an agent.
 > - Release archives carry build-provenance attestations (ADR-045); verify them
 >   with `gh attestation verify <archive> --repo 0merUfuk/beme`.
 >
