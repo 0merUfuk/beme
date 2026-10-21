@@ -17,6 +17,17 @@ between the pre-integration and integrated builds (budget change in `bbb63fe`;
 relevance filter unchanged) — measure on the larger private corpus before tuning.
 Effect on behaviour is unproven until the baseline is re-run on sessions started
 after rollout. Nothing here is published.
+Rollout (private deployment): revision `behavior-eb7a45b` is live and the Stop hook
+is installed; both are verified (handshake 0 -> 743 instruction characters, Layer-1
+6/6 + 6/6 paraphrase + 4/4 negative controls, settings diff limited to `hooks.Stop`).
+Open findings, not fixed: (1) `beme brain status` may print all-zero live notes while
+other sessions run maintenance — it should report "unavailable", not zeros;
+(2) five tests are time-budget sensitive and fail identically on unmodified `a29ddda`
+under heavy load (`TestAuditRefsDoesNotParseTheWholeArchive`,
+`TestFinalBoundedBacklogKeepsLatestRecapture`,
+`TestFinalRepeatedRecapturesPublicLifecycleReadable`, `TestSessionStartLatencyAtScale`,
+`TestBrainReliabilityEndToEnd/cross-process-session-accounting`); a quiet-machine
+`make validate` run was not obtained.
 
 ### Historical V1 continuation notes
 
