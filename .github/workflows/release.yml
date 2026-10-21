@@ -126,11 +126,49 @@ jobs:
           compression-level: 0
           retention-days: 7
 
-  publish:
+  # Least privilege split: this job can mint an OIDC token to sign provenance
+  # but cannot write repository contents; publish can write contents but
+  # cannot mint OIDC tokens. Attested digests are the verified archives.
+  attest:
     needs: [gate, ci, artifacts]
     if: >-
       needs.gate.result == 'success' && needs.ci.result == 'success' &&
       needs.artifacts.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+      RELEASE_SOURCE_SHA: ${{ needs.gate.outputs.sha }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: alpha-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/beme-release-bundle
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Verify all five source-bound archives and generate SHA256SUMS
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/beme-release-bundle
+        run: python3 scripts/release.py checksums --out "$ARTIFACT_DIR" --tag "$RELEASE_TAG"
+      - name: Attest build provenance for the verified archives
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: ${{ runner.temp }}/beme-release-bundle/SHA256SUMS
+
+  publish:
+    needs: [gate, ci, artifacts, attest]
+    if: >-
+      needs.gate.result == 'success' && needs.ci.result == 'success' &&
+      needs.artifacts.result == 'success' && needs.attest.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

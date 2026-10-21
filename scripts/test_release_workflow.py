@@ -25,19 +25,21 @@ class WorkflowTests(unittest.TestCase):
                 if step.get("uses", "").startswith("actions/checkout@"):
                     self.assertEqual(step["with"]["ref"], "${{ inputs.source-ref || github.sha }}", name)
                     self.assertEqual(step["with"]["persist-credentials"], "false")
-        for name in ("artifacts", "publish"):
+        for name in ("artifacts", "attest", "publish"):
             checkout = next(s for s in jobs[name]["steps"] if s.get("uses", "").startswith("actions/checkout@"))
             self.assertEqual(checkout["with"]["ref"], "${{ needs.gate.outputs.sha }}", name)
+            self.assertEqual(checkout["with"]["persist-credentials"], "false", name)
         self.assertEqual(jobs["publish"]["env"]["RELEASE_SOURCE_SHA"], "${{ needs.gate.outputs.sha }}")
 
     def test_only_complete_ci_then_five_native_artifacts_can_publish(self):
         jobs = self.release["jobs"]
         self.assertEqual(set(jobs["artifacts"]["needs"]), {"gate", "ci"})
-        self.assertEqual(set(jobs["publish"]["needs"]), {"gate", "ci", "artifacts"})
+        self.assertEqual(set(jobs["publish"]["needs"]), {"gate", "ci", "artifacts", "attest"})
         self.assertEqual(self.release["permissions"], {"contents": "read"})
         self.assertEqual(jobs["publish"]["permissions"], {"contents": "write"})
         self.assertIn("needs.ci.result == 'success'", jobs["publish"]["if"])
         self.assertIn("needs.artifacts.result == 'success'", jobs["publish"]["if"])
+        self.assertIn("needs.attest.result == 'success'", jobs["publish"]["if"])
         self.assertIn("github.actor == '0merUfuk'", jobs["gate"]["if"])
         self.assertIn("github.triggering_actor == '0merUfuk'", jobs["gate"]["if"])
         targets = {item["target"] for item in jobs["artifacts"]["strategy"]["matrix"]["include"]}
@@ -55,6 +57,24 @@ class WorkflowTests(unittest.TestCase):
                 self.assertNotIn("continue-on-error", job)
                 for step in job.get("steps", []):
                     self.assertNotIn("continue-on-error", step)
+
+    def test_attest_signs_verified_archives_with_least_privilege(self):
+        jobs = self.release["jobs"]
+        attest = jobs["attest"]
+        self.assertEqual(attest["permissions"], {"contents": "read", "id-token": "write", "attestations": "write"})
+        self.assertEqual(jobs["publish"]["permissions"], {"contents": "write"}, "publish must not mint OIDC tokens")
+        self.assertEqual(set(attest["needs"]), {"gate", "ci", "artifacts"})
+        for result in ("gate", "ci", "artifacts"):
+            self.assertIn(f"needs.{result}.result == 'success'", attest["if"])
+        steps = attest["steps"]
+        provenance = next(i for i, s in enumerate(steps)
+                          if s.get("uses", "").startswith("actions/attest-build-provenance@"))
+        self.assertTrue(steps[provenance]["with"]["subject-checksums"].endswith("/SHA256SUMS"))
+        checksums = next(i for i, s in enumerate(steps) if "release.py checksums" in s.get("run", ""))
+        self.assertLess(checksums, provenance, "only verified archives may be attested")
+        download = next(s for s in steps if s.get("uses", "").startswith("actions/download-artifact@"))
+        self.assertNotIn("run-id", download["with"], "must never read another workflow run's artifacts")
+        self.assertIn("github.run_attempt", download["with"]["pattern"])
 
     def test_pr_smoke_covers_each_release_target_before_tagging(self):
         job = self.ci["jobs"]["installed-binary-smoke"]
