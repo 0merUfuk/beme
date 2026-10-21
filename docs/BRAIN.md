@@ -41,7 +41,7 @@ Stop hook ──▶ stop-check: one reminder to capture once edits accumulate
 | Audit trail | `log.md` | append-only, `## [date] op \| detail`; never injected |
 | Reversibility | `beme brain backup / restore / freeze` | checksummed snapshots in `<vault>.backups/`; restore validated/staged before live replacement, with rollback on install error; freeze gates writers (explicit restore is a recovery exception) |
 | Projects | `beme brain project add` | explicit longest real-path root first; verified reciprocal Git metadata for worktree aliases; ties fail closed |
-| Operator view | `beme brain status` | counts, snapshots, frozen, identified sessions and separate invocations, last log line |
+| Operator view | `beme brain status` | live counts are `unknown` (with the reason) when the bounded scan is incomplete, never zero; counts, snapshots, frozen, identified sessions and separate invocations, last log line |
 
 Implemented contracts with synthetic regression evidence (not live-use guarantees):
 

@@ -100,11 +100,35 @@ guide and the owner-gated private-evaluation workflow.
 
 ## Install and first deployment
 
-```sh
-# Install the binaries (Go 1.25+):
-go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-eval ./cmd/beme-threat-corpus
-export PATH="$(go env GOPATH)/bin:$PATH"   # or set GOBIN to a directory on PATH
+Install options, in order of preference. No Homebrew tap is provided yet.
 
+1. **Recommended: release archive.** Download the archive for your platform and
+   `SHA256SUMS` from the [GitHub releases](https://github.com/0merUfuk/beme/releases),
+   verify both, extract, and put `beme` on your `PATH`
+   (details: [Verifying a downloaded release](docs/RELEASE_VERIFICATION.md#verifying-a-downloaded-release)):
+
+   ```sh
+   shasum -a 256 -c SHA256SUMS --ignore-missing   # Linux: sha256sum -c SHA256SUMS --ignore-missing
+   gh attestation verify beme_0.1.0-alpha.2_<os>_<arch>.tar.gz --repo 0merUfuk/beme
+   tar -xzf beme_0.1.0-alpha.2_<os>_<arch>.tar.gz   # Windows: extract the .zip
+   ```
+
+2. **`go install` a tagged version** (Go 1.25+):
+
+   ```sh
+   go install github.com/0merUfuk/beme/cmd/beme@v0.1.0-alpha.2
+   ```
+
+3. **Build from source for development** (Go 1.25+, from a checkout):
+
+   ```sh
+   go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-eval ./cmd/beme-threat-corpus
+   export PATH="$(go env GOPATH)/bin:$PATH"   # or set GOBIN to a directory on PATH
+   ```
+
+Then run the health check:
+
+```sh
 beme doctor            # health check; it names what is missing
 ```
 

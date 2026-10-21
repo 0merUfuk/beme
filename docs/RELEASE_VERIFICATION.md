@@ -101,9 +101,13 @@ source-bound `MANIFEST.json` are packaged for macOS amd64/arm64, Linux
 amd64/arm64 and Windows amd64. Each target is built and exercised natively;
 only then are the five archives combined into an exact `SHA256SUMS` inventory.
 
-Only the publisher **job** receives write permission; that permission also
+Only the publisher **job** receives `contents: write`; that permission also
 applies to its checkout/download actions, not just the final shell step.
 Explicit final-step `GH_TOKEN` injection is not step-level token isolation.
+A separate `attest` job (ADR-045) re-verifies the same five archives, then
+signs build-provenance attestations over the digests in `SHA256SUMS`. It holds
+`id-token: write` and `attestations: write` with read-only contents; the
+publisher cannot mint OIDC tokens, and it runs only after attestation succeeds.
 The publisher reads back the owner draft,
 uploads missing matching assets, verifies their digests, and finally publishes
 the prerelease. Published releases and mismatched existing assets refuse writes.
@@ -126,6 +130,23 @@ procedure, establishes that a particular execution actually succeeded.
 Changes to toolchains, workflows, permissions or draft assets can legitimately
 make a later retry refuse; inspect the actual error rather than expanding
 credentials, overwriting assets or weakening verification.
+
+### Verifying a downloaded release
+
+From the GitHub release, download the archive for your platform and
+`SHA256SUMS` into the same directory, then check both the digest and the
+provenance before extracting:
+
+```sh
+shasum -a 256 -c SHA256SUMS --ignore-missing      # macOS
+sha256sum -c SHA256SUMS --ignore-missing          # Linux
+gh attestation verify beme_0.1.0-alpha.2_darwin_arm64.tar.gz --repo 0merUfuk/beme
+```
+
+Replace the archive name with the one you downloaded. Build-provenance
+attestations exist from `v0.1.0-alpha.2` onward; earlier releases have
+checksums only. A checksum mismatch, or a missing or failed attestation for a
+release from `v0.1.0-alpha.2` onward, is a reason not to install that archive.
 
 ## 3. Rollback
 
@@ -173,6 +194,16 @@ draft. This template is not a claim that the release has been published.
 > - Generation is `grading_pending`, not behavioral success. Frozen evidence
 >   is reconciled before independent grading; reviewer packets omit revealing
 >   owner-directory metadata. Synthetic success does not establish real benefit.
+> - `beme brain status` reports live note counts as unknown, with the reason,
+>   instead of zeros when the bounded live-note scan is incomplete.
+>
+> **Agent integration and release integrity**
+> - The MCP server sends usage instructions at initialize, telling agents when
+>   and how to call the resolver (ADR-044). The instructions are advisory.
+> - Optional Claude Code Stop-hook capture reminder, `beme brain stop-check`
+>   (ADR-044). It fails open and prompts only in registered projects.
+> - Release archives carry build-provenance attestations (ADR-045); verify them
+>   with `gh attestation verify <archive> --repo 0merUfuk/beme`.
 >
 > **Privacy and data integrity**
 > - Enforcement state is now integrity-verified: `ledger/tombstones.json` and

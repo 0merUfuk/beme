@@ -11,6 +11,14 @@ the GitHub tag, release and successful release workflow establish publication.
 Live-model benefit and assured harness use remain unmeasured.
 
 ### Added
+- MCP initialize usage instructions telling agents when and how to call the
+  resolver (ADR-044).
+- `beme brain stop-check`: optional Claude Code Stop-hook capture reminder
+  (ADR-044). It fails open, prompts at most once per three accumulated edits,
+  and acts only in registered projects.
+- Build-provenance attestations for the five release archives (ADR-045), signed
+  by a separate least-privilege `attest` job over the verified `SHA256SUMS`;
+  the publisher runs only after attestation succeeds.
 - Verified alpha-release automation (ADR-041): immutable tag/CLI/changelog/source
   binding, reusable exact-source CI, native archive checks for five targets,
   four-command bundles with manifests and checksums, and readback-verified
@@ -124,6 +132,8 @@ Live-model benefit and assured harness use remain unmeasured.
   inherited sensitivity (FR-054).
 
 ### Fixed
+- `beme brain status` no longer prints zero live notes when the bounded
+  live-note scan is incomplete; it reports the count as unknown with the reason.
 - Secondary evaluation instructions now require the single reviewer-packet JSON,
   never the owner bundle. Continuation/examples follow current implementation
   status, and documented temporary allocations respect the chosen scratch root;

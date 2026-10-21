@@ -37,7 +37,7 @@ not installed-harness or human-benefit acceptance.
 code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence).
 
 **Status counts** (derived from the rows below; CI-checked by
-`scripts/test_docs_consistency.py` D7): 85 rows — 79 implemented · 2 partial · 2 not-applicable-v1 · 2 active.
+`scripts/test_docs_consistency.py` D7): 87 rows — 81 implemented · 2 partial · 2 not-applicable-v1 · 2 active.
 
 ## Core and ownership
 
@@ -149,6 +149,8 @@ code) · `partial` · `implemented` (code + tests) · `verified` (gate evidence)
 | FR-089 | Doctor + briefing has a synthetic latency regression target over 300 notes; production hook latency is measured separately | WP12 | Latency regression | `TestSessionStartLatencyAtScale`, `TestAuditRefsDoesNotParseTheWholeArchive`; no new production latency claim | implemented |
 | FR-090 | The MCP server sends static, path-free usage instructions at `initialize` that state when and how to call the resolver and carry no preference text | WP7 | Real-client initialize result | `TestMCPClientEndToEnd` (instructions assertions); ADR-044 | implemented |
 | FR-091 | A Stop-hook reminder raises at most one capture prompt per three accumulated edits, only for registered projects, honors the loop guard, and fails open on every error | WP12 | Real-binary stdin/transcript tests | `TestStopCheckRemindsOnlyWhenWorkAccumulatesWithoutCapture`, `TestStopCheckFailsOpen`; ADR-044; no behavioural-effect claim | implemented |
+| FR-092 | `beme brain status` claims no live-note counts when its bounded scan is incomplete; it reports them as unknown with the reason (text and JSON) | WP12 | Deterministic over-limit vault (no timing) | `TestStatusReportsUnknownWhenLiveScanIsIncomplete`, `TestBrainStatusPrintsUnknownForIncompleteLiveScan` (both fail on the previous behaviour) | implemented |
+| FR-093 | Release archives carry build-provenance attestations over the verified checksums, created by a job that cannot write repository contents | WP11 | Workflow structure tests | `scripts/test_release_workflow.py`; ADR-045; first effective on `v0.1.0-alpha.2` | implemented |
 
 
 ## Non-functional requirements

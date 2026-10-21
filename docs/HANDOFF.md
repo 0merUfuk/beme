@@ -8,6 +8,16 @@ Canonical source/evidence status is in §1. Live merge, CI and publication state
 must be read from the linked GitHub objects; historical results are not evidence
 for a different release commit.
 
+**Rev 27 — 2026-10-21 (release preparation for `v0.1.0-alpha.2`):** the owner
+requested the release, which lifts the merge hold. Added: `beme brain status`
+reports live counts as unknown instead of zeros when its bounded scan is
+incomplete (FR-092; the Rev 26 open finding is fixed; root cause: the 2 s scan
+deadline under load, partial results were discarded and printed as zero), and a
+least-privilege `attest` release job with build-provenance attestations
+(ADR-045, FR-093). Distribution decision: release archives + `SHA256SUMS` are
+canonical, `go install …@tag` for developers, no Homebrew tap yet. Still open:
+mean extra advisory records 3.00 vs 1.00; behavioural effect unmeasured.
+
 **Rev 26 — 2026-10-21 (behaviour delivery, local branch `feat/always-on-and-capture-nudge`,
 not pushed):** a transcript baseline showed agents received the briefing but did not
 call the resolver (Claude Code) and rarely captured. ADR-044 adds MCP initialize

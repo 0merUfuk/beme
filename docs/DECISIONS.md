@@ -1552,6 +1552,49 @@ change in resolver calls or capture rate, the initialize instructions are absent
 from a client system prompt, or a paraphrase miss appears on the larger private
 corpus.
 
+## ADR-045 — Distribution: release archives are canonical, attested by a least-privilege job
+
+**Status:** accepted (YELLOW — release pipeline change; no publication-policy change; ADR-041 still governs tagging and drafts)
+**Context:** Be Me ships one user-facing executable (`beme`, plus three eval and
+benchmark tools) for five native targets, already packaged by the tag-bound
+release workflow as source-bound archives with `SHA256SUMS`, and installable by
+`go install …@<tag>`. The release pipeline produced no provenance statement, so
+a downloaded archive could be checked for integrity but not for origin. A
+Homebrew tap was evaluated: it is familiar on macOS/Linux, but it does not cover
+Windows, must be re-pointed every release, and offers weaker rollback than the
+versioned-directory deployment the owner runs.
+**Decision:** (1) GitHub release archives plus `SHA256SUMS` remain the single
+canonical distribution; `go install …@<tag>` is the documented developer path.
+(2) A new `attest` job, after the native artifact gates, re-verifies the archives
+with the same `release.py checksums` step and runs
+`actions/attest-build-provenance@v4` with `subject-checksums`, so the attested
+digests are exactly the verified bytes. It holds only `contents: read`,
+`id-token: write` and `attestations: write`; `publish` keeps exactly
+`contents: write` and now also requires `attest` to succeed. No job holds both
+the ability to mint an OIDC token and to write repository contents.
+`artifact-metadata: write` is not granted: it is only needed for registry
+storage records. (3) No Homebrew tap until an external user needs a Go-free
+install; when added, a formula must consume the same archives and checksums,
+never rebuild.
+**Evidence:** `scripts/test_release_workflow.py` asserts the attest job's exact
+permissions, its needs, checkout identity, same-run artifact download, the
+checksum step preceding the attestation step, and that `publish` permissions are
+unchanged. Users verify with `gh attestation verify <archive> --repo 0merUfuk/beme`
+(docs/RELEASE_VERIFICATION.md). The first tag carrying attestations is
+`v0.1.0-alpha.2`; earlier releases have none.
+**Alternatives rejected:** attesting inside `publish` (one job with both token
+minting and contents write); GoReleaser (duplicates the existing source-bound,
+natively smoke-tested packaging); signing with a long-lived key (key custody for
+a single maintainer); a `curl | sh` installer.
+**Consequences:** origin of every archive is verifiable without trusting the
+release page; the release now depends on the GitHub attestation service being
+available (a failed attestation blocks publication rather than shipping
+unattested assets).
+**Reversibility:** removing the job and the `needs` edge restores the previous
+pipeline; published attestations stay valid.
+**Reopen:** attestation service outages block releases repeatedly, or a Go-free
+install path is requested by external users (then add the tap per (3)).
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |
