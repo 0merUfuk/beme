@@ -787,8 +787,12 @@ func brainStatus(args []string) {
 	mode, _ := brain.ParseMode(cfg.BrainMode)
 	fmt.Printf("brain vault:  %s\nschema:       v%d   frozen: %v   mode: %s\nprojects:     %s\n",
 		st.Root, st.SchemaVersion, st.Frozen, mode, strings.Join(st.Projects, ", "))
-	fmt.Printf("live notes:   decision %d · open %d · summary %d · learning %d\n",
-		st.Live["decision"], st.Live["open"], st.Live["summary"], st.Live["learning"])
+	if st.LiveUnknown {
+		fmt.Printf("live notes:   unknown (%s; nothing was counted — retry when no maintenance is running)\n", st.LiveUnknownReason)
+	} else {
+		fmt.Printf("live notes:   decision %d · open %d · summary %d · learning %d\n",
+			st.Live["decision"], st.Live["open"], st.Live["summary"], st.Live["learning"])
+	}
 	fmt.Printf("inbox:        %d pending · %d rejected · %d archived\n", st.Inbox, st.Rejected, st.Archived)
 	fmt.Printf("snapshots:    %d", st.Snapshots)
 	if st.LatestSnap != "" {

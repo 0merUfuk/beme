@@ -15,6 +15,8 @@ type Status struct {
 	Frozen            bool           `json:"frozen"`
 	Projects          []string       `json:"projects,omitempty"`
 	Live              map[string]int `json:"live_by_type,omitempty"`
+	LiveUnknown       bool           `json:"live_unknown,omitempty"`
+	LiveUnknownReason string         `json:"live_unknown_reason,omitempty"`
 	Inbox             int            `json:"inbox_pending"`
 	Rejected          int            `json:"rejected"`
 	Archived          int            `json:"archived"`
@@ -59,7 +61,13 @@ func (v *Vault) Status() Status {
 			}
 		}
 	}
-	if notes, _, err := v.scanLive(); err == nil {
+	// An incomplete bounded scan (entry, byte or wall-time limit, or an
+	// unreadable projects directory) claims no counts: zero would be a lie.
+	if notes, _, err := v.scanLive(); err != nil {
+		st.Live = nil
+		st.LiveUnknown = true
+		st.LiveUnknownReason = err.Error()
+	} else {
 		for _, n := range notes {
 			st.Live[string(n.Type)]++
 		}
