@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,7 +64,15 @@ func (v *Vault) Status() Status {
 	}
 	// An incomplete bounded scan (entry, byte or wall-time limit, or an
 	// unreadable projects directory) claims no counts: zero would be a lie.
-	if notes, _, err := v.scanLive(); err != nil {
+	notes, bad, err := v.scanLive()
+	for _, b := range bad {
+		// A single unparseable note is reported by Doctor; an unreadable or
+		// over-limit type directory means a whole type went uncounted.
+		if err == nil && !strings.HasSuffix(b.Path, ".md") {
+			err = fmt.Errorf("%s: %s", filepath.Base(b.Path), b.Err)
+		}
+	}
+	if err != nil {
 		st.Live = nil
 		st.LiveUnknown = true
 		st.LiveUnknownReason = err.Error()

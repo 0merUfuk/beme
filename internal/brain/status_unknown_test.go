@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -35,5 +36,23 @@ func TestStatusReportsUnknownWhenLiveScanIsIncomplete(t *testing.T) {
 	}
 	if st.Live != nil {
 		t.Fatalf("an incomplete scan must claim no counts, got %v", st.Live)
+	}
+}
+
+// One over-limit type directory leaves that whole type uncounted; it must not
+// be printed as zero either.
+func TestStatusReportsUnknownWhenOneTypeDirectoryIsUnreadable(t *testing.T) {
+	v, _ := newVault(t)
+	dir := v.liveDir("demo", TypeLearning)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= maxScanEntries; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f-%05d.md", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st := v.Status(); !st.LiveUnknown || st.Live != nil || !strings.Contains(st.LiveUnknownReason, "learnings") {
+		t.Fatalf("an uncounted type directory must make live counts unknown: %+v", st)
 	}
 }
