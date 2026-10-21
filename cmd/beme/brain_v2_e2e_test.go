@@ -116,7 +116,7 @@ func TestBrainOperatorLifecycleEndToEnd(t *testing.T) {
 		Hooks map[string]json.RawMessage `json:"hooks"`
 	}
 	json.Unmarshal([]byte(r.mustRun("", "brain", "hooks", "--binary", "/opt/beme")), &hk)
-	for _, ev := range []string{"SessionStart", "PreCompact", "SessionEnd"} {
+	for _, ev := range []string{"SessionStart", "PreCompact", "SessionEnd", "Stop"} {
 		if _, ok := hk.Hooks[ev]; !ok {
 			t.Errorf("hooks fragment missing %s", ev)
 		}

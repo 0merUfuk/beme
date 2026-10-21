@@ -47,6 +47,8 @@ func brainCmd(args []string) {
 		brainDoctor(rest)
 	case "session-start":
 		brainSessionStart(rest)
+	case "stop-check":
+		brainStopCheck(rest)
 	case "list":
 		brainList(rest)
 	case "show":
@@ -86,6 +88,7 @@ func brainUsage() {
   beme brain capture --type decision|open|summary|learning --title T --body B|- [--why W] [--next N] [--topic K] [--project P]
   beme brain doctor [--dry-run] [--commit] [--quiet] [--json]
   beme brain session-start [--format text|claude-hook] [--cwd DIR]
+  beme brain stop-check [--format claude-hook]     (Stop hook: remind once enough edits accumulate without a capture; never blocks on error)
   beme brain list [--project P] [--type T] [--all] [--json]
   beme brain show <id>
   beme brain done <id>

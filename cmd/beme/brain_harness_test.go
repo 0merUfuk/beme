@@ -38,7 +38,7 @@ func TestInstallSettingsHooksPreservesEverythingElse(t *testing.T) {
 	if !strings.Contains(string(mustMarshal(hooks["SessionStart"])), "other-start.sh") {
 		t.Fatal("someone else's SessionStart hook must survive next to ours")
 	}
-	for _, ev := range []string{"SessionStart", "PreCompact", "SessionEnd"} {
+	for _, ev := range []string{"SessionStart", "PreCompact", "SessionEnd", "Stop"} {
 		if !strings.Contains(string(mustMarshal(hooks[ev])), "/opt/beme/bin/beme brain") {
 			t.Errorf("%s hook missing", ev)
 		}

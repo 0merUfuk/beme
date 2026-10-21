@@ -20,6 +20,7 @@ import (
 //	                a compaction re-injects the briefing)
 //	PreCompact    → settle captured proposals before context is compacted
 //	SessionEnd    → settle the vault after the session
+//	Stop          → remind the agent to record durable outcomes once edits accumulate
 func hooksFragment(binary, configFlag string, commit bool) map[string]any {
 	bin := shellQuote(binary)
 	end := " --quiet"
@@ -37,6 +38,7 @@ func hooksFragment(binary, configFlag string, commit bool) map[string]any {
 		"SessionStart": group("startup|resume|clear|compact|fork", bin+" brain session-start --format claude-hook"+configFlag+" --binary "+bin),
 		"PreCompact":   group("", bin+" brain doctor --quiet"+configFlag),
 		"SessionEnd":   group("", bin+" brain doctor"+end+configFlag),
+		"Stop":         group("", bin+" brain stop-check --format claude-hook"+configFlag),
 	}
 }
 
@@ -44,7 +46,8 @@ func hooksFragment(binary, configFlag string, commit bool) map[string]any {
 // updates them in place and removal never touches anyone else's hooks.
 func isBrainHook(cmd string) bool {
 	return strings.Contains(cmd, " brain session-start --format claude-hook") ||
-		strings.Contains(cmd, " brain doctor --quiet")
+		strings.Contains(cmd, " brain doctor --quiet") ||
+		strings.Contains(cmd, " brain stop-check --format claude-hook")
 }
 
 // stripBrainHooks removes owned hook commands (and groups left empty) from a

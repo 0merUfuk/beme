@@ -19,15 +19,16 @@ import (
 const sessionIDWindow = 512
 
 type projState struct {
-	SessionsSinceCapture    int      `yaml:"identified_sessions_since_capture,omitempty"`
-	InvocationsSinceCapture int      `yaml:"invocations_since_capture,omitempty"`
-	LegacyInvocations       int      `yaml:"sessions_since_capture,omitempty"`
-	SeenSessions            []string `yaml:"seen_session_hashes,omitempty"`
-	LastSession             string   `yaml:"last_session,omitempty"`
-	LastCapture             string   `yaml:"last_capture,omitempty"`
-	CaptureToken            string   `yaml:"capture_token,omitempty"` // Legacy shared-marker acknowledgement only.
-	CaptureEpoch            uint64   `yaml:"capture_epoch,omitempty"`
-	AccountingUnknown       bool     `yaml:"-"`
+	SessionsSinceCapture    int         `yaml:"identified_sessions_since_capture,omitempty"`
+	InvocationsSinceCapture int         `yaml:"invocations_since_capture,omitempty"`
+	LegacyInvocations       int         `yaml:"sessions_since_capture,omitempty"`
+	SeenSessions            []string    `yaml:"seen_session_hashes,omitempty"`
+	LastSession             string      `yaml:"last_session,omitempty"`
+	LastCapture             string      `yaml:"last_capture,omitempty"`
+	CaptureToken            string      `yaml:"capture_token,omitempty"` // Legacy shared-marker acknowledgement only.
+	CaptureEpoch            uint64      `yaml:"capture_epoch,omitempty"`
+	NudgeMarks              []nudgeMark `yaml:"nudge_marks,omitempty"`
+	AccountingUnknown       bool        `yaml:"-"`
 }
 
 func (v *Vault) stateFile(slug string) string { return filepath.Join(v.Root, ".state", slug+".yaml") }
