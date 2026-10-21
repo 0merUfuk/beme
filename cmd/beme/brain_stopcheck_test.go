@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -124,5 +126,64 @@ func TestStopCheckFailsOpen(t *testing.T) {
 	r.mustRun("", "brain", "freeze", "off")
 	if out, _, code := r.run(string(good), "brain", "stop-check", "--format", "claude-hook"); code != 0 || !strings.Contains(out, `"block"`) {
 		t.Errorf("after unfreezing the reminder must fire: code=%d out=%q", code, out)
+	}
+}
+
+func TestStopCheckCommitRulesAndProcessLevelFailOpen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("e2e")
+	}
+	r := newBrainRig(t)
+	proj := filepath.Join(r.home, "proj")
+	os.MkdirAll(proj, 0o755)
+	r.mustRun("", "brain", "init")
+	r.mustRun("", "brain", "project", "add", "demo", "--root", proj)
+	tr := filepath.Join(r.home, "t.jsonl")
+	stop := func(session string) string {
+		b, _ := json.Marshal(map[string]any{"cwd": proj, "session_id": session, "transcript_path": tr})
+		out, _, code := r.run(string(b), "brain", "stop-check", "--format", "claude-hook")
+		if code != 0 {
+			t.Fatalf("stop-check must exit 0, got %d", code)
+		}
+		return strings.TrimSpace(out)
+	}
+
+	appendFile(t, tr, toolUseLine("Edit", "")+toolUseLine("Bash", "'/bin/beme' brain capture --type summary --title t --body b"))
+	appendFile(t, tr, toolUseLine("Bash", "git add -A && git commit -m done"))
+	if out := stop("a"); out != "" {
+		t.Fatalf("capture then commit must stay silent, got: %s", out)
+	}
+	appendFile(t, tr, toolUseLine("Bash", `echo "git commit" && git log --grep "git commit"`))
+	if out := stop("a"); out != "" {
+		t.Fatalf("the phrase inside echo/grep is not a commit, got: %s", out)
+	}
+	appendFile(t, tr, toolUseLine("Edit", "")+toolUseLine("Bash", "cd sub; git commit -qm work"))
+	if out := stop("a"); !strings.Contains(out, `"block"`) {
+		t.Fatalf("a commit after uncaptured edits completes a unit and must remind: %q", out)
+	}
+
+	if out, _, code := r.run("", "brain", "stop-check", "--bogus-flag"); code != 0 || strings.TrimSpace(out) != "" {
+		t.Fatalf("a usage error must exit 0 silently: code=%d out=%q", code, out)
+	}
+	if runtime.GOOS != "windows" {
+		fifo := filepath.Join(r.home, "fifo")
+		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(map[string]any{"cwd": proj, "session_id": "f", "transcript_path": fifo})
+		if out, _, code := r.run(string(b), "brain", "stop-check", "--format", "claude-hook"); code != 0 || strings.TrimSpace(out) != "" {
+			t.Fatalf("a FIFO transcript must be refused without blocking: code=%d out=%q", code, out)
+		}
+	}
+}
+
+func TestStopHookCommandForcesExitZero(t *testing.T) {
+	frag := hooksFragment("/opt/beme/bin/beme", " --config /cfg", false)
+	cmd := frag["Stop"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	if !strings.HasSuffix(cmd, "stop-check --format claude-hook --config /cfg 2>/dev/null || true") {
+		t.Fatalf("Stop hook must silence stderr and force exit 0: %s", cmd)
+	}
+	if !isBrainHook("/opt/beme/bin/beme brain stop-check --format claude-hook --config /cfg 2>/dev/null || true") {
+		t.Fatal("the wrapped command must still be recognised as owned")
 	}
 }

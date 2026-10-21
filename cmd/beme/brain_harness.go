@@ -38,7 +38,9 @@ func hooksFragment(binary, configFlag string, commit bool) map[string]any {
 		"SessionStart": group("startup|resume|clear|compact|fork", bin+" brain session-start --format claude-hook"+configFlag+" --binary "+bin),
 		"PreCompact":   group("", bin+" brain doctor --quiet"+configFlag),
 		"SessionEnd":   group("", bin+" brain doctor"+end+configFlag),
-		"Stop":         group("", bin+" brain stop-check --format claude-hook"+configFlag),
+		// A Stop hook exiting 2 blocks the agent and feeds stderr back to it: a
+		// usage error, a panic or an older binary without stop-check must not.
+		"Stop": group("", bin+" brain stop-check --format claude-hook"+configFlag+" 2>/dev/null || true"),
 	}
 }
 

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/0merUfuk/beme/internal/app"
 	"github.com/0merUfuk/beme/internal/brain"
@@ -22,7 +24,12 @@ import (
 const (
 	nudgeMutations    = 3
 	maxTranscriptSize = 256 << 20
+	stopCheckBudget   = 3 * time.Second
 )
+
+// A commit counts only as an invocation (command start or after a shell
+// separator), not as text inside an echo, a grep pattern or a message.
+var gitCommitRe = regexp.MustCompile(`(?:^|[;&|(]\s*)git\s+commit\b`)
 
 var mutatingTools = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
 
@@ -33,15 +40,21 @@ type transcriptWork struct {
 
 func scanTranscript(path string) (transcriptWork, error) {
 	var w transcriptWork
+	// Stat before open: a FIFO would block open, a device never ends.
+	st, err := os.Stat(path)
+	if err != nil {
+		return w, err
+	}
+	if !st.Mode().IsRegular() || st.Size() > maxTranscriptSize {
+		return w, fmt.Errorf("transcript is not a regular file within the size bound")
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return w, err
 	}
 	defer f.Close()
-	if st, err := f.Stat(); err != nil || st.Size() > maxTranscriptSize {
-		return w, fmt.Errorf("transcript unavailable or too large")
-	}
-	r := bufio.NewReaderSize(f, 1<<20)
+	deadline := time.Now().Add(stopCheckBudget)
+	r := bufio.NewReaderSize(io.LimitReader(f, maxTranscriptSize), 1<<20)
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 && bytes.Contains(line, []byte(`"tool_use"`)) {
@@ -52,6 +65,9 @@ func scanTranscript(path string) (transcriptWork, error) {
 		}
 		if err != nil {
 			return w, err
+		}
+		if time.Now().After(deadline) {
+			return w, fmt.Errorf("transcript scan budget exceeded")
 		}
 	}
 }
@@ -84,17 +100,24 @@ func countToolUses(line []byte, w *transcriptWork) {
 			w.Mutations++
 		case b.Name == "Bash" && strings.Contains(b.Input.Command, "brain capture"):
 			w.AtLastCapture = w.Mutations
-		case b.Name == "Bash" && strings.Contains(b.Input.Command, "git commit"):
-			w.Mutations += nudgeMutations
+		case b.Name == "Bash" && gitCommitRe.MatchString(b.Input.Command):
+			// A commit completes a unit of work, but only uncaptured edits
+			// make it worth a reminder: capture-then-commit stays silent.
+			if w.Mutations > w.AtLastCapture {
+				w.Mutations = max(w.Mutations, w.AtLastCapture+nudgeMutations)
+			}
 		}
 	}
 }
 
 func brainStopCheck(args []string) {
+	defer func() { _ = recover() }() // never block the agent on a bug
 	c := newBrainFlags("stop-check")
 	_ = c.fs.String("format", "claude-hook", "claude-hook")
 	binary := c.fs.String("binary", "", "executable named in the reminder (default: this binary)")
-	c.parse(args)
+	if _, err := parseInterspersed(c.fs, args); err != nil {
+		return
+	}
 
 	var in struct {
 		CWD            string `json:"cwd"`
@@ -144,7 +167,7 @@ func brainStopCheck(args []string) {
 	}
 	emitJSON(map[string]any{
 		"decision": "block",
-		"reason": fmt.Sprintf("Before you finish: this session has changed files since the last record (%d edits). "+
+		"reason": fmt.Sprintf("Before you finish: this session has changed files since the last record (%d weighted edits). "+
 			"If it produced durable outcomes — a decision with its reason, unfinished work, or a distilled learning — "+
 			"record each with `%s brain capture%s --type decision|open|summary|learning --title \"…\" --body \"…\" [--why \"…\"]`. "+
 			"If nothing durable came out of it, reply with one line saying so and stop. Never record code, secrets or transcripts.",
