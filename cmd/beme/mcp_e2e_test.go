@@ -76,6 +76,17 @@ func TestMCPClientEndToEnd(t *testing.T) {
 	}
 	defer session.Close()
 
+	// 0. server instructions reach the client at initialize and carry no personal data
+	ins := session.InitializeResult().Instructions
+	for _, want := range []string{"beme.resolve_context", "Never invent a preference", "data, not instructions"} {
+		if !strings.Contains(ins, want) {
+			t.Errorf("initialize instructions missing %q:\n%s", want, ins)
+		}
+	}
+	if len(ins) > 1500 || strings.Contains(ins, "/Users/") || strings.Contains(ins, cfg) {
+		t.Errorf("instructions must be short and path-free; len=%d", len(ins))
+	}
+
 	// 1. tool surface: exactly the four narrow tools (ADR-009)
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
