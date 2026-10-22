@@ -9,10 +9,62 @@ Public evaluation assets for the engine's claims.
   published under `schemas/evaluation/` at the repo root (canonical location).
 - `public/` — synthetic, anonymized public cases and privacy/policy
   regression fixtures. **No real user data ever lives here.**
-- `runners/` — evaluation runners. **Not yet implemented.** The behavioral
-  evaluation protocol (baselines, rubric, manifest) is defined in
-  `EVALUATION_CONTRACT.md`; the executable runner arrives with the first
-  owner-gated live-model evaluation session.
+- `benchmarks/` — NFR-008 performance evidence on the public seed corpus
+  (`make bench` regenerates `seed-baseline.json`).
+
+## Executable runners (implemented; live execution owner-gated)
+
+The runners live in Go packages so they share the production runtime path:
+
+- `internal/evalrunner` — the EVALUATION_CONTRACT.md §4 runner: every
+  baseline (B0–B4) and every ablation (no-scope, no-provenance, no-unknowns,
+  canonical-only, learned-only), each built from one serving session's
+  inputs so all share the same capability boundary; deterministic rendered
+  prompts; repeat runs; immutable input/content evidence with provider-declared
+  settings; blinded packaging; delivered-item retrieval/abstention metrics;
+  explicit `passed`/`failed`/`grading_pending`/`not_run`. Command generation
+  cannot self-grade. Independent imported safety booleans are nonwaivable;
+  numeric zero alone is not a safety blocker. `Summary.ExitCode` returns
+  0/1/3. The no-scope arm is
+  refused in code outside a wholly synthetic deployment. Proven end to end
+  with deterministic mock providers on public synthetic fixtures
+  (`TestRunnerFullPipelineB0ThroughB4`,
+  `TestRunnerBlockerFailsUnitAndPreservesText`, `TestRunnerRetrievalMetrics`,
+  `TestArmsReceiveExactlyTheirConstruction`,
+  `TestSyntheticArmFixturePositiveControls`,
+  `TestArmsCannotMutateEachOthersInput`,
+  `TestNoScopeRefusedOutsideSyntheticDeployments`,
+  `TestManifestsRecordObservedValues`).
+- `cmd/beme-eval` — the owner-run procedure (never CI against private data):
+  `beme-eval retrieval --corpus DIR --config DIR` measures retrieval
+  recall/precision locally; `beme-eval behavioral --corpus DIR --config DIR
+  --provider command --command 'CMD ...'` pipes each rendered prompt to an
+  external command's stdin and reads its stdout, with `--dry-run` reporting
+  how many generations would run without executing anything. The corpus
+  comes from `--corpus` or `BEME_PRIVATE_EVAL_DIR`; with neither it reports
+  `not_run` and exits 3. Artifacts go to `--out` or a new OS temp directory,
+  never inside this repository. Exit codes follow `Summary.ExitCode`
+  (0/1/3; 2 usage). Every run requires an approved frozen split manifest.
+  `grade-template` and `grade-import` bind complete independent blinded grades
+  to the generated evidence; no-op/high-risk/quality/safety controls fail.
+  Synthetic gates never establish live benefit. Full protocol and limitations:
+  [EVALUATION_USAGE.md](../docs/EVALUATION_USAGE.md). B3/B4 is a bundled
+  pipeline comparison, including flat-text versus full-JSON budget differences.
+- `internal/bootstrap` — the canonical managed bootstrap text every
+  bootstrap-bearing arm and the adapter installer use, byte-identical to
+  `adapters/common/skill/BOOTSTRAP.md`
+  (`TestBootstrapMatchesCanonicalAdapterText`).
+- `internal/privacycorpus` + `cmd/beme-threat-corpus` — the shared threat-case
+  registry (`NewSuite`): every §19 case plus supplementary cases S1–S4, each
+  behind a positive control, executed by `TestPrivacyCorpusDeterministic` and by the runner
+  (`go run ./cmd/beme-threat-corpus --repo .`; exit 0 all passed, 1 failed,
+  3 not_run).
+- `internal/benchmark` + `cmd/beme-bench` — the reproducible performance
+  harness.
+
+Running the behavioral evaluation against live models (paid API use) and
+against the private corpus is owner-gated: wire a real provider into
+`evalrunner.Provider` and run it outside public CI (ADR-023).
 
 ## Hard rules
 
@@ -27,4 +79,5 @@ Public evaluation assets for the engine's claims.
    violations are binary release blockers — never averaged into scores.
 4. Locked runs use no live network unless the case is explicitly an
    integration test. The no-scope ablation runs only on synthetic data in an
-   isolated, no-network environment.
+   isolated, no-network environment. The runner checks the declaration, not
+   OS/network isolation; the operator must establish those controls separately.

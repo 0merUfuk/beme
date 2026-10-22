@@ -1,0 +1,96 @@
+{
+  "schema_version": "1",
+  "generated_at": "2026-09-15T22:52:13Z",
+  "go_version": "go1.25.6",
+  "goos": "darwin",
+  "goarch": "arm64",
+  "num_cpu": 14,
+  "seed_digest": "sha256:5a1a82030e8df7e1be2814e501d88f3e26bbbb0f84bd8799a6cde6439c5a1fc4",
+  "seed_records": 5,
+  "iterations": 50,
+  "warmup": 5,
+  "build_runs": 3,
+  "tasks": [
+    "Decide whether this implementation task can be reported as complete",
+    "Choose the storage engine for a single-writer local batch tool",
+    "Pick components for a new internal service",
+    "Should agent feedback update the canonical profile automatically",
+    "Add a caching layer to speed up the build"
+  ],
+  "target_p95_ms": 1000,
+  "scales": [
+    {
+      "scale": 1,
+      "records": 5,
+      "build": {
+        "n": 3,
+        "min_ms": 2.927,
+        "mean_ms": 13.202,
+        "p50_ms": 3.361,
+        "p95_ms": 33.317,
+        "p99_ms": 33.317,
+        "max_ms": 33.317
+      },
+      "resolve_warm": {
+        "n": 250,
+        "min_ms": 0.068,
+        "mean_ms": 0.113,
+        "p50_ms": 0.077,
+        "p95_ms": 0.3,
+        "p99_ms": 0.593,
+        "max_ms": 0.668
+      },
+      "mean_selected_items": 5,
+      "within_target": true
+    },
+    {
+      "scale": 20,
+      "records": 100,
+      "build": {
+        "n": 3,
+        "min_ms": 32.103,
+        "mean_ms": 47.345,
+        "p50_ms": 32.449,
+        "p95_ms": 77.481,
+        "p99_ms": 77.481,
+        "max_ms": 77.481
+      },
+      "resolve_warm": {
+        "n": 250,
+        "min_ms": 0.8,
+        "mean_ms": 2.259,
+        "p50_ms": 1.442,
+        "p95_ms": 5.652,
+        "p99_ms": 26.773,
+        "max_ms": 36.171
+      },
+      "mean_selected_items": 98,
+      "within_target": true
+    },
+    {
+      "scale": 200,
+      "records": 1000,
+      "build": {
+        "n": 3,
+        "min_ms": 191.129,
+        "mean_ms": 327.768,
+        "p50_ms": 296.188,
+        "p95_ms": 495.987,
+        "p99_ms": 495.987,
+        "max_ms": 495.987
+      },
+      "resolve_warm": {
+        "n": 250,
+        "min_ms": 9.333,
+        "mean_ms": 15.383,
+        "p50_ms": 12.186,
+        "p95_ms": 27.199,
+        "p99_ms": 89.684,
+        "max_ms": 93.718
+      },
+      "mean_selected_items": 100,
+      "within_target": true
+    }
+  ],
+  "within_target": true
+}

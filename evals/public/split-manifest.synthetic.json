@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "approved_by_user": true,
+  "frozen": true,
+  "approval_ref": "public-synthetic-shape-reference-not-real-gold",
+  "evidence_class": "synthetic_mechanism",
+  "dataset_version": "sha256:7c00ec40e47bf65842ebfa86dd9d9167685aa88d9fd42ed24cff7521d2530b42",
+  "evaluator_protocol": "offline-blind-v1",
+  "rubric_version": "0-4-blind-paired",
+  "bootstrap_seed": 42,
+  "bootstrap_samples": 2000,
+  "members": [
+    {
+      "case_id": "decision.architecture.storage.embedded-vs-server.synthetic.v1",
+      "file_sha256": "sha256:2684a050f75b01b6e2573991728734731a35874c3657e995c593493a879badf5",
+      "family": "synthetic-storage",
+      "split": "calibration"
+    }
+  ]
+}

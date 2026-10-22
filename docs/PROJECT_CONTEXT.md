@@ -5,9 +5,10 @@
 > implementing agent must follow. Blueprint-derived. Maintained alongside
 > `docs/DECISIONS.md`.
 
-**Status:** Alpha — `v0.1.0-alpha.1` released. The runtime, contracts,
-MCP surface, CLI, adapter contracts, and learning-review pipeline are
-implemented. Canonical current status lives in
+**Status:** Alpha. The runtime, contracts, MCP surface, CLI, adapter contracts,
+learning-review pipeline and non-canonical work memory are implemented.
+Published versions are identified by GitHub releases, not by this product
+contract. Canonical current status lives in
 [`docs/HANDOFF.md`](HANDOFF.md) §1; work-package state in
 [`docs/ROADMAP.md`](ROADMAP.md). Production engine code was authorized at
 the WP2B freeze (2026-09-14) and has shipped; this document records the
@@ -42,7 +43,7 @@ Existing memory systems commonly:
 | Canonical knowledge repositories | Canonical operating model, approved reusable knowledge, governance, evidence maps | Runtime indexes, per-session context packs |
 | Project repositories | Project policy, decisions, constraints, learnings | Global personal model |
 | Session-continuity tooling (e.g. Rifja) | Agent-session continuity, project/worktree identity, episodic evidence, resume/export | Canonical personal operating model, cross-source decision resolution |
-| **Be Me** | Source registration, capability/scope enforcement, normalization, retrieval, precedence, context packs, resolver traces, candidate-learning workflow | Raw source ownership, agent reasoning/execution, transcript parsing |
+| **Be Me** | Source registration, capability/scope enforcement, normalization, retrieval, precedence, context packs, resolver traces, candidate-learning workflow; V2 non-canonical work memory (decisions, open work, summaries, learnings — [`BRAIN.md`](BRAIN.md), ADR-033) | Raw source ownership, agent reasoning/execution, transcript parsing |
 
 Be Me reads external sources through adapters without taking ownership, never
 copies them into a second authoritative database, and builds only rebuildable

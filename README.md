@@ -35,16 +35,35 @@ An illustrative project film about capability-bound evidence selection and a pro
   continuity tooling — Be Me reads them through adapters and never takes
   ownership.
 
+## V2: second brain
+
+The same `beme` executable now includes the existing V2 plain-Markdown work
+memory: decisions, open work, summaries and learnings; gated capture, Brain
+Doctor, snapshots/restore/freeze, bounded briefings and optional harness hooks.
+Notes remain non-canonical and **do not enter V1 ContextPacks**. The newer
+runtime, privacy ledger, retrieval and evaluation tooling are preserved.
+See [`docs/BRAIN.md`](docs/BRAIN.md), ADR-033–035, and
+[`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for candidate verification and limits.
+Independent review and parent production-path replays closed the tracked audit
+defects, including two corrective cycles (ADR-036–040). The accepted integration
+is committed and proposed in [PR #3](https://github.com/0merUfuk/beme/pull/3).
+A separately authorized local rollout verified installed CLI and fresh MCP
+connections; that does not establish native model consumption or user benefit.
+Generated answers remain `grading_pending` until independent grade import;
+synthetic grades never establish live benefit. See
+[`EVALUATION_USAGE.md`](docs/EVALUATION_USAGE.md) for the frozen-split and grading protocol.
+
 ## Status
 
-**Alpha.** `v0.1.0-alpha.1` is released: contracts, runtime, narrow MCP
-surface, CLI, adapter contracts, and the learning-review pipeline are
-implemented and tested. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1 for the
-canonical current status and [`docs/ROADMAP.md`](docs/ROADMAP.md) for
-work-package state. Known alpha limitations (advisory-only adapter
-assurance, no live-model behavioral evaluation yet, Windows
-ported-unverified) are listed in the
-[release notes](https://github.com/0merUfuk/beme/releases/tag/v0.1.0-alpha.1).
+**Alpha source version: `v0.1.0-alpha.2`.** Contracts, context runtime, narrow
+MCP surface, CLI, learning review and non-canonical work memory are implemented.
+The [GitHub releases](https://github.com/0merUfuk/beme/releases) list is the
+authority for published versions and downloadable assets; a source version
+alone is not a publication claim. See [`docs/HANDOFF.md`](docs/HANDOFF.md) §1
+for current evidence and [`docs/ROADMAP.md`](docs/ROADMAP.md) for work-package
+state. Adapters remain advisory and live-model benefit is unmeasured. Release
+verification and the commit/push/versioned-package policy are documented in
+[`RELEASE_VERIFICATION.md`](docs/RELEASE_VERIFICATION.md).
 
 ```
 beme/
@@ -78,6 +97,48 @@ If your system `python3` is older than 3.11, use any Python 3.11+
 interpreter explicitly (e.g. `python3.13 -m venv .venv`). See
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full environment
 guide and the owner-gated private-evaluation workflow.
+
+## Install and first deployment
+
+Install options, in order of preference. No Homebrew tap is provided yet.
+
+1. **Recommended: release archive.** Download the archive for your platform and
+   `SHA256SUMS` from the [GitHub releases](https://github.com/0merUfuk/beme/releases),
+   verify both, extract, and put `beme` on your `PATH`
+   (details: [Verifying a downloaded release](docs/RELEASE_VERIFICATION.md#verifying-a-downloaded-release)):
+
+   ```sh
+   shasum -a 256 -c SHA256SUMS --ignore-missing   # Linux: sha256sum -c SHA256SUMS --ignore-missing
+   gh attestation verify beme_0.1.0-alpha.2_<os>_<arch>.tar.gz --repo 0merUfuk/beme
+   tar -xzf beme_0.1.0-alpha.2_<os>_<arch>.tar.gz   # Windows: extract the .zip
+   ```
+
+2. **`go install` a tagged version** (Go 1.25+):
+
+   ```sh
+   go install github.com/0merUfuk/beme/cmd/beme@v0.1.0-alpha.2
+   ```
+
+3. **Build from source for development** (Go 1.25+, from a checkout):
+
+   ```sh
+   go install ./cmd/beme ./cmd/beme-bench ./cmd/beme-eval ./cmd/beme-threat-corpus
+   export PATH="$(go env GOPATH)/bin:$PATH"   # or set GOBIN to a directory on PATH
+   ```
+
+Then run the health check:
+
+```sh
+beme doctor            # health check; it names what is missing
+```
+
+A fresh deployment has no sources: registration is a file-authoring act (it
+is the trust act — Be Me has no command that registers a source for you). See
+[**Registering a source**](docs/OPERATIONS.md#registering-a-source) in
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md), which also covers the lifecycle
+(`build`, `preview`, `forget`, `purge`, `candidate`), platform directories,
+and ledger backup and key custody. Harness/MCP setup is in
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 ## Documentation
 

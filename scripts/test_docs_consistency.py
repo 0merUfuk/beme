@@ -16,14 +16,15 @@ documentation test (2026-09-14), which FAILED the documentation gate:
   D4. Validation bootstrap must be documented — DEVELOPMENT.md must contain
       a venv-based bootstrap (python3 -m venv; jsonschema pyyaml) so a clean
       checkout works exactly as documented.
-  D5. Link integrity — relative markdown links inside docs/ and README.md
-      must resolve to existing files.
+  D5. Link integrity — relative markdown links in public documentation,
+      including examples and evaluation guides, must resolve to existing files.
   D6. The canonical status anchor — HANDOFF.md §1 must exist and be
       referenced by the other lifecycle docs.
 
 Exits 1 on any violation (CI gate).
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,12 +36,22 @@ def check(name, ok, detail=""):
     results.append((name, ok, detail))
     print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f"  — {detail}" if detail else ""))
 
-# --- D1: phase contradictions (docs + README only; ADR evidence quotes exempt)
+# --- D1: public lifecycle prose, including examples; ADR evidence quotes exempt
 PHASE_LIES = [
-    r"Contracts phase", r"pre-implementation",
+    r"Contracts[- ]phase", r"pre-implementation",
     r"gated behind WP2B", r"Blocked on user", r"Not authorized until WP2B",
+    r"once WP4 implements it",
 ]
-scan_files = [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md"))
+# Git's public inventory includes adapters/templates without opening ignored
+# private planning files or a developer's untracked notes. Final checks run
+# after intended new public paths are staged, and again in clean-checkout CI.
+tracked = subprocess.run(["git", "ls-files", "-z", "--", "*.md"], cwd=ROOT,
+                         check=True, capture_output=True, text=True)
+public_docs = [ROOT / path for path in tracked.stdout.split("\0") if path]
+if not public_docs:
+    raise SystemExit("documentation checks require the tracked public checkout")
+# Conditional agent guardrails and the changelog are not current phase prose.
+scan_files = [f for f in public_docs if f.name not in {"AGENTS.md", "CHANGELOG.md"}]
 violations = []
 for f in scan_files:
     text = f.read_text()
@@ -52,7 +63,7 @@ for f in scan_files:
             if f.name == "DECISIONS.md":
                 continue
             line = text[: m.start()].count("\n") + 1
-            violations.append(f"{f.name}:{line}: '{m.group(0)}'")
+            violations.append(f"{f.relative_to(ROOT)}:{line}: '{m.group(0)}'")
 check("D1 no phase contradictions outside ADR evidence", not violations, "; ".join(violations[:4]))
 
 # --- D2: stale hard-coded counts (prose promises)
@@ -110,7 +121,7 @@ check("D4 validation bootstrap documented (venv, deps, version, commands)", not 
 
 # --- D5: relative link integrity
 broken = []
-doc_files = [ROOT / "README.md", ROOT / "AGENTS.md"] + sorted((ROOT / "docs").glob("*.md"))
+doc_files = public_docs
 for f in doc_files:
     base = f.parent
     text = f.read_text()
@@ -127,6 +138,237 @@ refs = [f.name for f in [ROOT / "README.md", ROOT / "docs" / "PROJECT_CONTEXT.md
         if "HANDOFF.md" not in f.read_text()]
 check("D6 HANDOFF §1 status anchor exists and is referenced", anchor_ok and not refs,
       f"anchor={anchor_ok}; docs without HANDOFF reference: {refs}")
+
+# --- D7: requirements status counts are derived from the matrix rows
+req = (ROOT / "docs" / "REQUIREMENTS.md").read_text()
+req_rows = [l for l in req.splitlines() if re.match(r"\|\s*(FR|NFR)-\d+", l)]
+statuses = [l.strip().strip("|").split("|")[-1].strip() for l in req_rows]
+canonical = {"defined", "planned", "partial", "implemented", "verified", "not-applicable-v1", "active"}
+d7 = [f"non-canonical status cell '{st}'" for st in statuses if st not in canonical][:3]
+m = re.search(r"(\d+) rows — (\d+) implemented · (\d+) partial · (\d+) not-applicable-v1 · (\d+) active", req)
+if not m:
+    d7.append("status-count summary line missing")
+else:
+    claimed = tuple(int(x) for x in m.groups())
+    actual = (len(req_rows), statuses.count("implemented"), statuses.count("partial"),
+              statuses.count("not-applicable-v1"), statuses.count("active"))
+    if claimed != actual:
+        d7.append(f"summary {claimed} != rows {actual}")
+check("D7 requirements status counts match the matrix rows", not d7, "; ".join(d7))
+
+# --- D8: no doc claims the evaluation runner is unimplemented once it exists
+d8 = []
+if (ROOT / "internal" / "evalrunner" / "runner.go").exists():
+    for rel in ["README.md", "evals/README.md", "docs/ACCEPTANCE.md", "docs/HANDOFF.md", "docs/ROADMAP.md", "docs/REQUIREMENTS.md"]:
+        text = (ROOT / rel).read_text()
+        for pat in [r"runners?\W[^.]{0,60}?not\s+yet\s+implemented", r"\bNot yet implemented\b"]:
+            for mm in re.finditer(pat, text, re.IGNORECASE):
+                d8.append(f"{rel}: '{' '.join(mm.group(0).split())}'")
+check("D8 docs agree the evaluation runner is implemented", not d8, "; ".join(d8[:4]))
+
+# --- D9: every Go test named in the docs exists
+go_tests = set()
+for f in ROOT.rglob("*_test.go"):
+    if any(part in {".git", ".venv", "node_modules"} for part in f.parts):
+        continue
+    go_tests.update(re.findall(r"^func ((?:Test|Benchmark)\w+)\(", f.read_text(), re.M))
+d9 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    for name in re.findall(r"`((?:Test|Benchmark)[A-Z]\w+)`", f.read_text()):
+        if name not in go_tests:
+            d9.append(f"{f.name}: {name}")
+check("D9 Go tests referenced in docs exist", not d9, "; ".join(sorted(set(d9))[:5]))
+
+# --- D10: the threat matrix (EVALUATION_CONTRACT §7) and the executable
+# registry list exactly the same cases under the same invariant groups
+cases_go = (ROOT / "internal" / "privacycorpus" / "cases.go").read_text()
+registry = dict(re.findall(r'group\["([^"]+)"\]\s*=\s*"([^"]+)"', cases_go))
+matrix = {}
+contract = (ROOT / "evals" / "EVALUATION_CONTRACT.md").read_text()
+for row in re.finditer(r"^\| (P[\d.]+) \| (.*?) \|", contract, re.M):
+    for group in re.findall(r"\(([^)]*)\)", row.group(2)):
+        for tok in (t.strip() for t in group.split(",")):
+            if re.fullmatch(r"\d+|S\d+", tok):
+                matrix[tok] = row.group(1)
+d10 = []
+if not registry:
+    d10.append("no cases found in internal/privacycorpus/cases.go")
+for case, grp in sorted(registry.items()):
+    if case not in matrix:
+        d10.append(f"case {case} missing from the threat matrix")
+    elif matrix[case] != grp:
+        d10.append(f"case {case}: registry {grp} vs matrix {matrix[case]}")
+for case in sorted(set(matrix) - set(registry)):
+    d10.append(f"matrix case {case} has no executable registry case")
+check("D10 threat matrix matches the executable case registry", not d10, "; ".join(d10[:5]))
+
+# --- D11: the privacy corpus runner claim is true — one shared registry used
+# by both the Go test and the runner, no empty placeholder API
+d11 = []
+corpus_go = (ROOT / "internal" / "privacycorpus" / "corpus.go").read_text()
+if re.search(r"func AllCases\(", corpus_go):
+    d11.append("placeholder AllCases() still present")
+corpus_test = (ROOT / "internal" / "privacycorpus" / "corpus_test.go").read_text()
+if "privacycorpus.NewSuite(" not in corpus_test:
+    d11.append("TestPrivacyCorpusDeterministic does not use the shared registry")
+runner = ROOT / "cmd" / "beme-threat-corpus" / "main.go"
+if not runner.exists() or "privacycorpus.NewSuite(" not in runner.read_text():
+    d11.append("cmd/beme-threat-corpus missing or not using the shared registry")
+for rel in ["evals/README.md", "docs/ACCEPTANCE.md", "docs/HANDOFF.md"]:
+    if "beme-threat-corpus" not in (ROOT / rel).read_text():
+        d11.append(f"{rel} does not name the threat corpus runner")
+check("D11 privacy corpus runner claim backed by a shared registry", not d11, "; ".join(d11))
+
+# --- D12: docs never describe the purge ledger as holding content-derived
+# digests (ADR-027 minimality). DECISIONS/CHANGELOG keep history verbatim.
+d12 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    if f.name in ("DECISIONS.md",):
+        continue
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if not re.search(r"ledger|tombstone|purge", line, re.I):
+            continue
+        if re.search(r"no (content|digest)|holds no|without content|no content", line, re.I):
+            continue
+        for pat in [r"content[ -]hash", r"text[ -]fingerprint", r"normali[sz]ed statement", r"sha-?256 of (the )?(content|text)"]:
+            if re.search(pat, line, re.I):
+                d12.append(f"{f.name}:{n}: '{line.strip()[:80]}'")
+check("D12 docs keep the purge ledger content-free", not d12, "; ".join(d12[:4]))
+
+# --- D13: the documented MCP tool table matches the registered contract, and
+# expansion is documented as pack-bound
+contract_go = (ROOT / "internal" / "contracts" / "mcp.go").read_text()
+registered_tools = set(re.findall(r'Tool\w+\s*=\s*"(beme\.[a-z_]+)"', contract_go))
+integrations = (ROOT / "docs" / "INTEGRATIONS.md").read_text()
+documented_tools = set(re.findall(r"^\| `(beme\.[a-z_]+)` \|", integrations, re.M))
+d13 = []
+if not registered_tools or registered_tools != documented_tools:
+    d13.append(f"INTEGRATIONS tools {sorted(documented_tools)} != contracts {sorted(registered_tools)}")
+if not re.search(r"`beme\.get_context_item`[^\n]*pack_id", integrations):
+    d13.append("INTEGRATIONS does not document that get_context_item requires pack_id")
+check("D13 MCP tool table matches the registered contract", not d13, "; ".join(d13))
+
+# --- D14: no unqualified crash-safety claims (ADR-027 documents the exact
+# durability boundary instead)
+d14 = []
+for f in [ROOT / "README.md", ROOT / "evals" / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+    for n, line in enumerate(f.read_text().splitlines(), 1):
+        if re.search(r"crash[- ]safe", line, re.I):
+            d14.append(f"{f.name}:{n}")
+check("D14 no unqualified crash-safety claims", not d14, "; ".join(d14[:4]))
+
+# --- D15: Keep a Changelog — one Unreleased section
+unreleased = re.findall(r"^## \[Unreleased\]", (ROOT / "CHANGELOG.md").read_text(), re.M)
+check("D15 CHANGELOG has a single Unreleased section", len(unreleased) <= 1, f"{len(unreleased)} Unreleased headings")
+
+# --- D16: integrating brain must not reuse the runtime's ratified ADR IDs.
+decisions = (ROOT / "docs" / "DECISIONS.md").read_text()
+adr_rows = re.findall(r"^## ADR-(\d{3}) — (.+)$", decisions, re.M)
+adr_ids = [number for number, _ in adr_rows]
+d16 = [f"duplicate ADR-{number}" for number in sorted(set(adr_ids)) if adr_ids.count(number) > 1]
+if (ROOT / "internal" / "brain" / "note.go").exists():
+    titles = dict(adr_rows)
+    for number, title in {"033": "V2 second brain", "034": "V2 completion", "035": "`briefing` is a true read"}.items():
+        if not titles.get(number, "").startswith(title):
+            d16.append(f"ADR-{number} must record {title}")
+check("D16 ADR IDs unique; brain decisions do not collide with runtime decisions", not d16, "; ".join(d16))
+
+# --- D17: current integration status must not inherit historical blockers.
+current_handoff = handoff.split("## 1. Status", 1)[1].split("### Historical", 1)[0]
+current_brain = (ROOT / "docs" / "BRAIN.md").read_text()
+d17 = []
+for name, text in [("README", readme), ("HANDOFF current", current_handoff), ("BRAIN", current_brain)]:
+    for phrase in ["integrated baseline pending remediation", "No remediation, installation", "No remediation was attempted here"]:
+        if phrase.lower() in text.lower():
+            d17.append(f"{name}: stale current claim {phrase}")
+if "independent review" not in current_handoff.lower() or "not_run" not in current_handoff:
+    d17.append("current status must separate independent review and unrun live gates")
+check("D17 current synthetic remediation status and live gates distinct", not d17, "; ".join(d17))
+
+# --- D18: generation is not grading or benefit; B3/B4 remains bundled.
+usage_eval = (ROOT / "docs" / "EVALUATION_USAGE.md").read_text()
+d18 = [word for word in ["grading_pending", "grade-import", "split-manifest", "bundled pipeline", "benefit: not_run"] if word not in usage_eval]
+check("D18 evaluation documents pending grades, frozen splits and bundled contrast", not d18, str(d18))
+
+# --- D19: cross-lane contracts must describe the implementation, not old V2.
+architecture = (ROOT / "docs" / "ARCHITECTURE.md").read_text()
+d19 = []
+for word in ["exact equivalence", "512", "invocations", "--mode normal"]:
+    if word not in current_brain:
+        d19.append(f"BRAIN missing {word}")
+for word in ["compact JSON", "withheld", "trace_ref", "risk/harness"]:
+    if word not in architecture:
+        d19.append(f"ARCHITECTURE missing {word}")
+check("D19 shared brain/runtime/evaluator contracts stay reconciled", not d19, "; ".join(d19))
+
+# These bounded phrase guards supplement, not replace, a fresh-reader review.
+# --- D20: secondary guides cannot restore the unsafe directory handoff.
+d20 = []
+for f in scan_files:
+    if f.name == "DECISIONS.md":
+        continue
+    text = f.read_text()
+    if re.search(r"only\s+`blinded/`\s+is\s+grader-visible", text, re.I):
+        d20.append(f"{f.relative_to(ROOT)} permits the legacy directory handoff")
+for name, text in [("INTEGRATIONS", integrations), ("EVALUATION_USAGE", usage_eval)]:
+    if "reviewer-packet" not in text:
+        d20.append(f"{name} omits the reviewer-packet handoff")
+    if not re.search(r"never share[^.]*`blinded/`", text, re.I):
+        d20.append(f"{name} omits the explicit owner-bundle sharing prohibition")
+check("D20 review handoff is a packet, never the owner directory", not d20, "; ".join(d20))
+
+# --- D21: continuation derives from current status, not an older local pass.
+next_match = re.search(r"^## 8\. Exact next step\s*\n(.*?)(?=^## |\Z)", handoff, re.M | re.S)
+next_step = next_match.group(1) if next_match else ""
+d21 = [target for target in ("#1-status", "RELEASE_VERIFICATION.md") if target not in next_step]
+for phrase in ("establish an allowed authenticated publishing route",
+               "there is no new push, pr or ci receipt"):
+    if phrase in " ".join(next_step.lower().split()):
+        d21.append(f"stale continuation: {phrase}")
+check("D21 continuation links current status and release gates", not d21, "; ".join(d21))
+
+# --- D22: BSD mktemp can ignore TMPDIR unless given a full path template.
+d22 = []
+for f in scan_files:
+    if f.name == "DECISIONS.md":
+        continue
+    for m in re.finditer(r"\$\(\s*mktemp\s+-d\s*\)", f.read_text()):
+        d22.append(f"{f.relative_to(ROOT)} uses an implicit temporary root")
+check("D22 temporary recipes avoid implicit mktemp roots", not d22, "; ".join(d22))
+
+# --- D23: literal managed-adapter commands must target an implemented harness.
+adapter_source = (ROOT / "cmd" / "beme" / "adapter.go").read_text()
+target_function = re.search(r"^func targetFile\(.*?^}", adapter_source, re.M | re.S)
+supported = set(re.findall(r'^\s*case "([^"]+)":', target_function.group(0), re.M)) if target_function else set()
+d23 = [] if supported else ["managed adapter target inventory is unavailable"]
+for f in public_docs:
+    if f.name == "DECISIONS.md":
+        continue
+    for m in re.finditer(r'\bbeme(?:\s+brain)?\s+adapter\s+(?:install|remove|verify)\s+[\"\x27]?([A-Za-z][A-Za-z0-9_-]*)\b', f.read_text()):
+        if m.group(1) not in supported:
+            d23.append(f"{f.relative_to(ROOT)} advertises unsupported managed target {m.group(1)!r}")
+check("D23 documented managed-adapter targets exist", not d23, "; ".join(d23))
+
+# --- D24: design contracts/manual templates are not installer side effects.
+d24 = []
+for harness, boundary in (("cursor", "no managed installer"),
+                          ("hermes", "no managed installer"),
+                          ("codex", "does not install skills"),
+                          ("claude-code", "does not print prompt hooks")):
+    text = (ROOT / "adapters" / harness / "README.md").read_text().lower()
+    if boundary not in " ".join(text.split()):
+        d24.append(f"{harness} must distinguish {boundary}")
+check("D24 adapter guides state the actual installer boundary", not d24, "; ".join(d24))
+
+# --- D25: the original completed freeze is not a renewed approval request.
+evaluation_intro = contract.split("## 1. Claims under test", 1)[0]
+evaluation_approvals = contract.split("## 11.", 1)[-1]
+d25 = [target for target in ("HANDOFF.md", "ACCEPTANCE.md") if target not in evaluation_intro]
+if "Draft → user approval gate" in evaluation_intro:
+    d25.append("evaluation contract still labels the completed original gate draft")
+if "historical" not in evaluation_approvals.lower() or "current" not in evaluation_approvals.lower():
+    d25.append("evaluation approval procedure must distinguish historical and current gates")
+check("D25 evaluation lifecycle references the completed original freeze", not d25, "; ".join(d25))
 
 passed = sum(1 for _, ok, _ in results if ok)
 failed = [n for n, ok, _ in results if not ok]

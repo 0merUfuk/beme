@@ -63,7 +63,7 @@ pass, and elevation attempts (`profile`, `capability` fields) must be
   bump or a reviewed in-place revision before any production code consumes
   them.
 - `internal/` — Go runtime packages (policy, resolver, storage, ingestion,
-  workspace, learning, projection, app). Domain logic never imports CLI,
+  workspace, learning, projection, app, brain). Domain logic never imports CLI,
   MCP, or storage-driver specifics (NFR-010).
 - `cmd/beme/` — CLI entry point and MCP stdio server.
 - `testdata/synthetic/` — public, fully synthetic fixtures. No real data.

@@ -1,7 +1,7 @@
 # Be Me — Architecture
 
-> Contracts-phase document. Defines component boundaries and the resolution
-> pipeline as they must be implemented in WP4–WP8. Schemas referenced here live
+> Component boundaries and the resolution pipeline as implemented in
+> WP4–WP8. Schemas referenced here live
 > in `schemas/` and are normative.
 
 ## 1. Component map
@@ -50,8 +50,18 @@ Agent feedback ──▶ Quarantined observations ──▶ Batch review ──�
     rendering; no business logic.
 11. **Evaluation Harness** — deterministic policy/retrieval tests; behavioral
     baseline comparisons (`evals/EVALUATION_CONTRACT.md`).
+12. **Brain (V2, ADR-033–035)** — an additional writable Markdown work-memory
+    vault, independent of the resolver pipeline. Capture writes proposals;
+    Doctor promotes; a separate briefing reads matched-project and global
+    notes. Brain project registration never grants V1 workspace/source trust.
 
 ## 2. Two-stage resolution (ADR-007)
+
+Task facets are derived from lexical task evidence before Stage A. Explicit
+hints still narrow; an unclassified task is not silently called implementation.
+CLI/MCP and `EvalInputsRequest` share request derivation, including risk/harness
+hints. `evalrunner.RunRequest` forwards the full case request; task-only legacy
+wrappers remain compatible and record only the narrower request they send.
 
 **Stage A — hard eligibility (deterministic, enumerable):**
 1. bind immutable session capability/profile ceiling;
@@ -64,16 +74,23 @@ Agent feedback ──▶ Quarantined observations ──▶ Batch review ──�
 8. apply lexicographic precedence.
 
 **Stage B — soft retrieval and budgeting:**
-1. classify task/decision facets (deterministic metadata + lexical first);
+1. use the task/decision facets already derived before scope eligibility;
 2. retrieve eligible candidates via task/topic maps → exact decision keys →
    canonical entries → bounded evidence refs → FTS fallback;
 3. rank by relevance, scope specificity, evidence quality, utility,
    freshness (where applicable), redundancy;
 4. reserve mandatory content (constraints, conflicts, unknowns, degradations
    are never budget-dropped);
-5. budget advisory records;
+5. admit advisory records by relevance across sections, then stable presentation
+   order; budget the entire compact JSON pack (rounded bytes/4, not a model
+   tokenizer), including unknowns, provenance and degradation notices;
 6. compute unknowns and completeness;
-7. emit pack and the actual resolver trace.
+7. derive unknowns/provenance from `Pack.DeliveredItems`, including experimental
+   learned evidence, then emit the pack and actual sanitized resolver trace.
+
+B3 retains flat item-text estimates at the same numeric requested cap; B4
+includes the compact JSON envelope. Their contrast is a bundled pipeline
+comparison, not an equal-overhead causal precedence/provenance ablation.
 
 ## 3. Precedence order (strongest → weakest)
 
@@ -113,7 +130,9 @@ On a RED decision: escalate narrowly.
   record with safe provenance (`declassified_from` registry link).
 - Work-safe provenance is a safe scoped view: omits private source IDs, repo
   names, absolute paths, private locators, denied relationship IDs/counts,
-  correlatable content hashes.
+  correlatable content hashes. `policy_digest` and `index_revision` are
+  `withheld` in work-safe packs; source digests stay absent. Provenance
+  ordering uses only the already-visible/redacted tuple, never hidden IDs.
 - Ambiguous workspace identity → no project/personal resolution (fail closed).
 - Assurance mode is explicit: `cooperative-local` (v1 default) vs
   `isolated-admin` (requires verified OS separation; not claimed in v1).
@@ -123,9 +142,18 @@ On a RED decision: escalate narrowly.
 `status: ok | partial | unavailable | policy_blocked | rebuild_required`,
 with `capability`, `resolver_scope_enforced`, `os_isolation`, and
 `projection_revision` always reported. Unavailability never falls back to a
-broader profile; degradation is reported once per state transition; bounded
-last-known packs may be reused only with explicit capability/workspace/
-revision/age/staleness markers (FR-047).
+broader profile. Each request rereads persisted build-health metadata: partial
+source failures make packs incomplete, empty projections unavailable, missing
+or corrupt health stale. Notices are class-level without failed-source IDs.
+No last-known-pack reuse is implemented (FR-047).
+
+`Session.Resolve` persists policy-bound sanitized traces across CLI/MCP/eval.
+Optional trace-cache failure leaves reads and expansion operational, clears
+`trace_ref` and adds reduced assurance. A nonempty handle must resolve; retention
+keeps the newest 200 by age, not random ID order. Legacy trace arrays are
+filtered against current policy/revocation. Runtime fingerprints bind normalized
+records, source-byte provenance and effective registration/session policy, not
+labels; issued expansion tokens still bind the separate build generation.
 
 ## 7. Storage & layout
 
@@ -142,3 +170,19 @@ revision/age/staleness markers (FR-047).
 Go 1.25; `github.com/modelcontextprotocol/go-sdk` v1.7.0 (stdio);
 `modernc.org/sqlite` (CGo-free, FTS5 verified); YAML for human sources; JSON
 for all machine contracts. No embeddings in v1 (ADR-012).
+
+## 9. Brain alongside the runtime
+
+See [`BRAIN.md`](BRAIN.md). Existing V2 source is integrated additively, not
+used to replace the newer V1 runtime. `app.ResolveConfig` loads configuration
+without source registrations; `app.Load` still assembles the full runtime.
+Both use the newer per-platform directory defaults and explicit-config
+isolation (ADR-026/028). Brain configuration adds only `brain_dir` and
+`brain_mode`; a missing brain configuration creates no vault during V1 use.
+
+The brain's separate project registry, Markdown vault, log and snapshots do
+not share V1's precedence, projection stores or physical-purge ledger. The
+MCP surface stays four tools. V1 build/resolve/export/purge and evaluation
+arms remain on the newer runtime paths. `brain briefing` is a true read;
+`session-start` and opt-in `briefing --doctor` can maintain the vault. Hook
+failure is fail-open for starting a session, not permission to widen V1 scope.

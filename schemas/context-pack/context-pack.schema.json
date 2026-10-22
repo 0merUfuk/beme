@@ -31,7 +31,7 @@
         "profile": { "enum": ["personal", "work-safe"] },
         "profile_ceiling": { "enum": ["personal", "work-safe"], "description": "Immutable process-bound ceiling; equal to profile in v1 (a process never serves above its bound capability)." },
         "completeness": { "enum": ["complete", "incomplete"] },
-        "policy_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "policy_digest": { "anyOf": [{ "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, { "const": "withheld" }] },
         "source_revision_digest": { "type": ["string", "null"] },
         "index_revision": { "type": "string" }
       }
@@ -61,7 +61,7 @@
         "omitted_advisory_count": { "type": "integer", "minimum": 0 }
       }
     },
-    "trace_ref": { "type": "string", "pattern": "^trace_[0-9a-z]{8,}$" }
+    "trace_ref": { "anyOf": [{ "type": "string", "pattern": "^trace_[0-9a-z]{8,}$" }, { "const": "" }] }
   },
   "$defs": {
     "context_item": {

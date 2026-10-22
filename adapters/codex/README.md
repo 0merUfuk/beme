@@ -1,7 +1,7 @@
 # Be Me — Codex Adapter (Tier 1)
 
-Managed bootstrap for Codex: a small `AGENTS.md` block plus MCP server
-registration. Skill invocation is advisory — availability is not enforcement.
+Managed bootstrap for Codex: a small `AGENTS.md` block plus a printed MCP
+registration example. Registration is manual; availability is not enforcement.
 
 ## Install
 
@@ -17,9 +17,11 @@ Effects (all idempotent, marker-delimited):
 2. Prints the MCP server registration fragment for the user's Codex MCP
    config (Codex config is user-owned; the adapter never writes credentials
    or silently edits harness config outside its managed block).
-3. Installs the `beme` skill under the user's Codex skills directory
-   (if the installation supports skills), describing when and how to resolve
-   context.
+
+The installer **does not install skills**. The optional
+[skill template](templates/skill-beme.md) is a manual reference; verify the
+installed harness's skill discovery and location before placing it. The CLI
+does not detect skill support, copy the template or verify its discovery.
 
 ## Uninstall
 
@@ -27,8 +29,10 @@ Effects (all idempotent, marker-delimited):
 beme adapter remove codex
 ```
 
-Removes only the managed block and installed skill; unrelated content is
-preserved (FR-043). `beme adapter verify codex` reports installed state.
+Removes only the managed block; unrelated content and any manually installed
+skills are preserved (FR-043). `beme adapter verify codex` checks that block,
+not MCP registration or skill discovery. See
+[INTEGRATIONS.md](../../docs/INTEGRATIONS.md#harness-adapters).
 
 ## MCP registration (reference)
 

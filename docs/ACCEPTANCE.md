@@ -68,14 +68,16 @@
 - [x] Private regression pack never referenced by public CI.
 - **Exit:** production code authorized. WP4–WP7 begin.
 
-## 5. Gate: core alpha (WP5) — engine tested; measurement pending
+## 5. Gate: core alpha (WP5) — engine tested; measurement mechanism ready, owner-run measurement pending
 
-Evidence status (2026-09-14): the deterministic items below pass in CI
+Evidence status (2026-09-15): the deterministic items below pass in CI
 (`go test ./...`, migration fixtures, work-safe boundary, determinism,
-provenance/selection-reason assertions). The retrieval *measurement* items
-(recall, precision) require evaluation-harness runs against the private
-corpus — owner-gated, runner not yet implemented; they remain unchecked
-until measured.
+provenance/selection-reason assertions). The retrieval *measurement*
+mechanism is implemented — `internal/evalrunner` computes per-case and
+micro-averaged recall/precision against `required_evidence_refs` with these
+thresholds (`TestRunnerRetrievalMetrics`). Measuring the private corpus is an
+owner-run step (ADR-023), so the two items stay unchecked until that evidence
+bundle exists.
 
 - [x] Schema and migration fixtures: 100% pass (CI-gated).
 - [x] Policy/precedence tests: 100% pass (CI-gated).
@@ -83,20 +85,21 @@ until measured.
       pack section assertions).
 - [x] Unsupported authoritative personal claims: 0 (injection-clamp and
       unknown-preference negative-control tests).
-- [ ] Required-record retrieval recall: ≥90% — needs eval-harness
-      measurement (owner-gated).
-- [ ] Context precision: ≥80% — needs eval-harness measurement
-      (owner-gated).
+- [ ] Required-record retrieval recall: ≥90% — mechanism implemented;
+      owner-run private-corpus measurement pending.
+- [ ] Context precision: ≥80% — mechanism implemented; owner-run
+      private-corpus measurement pending.
 - [x] Deterministic pack snapshots stable (structural-identity test).
 - [x] Every selected item has valid provenance and a selection reason
       (pack schema requires both; contract-tested).
 
 ## 6. Gate: trusted local beta (WP10) — pending owner-run live-model evaluation
 
-Every item below requires the live-model B4-vs-B0 evaluation (blind paired
-grading over the private corpus). That requires paid model-API runs — an
-owner-gated action Be Me's delegation does not cover. No item is checked
-until those runs exist as an evidence bundle.
+Every item below except the privacy-adversarial item requires the live-model
+B4-vs-B0 evaluation (blind paired grading over the private corpus). That
+requires paid model-API runs — an owner-gated action Be Me's delegation does
+not cover. Those items stay unchecked until the runs exist as an evidence
+bundle. The privacy item is deterministic and checked on its own evidence.
 
 - [ ] Blind paired B4-vs-B0: B4 wins ≥60%, loses ≤20%, bootstrap 95% CI
       excludes a negative effect (decision and reasoning reported separately).
@@ -108,7 +111,11 @@ until those runs exist as an evidence bundle.
 - [ ] Avoidable-question rate improves over baseline.
 - [ ] Non-ambiguous cross-run decision stability: ≥85%.
 - [ ] Pre-decision context-use rate: 100% on every `assured` surface.
-- [ ] All privacy adversarial cases pass.
+- [x] All privacy adversarial cases pass — every §19 threat case and the
+      supplementary cases S1–S4, each behind a positive control proving its
+      fixture is present and detectable, execute and pass from the
+      shared registry, none `not_run` (`TestPrivacyCorpusDeterministic`;
+      runner `cmd/beme-threat-corpus`, `TestThreatCorpusRunner`; ADR-027).
 
 ## 7. Gate: public release candidate (WP11) — alpha published; gate items partially evidenced
 
@@ -123,7 +130,10 @@ this gate passed. Item-level status:
       sources byte-identical and resolution restored
       (`TestCorruptStoreRecovery`); revoke/forget tombstones honored in
       resolution and their rebuild semantics pinned
-      (`TestRebuildDoesNotResurrectForgotten`, `TestRevocationTombstone`).
+      (`TestRebuildDoesNotResurrectForgotten`, `TestRevocationTombstone`);
+      revoked and purged records stay hidden on every read surface after a
+      backup restore (`TestRestoredBackupHiddenOnEveryReadSurface`,
+      `TestRestoredBackupCannotResurrectOnAnySurface`).
 - [x] ≥2 Tier 1 harness adapters verified end to end (2026-09-15):
       protocol level — a real MCP client (official Go SDK) connected to the
       real stdio server, listed exactly the four tools, resolved a pack
@@ -149,9 +159,101 @@ this gate passed. Item-level status:
       alpha limitations documented).
 - [x] License, compatibility matrix, support boundaries, threat model, and
       limitations published.
-- [ ] User approval of external release (RED) — v0.1.0-alpha.1 publication
-      was authorized by ADR-022 delegation; a *non-alpha* release still
-      requires explicit approval.
+- [x] User approval of verified alpha-package publication — the standing
+      commit/push/versioned-release instruction is recorded in ADR-041.
+      It does not satisfy the actual CI/artifact gates, lift a separate merge
+      hold, or authorize a *non-alpha* release.
+
+## 7a. Completion ledger
+
+The single completion-tracking record for Be Me. Per-requirement evidence stays
+in [`REQUIREMENTS.md`](REQUIREMENTS.md); current snapshot and next step in
+[`HANDOFF.md`](HANDOFF.md) §1. Statuses: **verified** (behavior proven by a
+test or command that exercises the real boundary), **implemented-unverified**,
+**not-implemented**, **blocked-approval**, **blocked-access**,
+**out-of-scope**. Nothing moves to verified without recorded evidence, and no
+threshold is lowered here.
+
+The 2026-10-09 combined candidate now contains source fixes and synthetic
+regressions for the independently reproduced runtime/evaluation and brain
+failures (ADR-036–038; EFFECTIVENESS_REVIEW.md). The bounded corrective review
+and parent acceptance are complete (ADR-039–040). The accepted source is now
+committed and pushed in PR #3. Publication review separately identified a
+Windows test fixture, native-command smoke error propagation and an inherited
+private-marker residue to correct before release. Current gates are in HANDOFF
+§1. Historical V1 evidence below does not establish the new package's CI,
+downloaded-artifact behavior or native model use.
+
+### Readiness (reported independently)
+
+| Category | State | Evidence / blocker |
+|---|---|---|
+| Engineering acceptance | accepted source committed; publication corrections tracked separately | independent corrective review and parent replay complete; final release head still requires its own CI |
+| Merge authorization | historical explicit hold remains until the owner lifts it | an unanswered approval request is not consent |
+| Release verification | governed by exact-head CI, artifact checks and the actual GitHub release | historical P1–P5 results are not evidence for a newer package; see RELEASE_VERIFICATION.md |
+| Personal effectiveness demonstrated | not_run / unmeasured | truthful mechanisms and constructed grades are not separately approved real-task measurement |
+
+### Safety and data-integrity invariants
+
+| ID | Requirement / invariant | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
+|---|---|---|---|---|---|
+| S1 | Ledger fails closed on detectable partial, unreadable, or malformed state, without bricking an interrupted first-time initialization | schema-3 ledger and key prove each other (key ID + generation + committed flag, ADR-030); missing, mismatched, rolled-back, malformed-entry, and pending-journal-without-ledger states fail closed on all twelve surfaces; interrupted first write recovers; legacy formats migrate | none | verified | `TestLedgerIntegrityFailsClosedOnEverySurface` (8 states × 12 surfaces, positive controls), `TestInterruptedFirstLedgerWriteRecovers`, `TestCrashBeforeKeyCommitKeepsEnforcement`, `TestLegacyLedgerMigratesAndRollbackIsDetected`, `TestLedgerRemovedTogetherIsUndetectable` (documented boundary); mutations M1–M6, M15 |
+| S2 | Purge deletions reach the documented durability boundary before the journal is finalized, including on retry | every deletion is zeroized, flushed, unlinked and its directory flushed; projections compacted with `synchronous=FULL` and flushed; retries complete outstanding flushes; hard-linked canonical files reported as residuals | none | verified | `TestPurgeFlushesEveryDeletionBeforeFinalize`, `TestPurgeRetryCompletesOutstandingFlushes` (per deletion class), `TestPurgeRefusesToEraseHardLinkedCanonicalFile`, `TestEraseZeroizesBeforeUnlink`, `TestFlushFailuresAreReported`; platform limits from vendor docs in ADR-030; mutations M7–M9, M16–M17 |
+| S3 | Conflicting purge/forget/build operations cannot lose updates or resurrect content | exclusive inter-process maintenance lock (`ledger/.lock`) taken by forget, purge, build and learning writes | none | verified | `TestMaintenanceOperationsDoNotLoseUpdates` (16 concurrent forgets + purge + build, also under `-race`), `TestMaintenanceLockTimesOut`, `TestLockSerializesHolders`; mutation M12 |
+| S4 | Observations in a completed purge stay hidden after a data-dir backup restore | purge tombstones observation identities; list, list-all, inspect, review, family counts, feedback dedup and the rejection tombstone index hide them; build erases them; doctor counts them without IDs | none | verified | `TestRestoredObservationBackupStaysHidden`, `TestRestoredObservationHiddenOnCLI` (real binary, CLI + doctor + build), `TestLearningSurfacesRequireVerifiedLedger`; mutations M10, M11, M14 |
+| S5 | Every projection read surface applies the ledger and fails closed | resolve, export, explain, doctor, MCP status/expansion and the learning surfaces filtered; guard test fails the build on direct reads and on traversal errors | none | verified | `TestRestoredBackupHiddenOnEveryReadSurface`, `TestRestoredBackupCannotResurrectOnAnySurface`, `TestUnusableLedgerFailsClosedOnEveryReadSurface`, `TestLedgerIntegrityFailsClosedOnEverySurface`, `TestReadSurfacesUseLedgerFilter`, `TestReadSurfaceGuardCatchesEvasions` |
+| S6 | Context-item expansion is pack-bound with one refusal | ADR-029; `TestExpandItemIsPackBound`, MCP e2e | none | verified | suites pass at the current head |
+| S7 | Physical purge keeps minimal non-content tombstones, confirmation, dry run, partial reports, resumability | ADR-027/ADR-030; purge suites; threat cases 30 and S1–S4 | none | verified | suites pass at the current head |
+
+### Evaluation
+
+| ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
+|---|---|---|---|---|---|
+| E1 | Arms B0–B4 follow the contract (B1 real bootstrap; B2 all eligible, no selection/precedence/truncation; B3 pre-precedence retrieval without provenance) | every arm built from one session's `Session.EvalInputs` behind the same Stage-A gate; B1 uses the real managed bootstrap text (`internal/bootstrap`) | none | verified | `TestArmsReceiveExactlyTheirConstruction` (10 subtests), `TestSyntheticArmFixturePositiveControls`, `TestArmsCannotMutateEachOthersInput`, `TestBootstrapMatchesCanonicalAdapterText`; mutations M1–M2, M5, M7 of the evaluation set |
+| E2 | Ablations no-scope, no-provenance, no-unknowns, canonical-only, learned-only | all five implemented; no-scope refuses outside a synthetic, network-disabled deployment (`Runtime.NoScopeRefusal`); canonical-only is role-based and `not_run` on an unknown role | none | verified | `TestNoScopeRefusedOutsideSyntheticDeployments`, ablation assertions in `TestArmsReceiveExactlyTheirConstruction`; mutations M3–M4 of the evaluation set |
+| E3 | Manifests identify real model settings, prompts, corpus revisions, arm construction | declared provider settings (not independently observed), actual prompt and fixture hashes, corpus revisions and arm construction recorded; build-info versions reported honestly as `unknown` in test binaries | `BEME_EVAL_GIT_COMMIT` must be set for owner runs in a worktree (Go stamps the main checkout HEAD) | verified | `TestManifestsRecordObservedValues`; mutation M6 of the evaluation set |
+| E4 | Blockers fail units; generated text reaches raw and blinded artifacts | `TestRunnerBlockerFailsUnitAndPreservesText` | none | verified | suite passes at the current head |
+| E5 | Retrieval recall ≥90% / precision ≥80% on the locked corpus (core alpha) | mechanism proven on synthetic fixtures; `beme-eval retrieval --corpus DIR --config DIR` runs it without a model | owner-authorized local run on the private corpus | blocked-approval | procedure in [INTEGRATIONS.md](INTEGRATIONS.md) "Owner-run procedure for the evaluation gates"; evidence bundle kept outside the repository |
+| E6 | Blind paired B4-vs-B0 and the trusted-beta behavioral gates | command generation is grading_pending/exit 3; independent complete blinded grade import, separate safety blockers, whole-family intervals, high-risk and quality guards implemented (ADR-038) | independent review, then separately authorized live runs and endpoint-specific evidence | blocked-approval | synthetic no-op/high-risk/fabrication/invalid-grade controls fail and a constructed positive gate passes with benefit not_run; §6 thresholds unchanged |
+
+### Benchmark, integration, platform, and documentation
+
+| ID | Requirement | Current implementation and evidence | Remaining work | Status | Verification and acceptance |
+|---|---|---|---|---|---|
+| B1 | Benchmark seed identifiers cannot escape owned dirs or inject metadata; explicit seed; accurate failure reporting | whole seed validated before anything is written (ID allowlist, Windows device names, enum and control-character checks, round-trip through the real parser, case-insensitive collisions); `--seed` required; cleanup and output-write failures surface in the exit code | Windows-specific ID cases verified on macOS only; three-platform CI covers the rest | verified | `internal/benchmark/seed_safety_test.go`, `cmd/beme-bench/{seed_flag,cleanup}_test.go`; 11 mutations caught |
+| B2 | NFR-008 measurement with environment conditions | historical `evals/benchmarks/seed-baseline.json` (not overwritten by this integration) (darwin/arm64, go1.25.6, 14 cpus): warm resolve p95 0.30 / 5.65 / 27.20 ms at 1×, 20×, 200× against the 1 s target | re-measure per release commit | verified | `make bench` output recorded in the baseline file |
+| D1 | Diagnostics: doctor never downgrades `policy_blocked`; error labels and exit codes match failure classes; guard tests fail on traversal errors | severity-preserving `raise()`; explain maps trace→4, unusable ledger→3, other→1; guard propagates walk/read errors; `beme candidate --config` no longer falls back to the real deployment | none | verified | `TestDoctorKeepsMostSevereStatus`, `TestExplainErrorClasses`, `TestReadSurfaceGuardCatchesEvasions`, `TestRestoredObservationHiddenOnCLI`; mutations M13–M14 |
+| H1 | Harness configuration lifecycle (Claude Code, Codex) | re-run at the final head on 2026-09-16 against installed Claude Code 2.1.271 and Codex 0.154.0 in isolated config homes, no model calls: `TestClaudeCodeHarnessIntegration` (add → get → remove), `TestCodexHarnessIntegration` (add → list/doctor → remove), `TestAdapterInstallRemoveByteExact` | none | verified | `BEME_HARNESS_INTEGRATION=1 go test ./cmd/beme -run HarnessIntegration` — all pass |
+| H2 | MCP protocol connection | re-run at the final head on 2026-09-16: `TestMCPClientEndToEnd` (official Go MCP client against the real stdio server) and Claude Code reporting `Connected` for the spawned server | none | verified | same run; Codex has no model-free MCP health check, which is why its connection level stays unverified |
+| H3 | A real agent session retrieves context | not run | live session with synthetic data | blocked-approval | runnable procedure in [INTEGRATIONS.md](INTEGRATIONS.md) (H3–H5); session transcript shows `beme.resolve_context` |
+| H4 | Retrieval happens before a material decision | not run | same session | blocked-approval | same procedure; tool call precedes the decision in the transcript |
+| H5 | Relevant context used; no invented preferences | not run | same session with negative-control prompt | blocked-approval | same procedure; graded transcript, counts reported here |
+| H6 | `assured` surfaces with 100% pre-decision use | no surface claimed (FR-045) | none in v1 | out-of-scope | — |
+| P1 | Full test suite on macOS, Linux, Windows | CI run [35052381926](https://github.com/0merUfuk/beme/actions/runs/35052381926) green on code head `419fb18`: `test (macos-latest)`, `test (ubuntu-latest)`, `test-windows`, all three `installed-binary-smoke` jobs, and `private-data-scan`. Locally at the same head: build, vet (darwin/linux/windows), full suite, `-race` on app/durable/learning/storage/evalrunner, threat corpus 34/34, docs 15/15, validate 19/19, CI regression 7/7, scan clean | none | verified | the linked run; a later docs-only commit has its own run linked in PR #1 |
+| P2 | Installed-binary smoke tests per OS at the release candidate | `installed-binary-smoke` green on macOS, Linux and Windows in run [35052381926](https://github.com/0merUfuk/beme/actions/runs/35052381926): `go install`, then doctor/build/status/preview/candidate/forget/purge --dry-run plus the threat-corpus and benchmark binaries, run from outside the repository in an isolated deployment | none | verified | the linked run |
+| P3 | Fresh-checkout documentation test at the current head | **passed at `c2ae7b9`** (2026-09-16): an independent fresh agent cloned that exact commit, isolated `HOME`/`BEME_*`/`GOBIN`, followed only README, docs, evals and AGENTS, and completed install → `--help`/`--version` (exit 0) → doctor → register a source → build → status → preview (human and `--json`) → export → explain (trace ID taken from the preview output) → candidate list → forget → purge dry-run → the harness-free MCP smoke command copied verbatim (exit 0, `serverInfo` naming `beme`) → workspace registration → `make validate` (19/19) and `make validate-private` (`not_run`) with **zero improvisations**. Earlier passes found and drove fixes for: install and source registration undocumented; wrong `type`/status rules; an overstated ledger-gating claim; a smoke command that lost a stdin race; and no documented source for the `explain` trace ID | none | verified | pass report recorded in PR #1; commits after `c2ae7b9` are evidence-only |
+| P4 | Release notes and release-verification procedure | [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md): preconditions, verification run, rollback guidance, and draft notes (unpublished) | owner review; publishing stays an owner action | verified | document reviewed in PR #1; nothing tagged or published |
+| P5 | No private data in public artifacts | `scripts/scan_private_data.py` clean at the current head with the local extra-terms list | re-scan on the final head in CI | verified | scan output ("private-data scan: clean") |
+| P6 | Non-alpha release approval | — | owner decision | blocked-approval | — |
+
+### Consolidated approval request (owner decisions)
+
+These owner decisions remain separate from independent candidate review.
+They are not the only remaining prerequisites. Do not deploy, merge or
+publish the remediated candidate before independent source-bound acceptance;
+the historical action menu below grants no authorization.
+
+| # | Decision | What runs | Cost / risk | Unblocks |
+|---|---|---|---|---|
+| 1 | Merge PR #1 into `main` | the reviewed branch only; no tag, no publish | none beyond the merge itself | the release-verification track (P1–P4 on a `main` commit) |
+| 2 | Live harness sessions on a synthetic deployment | the H3–H5 procedure in [INTEGRATIONS.md](INTEGRATIONS.md), run with `HOME` pointed at the isolated deployment: 3 task sessions + 1 negative control | spends your model usage. Proposed cap: 4 sessions, one harness (Claude Code), synthetic sources only — no private corpus and no canonical personal knowledge is read | H3, H4, H5 and any future `assured` claim |
+| 3 | Private-corpus retrieval measurement | `make validate-private`, then `beme-eval retrieval --corpus "$BEME_PRIVATE_EVAL_DIR" --config DIR --out DIR --json` | no model spend, no network. Reads the private corpus read-only on your machine; artifacts are written to `--out` outside the repository and never committed | E5 |
+| 4 | Blind paired B4-vs-B0 behavioral run | `beme-eval behavioral --corpus DIR --config DIR --provider command --command '<harness CLI>' --arms B0,B4 --repeats N --out DIR`; run `--dry-run` first, which prints the exact generation count and executes nothing | paid model runs through your own harness CLI. Proposed cap: 2 arms × the locked split × 3 repeats, confirmed by the `--dry-run` count before any spend; prompts carry private corpus content to whatever model that CLI calls, so choose the provider accordingly | E6 and the trusted-beta gates |
+| 5 | Publish a release (tag + notes) | the procedure in [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md) | public artifact; irreversible tag | P6 |
+
+Not requested, and not needed for any acceptance row: running a physical
+purge on real personal data. Destructive behavior is demonstrated on
+disposable synthetic fixtures only (S2, S4, S7, threat cases 30 and S1–S4).
 
 ## 8. Evidence bundles
 
@@ -180,3 +282,24 @@ happens only after personal data entered a shared pack; any source acquires a
 competing source of truth; agent-produced choices are learned as preferences
 without acceptance; completion is claimed from commands rather than verified
 outcomes.
+
+## 11. Integrated brain candidate (WP12, ADR-033–040)
+
+**Local engineering acceptance complete; live acceptance remains open:** restore, exact
+equivalence, chronology, verified worktree scope, mutation failure reporting,
+bounded reads and session-accounting regressions now exercise the corrected
+production paths. The original audit assertions and adjacent parent followups
+remain part of synthetic acceptance, not evidence of deployment or human benefit.
+
+Local deterministic and synthetic CLI evidence is tracked in HANDOFF §1:
+brain capture/Doctor/briefing, gate rejection, modes, read-only pull,
+backup/restore/freeze and managed-block coexistence. The same-binary regression
+also checks newer runtime positive/negative retrieval, work-safe separation,
+trace explain, durable forget/rebuild, and config isolation. Existing privacy
+corpus and B0–B4/ablation tests remain required; no acceptance threshold changes.
+
+Still **not_run** for this candidate: installed-harness invocation, live model
+recall/use, repeated real-task benefit, and deployment. The owner-run
+`make brain-live` can invoke a model starting at stage 2. Identified-session and invocation
+counters are not an effectiveness denominator. No `assured` label, beta
+acceptance, deployment or release follows from synthetic passing tests alone.

@@ -25,7 +25,7 @@ WP3 Contracts/schemas ─▶ WP2B Frozen fixtures + thresholds ─▶ [PRODUCTIO
 | WP | Scope | Status |
 |---|---|---|
 | WP0 | Live evidence and drift validation | **Complete** (2026-09-14; private evidence report; 2 read-only verification clones; gold candidates identified) |
-| WP1 | Constitution, decision ledger, traceability | **Complete** (ADR-001…023; per-ID requirements matrix) |
+| WP1 | Constitution, decision ledger, traceability | **Complete** (ADR ledger in DECISIONS.md; per-ID requirements matrix with CI-checked status counts) |
 | WP2A | Evaluation contract + candidate corpus | **Complete** (evaluation contract; 34-case private corpus approved under ADR-022 delegation) |
 | WP3 | Contracts and schemas | **Complete** (8 versioned schemas; public fixture checks via `make validate`; elevation structurally unrepresentable) |
 | WP2B | Frozen fixtures + thresholds | **Complete** (2026-09-14, ADR-022 delegation; splits 13/13/8; thresholds at design targets; private freeze manifest) |
@@ -34,13 +34,30 @@ WP3 Contracts/schemas ─▶ WP2B Frozen fixtures + thresholds ─▶ [PRODUCTIO
 | WP6 | Administrative CLI | **Complete** (status/doctor/build/preview/forget/adapter/candidate) |
 | WP7 | MCP boundary | **Complete** (4-tool stdio server; surface contract + elevation + transport tests) |
 | WP8 | Harness adapters | **Complete** (codex + claude-code install targets; hermes + cursor documented contracts; all `advisory` — see ADR-013) |
-| WP9 | Learning and review | **Complete** (observation→candidate→batch-review pipeline; §14.5 actions; tombstones; FR-050..054 tested; FR-055 partial: physical purge RED by design) |
-| WP10 | Hardening | **Complete for this alpha** (CI matrix, migrations FR-064, private-data scan, regression suite; behavioral beta gates pending live-model runs) |
+| WP9 | Learning and review | **Complete** (observation→candidate→batch-review pipeline; §14.5 actions; tombstones; FR-050..055 tested; physical-purge workflow proven on synthetic data, ADR-027) |
+| WP10 | Hardening | **Complete for this alpha** (CI on macOS/Ubuntu/Windows, migrations FR-064, private-data scan, regression suite, all §19 threat cases executed, NFR-008 benchmark; behavioral beta gates pending live-model runs) |
 | WP11 | Public release | **v0.1.0-alpha.1 published** (verification defects of alpha corrected post-publish; clean history, tarball artifacts, honest platform labels) |
 
-**Remaining** (owner-gated or future work): live-model B4-vs-B0 behavioral
-evaluation (paid API runs); `assured` adapter surfaces (requires measured
-100% pre-decision use); Windows runtime verification.
+**V2 integration:** WP12 adopts the existing brain source onto this newer
+runtime (ADR-033–035), with FR-070..089 tracked separately. The integration is
+committed in PR #3; synthetic gates are not live adoption evidence. Brain notes
+inside V1 packs, embeddings, new MCP tools and provider runs are out of scope.
+See HANDOFF §1 for the exact verification state.
+
+**Current engineering state:** the 2026-10-09 tracked audit defects have source
+fixes and synthetic regressions in the combined candidate (ADR-036–040).
+Independent review and parent source-bound rechecks are complete, including the
+overlapping-capture correction. A separately authorized local rollout verified
+installed CLI and fresh MCP connections. Publication preparation follows the
+standing commit/push/verified-release policy in ADR-041; exact-head native CI,
+any explicit merge hold and artifact verification remain separate gates.
+Previous WP completion records describe narrower historical gates, not measured
+personal effectiveness.
+
+**Separately owner-gated, after remediation:** live-model B4-vs-B0 behavioral evaluation (paid
+API runs); private-corpus retrieval measurement (owner-run, ADR-023);
+`assured` adapter surfaces (requires measured 100% pre-decision use in live
+harness sessions); non-alpha release approval. See ACCEPTANCE §7a.
 
 ## What each WP owns (scope record)
 

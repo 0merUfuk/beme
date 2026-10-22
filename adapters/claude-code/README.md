@@ -1,8 +1,8 @@
 # Be Me — Claude Code Adapter (Tier 1)
 
 Managed bootstrap for Claude Code: a tiny `CLAUDE.md` pointer block (never a
-copy of canonical content), MCP registration, and optional hooks where the
-installed version supports them.
+copy of canonical content) plus a printed manual MCP registration example.
+Hook configuration is separate from this V1 installer.
 
 ## Install
 
@@ -16,9 +16,21 @@ Effects (idempotent, marker-delimited):
 2. Prints the MCP registration fragment for `~/.claude.json` / project
    `.mcp.json` (user-owned; the adapter does not write harness config
    outside its managed block).
-3. Where the installed Claude Code version supports hooks, prints a
-   `UserPromptSubmit` hook snippet (verified against the installed version —
-   hook availability is version-sensitive; see `docs/INTEGRATIONS.md`).
+
+The V1 installer **does not print prompt hooks** or configure
+`UserPromptSubmit`. Any such hook is an operator-managed, version-sensitive
+integration, not an installer effect. See
+[INTEGRATIONS.md](../../docs/INTEGRATIONS.md#harness-adapters) and the separate
+brain-hook commands below.
+
+## Optional brain hooks
+
+`beme brain hooks` prints a fragment for SessionStart, PreCompact and
+SessionEnd. `beme brain install-hooks --settings FILE --dry-run` previews its
+separate settings merge; only an explicit invocation without `--dry-run`
+changes settings. V1 adapter installation does not install these hooks.
+See [`docs/BRAIN.md`](../../docs/BRAIN.md). No installed-harness or model-use
+assurance is claimed by this source integration.
 
 ## Uninstall
 
