@@ -1606,6 +1606,33 @@ pipeline; published attestations stay valid.
 **Reopen:** attestation service outages block releases repeatedly, or a Go-free
 install path is requested by external users (then add the tap per (3)).
 
+## ADR-046 — Personal rule set: five always-on rules, each with a violation check
+
+**Status:** accepted (owner, 2026-10-29). **Class:** YELLOW.
+**Context:** transcript counts show briefings reach Claude Code sessions (11/11)
+but resolver calls are 0/15 and explicit citation is at most 2/135 items; the
+owner reports no perceived behaviour change. Delivery is not use.
+**Decision:** (1) The first personal-use release targets five always-on rules
+(`evals/personal-rules/RULES.md`): evidence before "done"; one recommendation not
+a menu; short and direct; plain failure reporting; act without asking except
+purchases, public-platform posts and dangerous deletions (database, instance).
+(2) A rule enters the always-on block only if it has a transcript- or
+diff-based violation check and applies to nearly every task; task-specific rules
+stay scoped Be Me records. (3) `evals/personal-rules/rule_check.py` is a
+read-only, stdlib detector that emits rule IDs and counts, never message text.
+**Evidence:** `python3 -m unittest test_rule_check` (17 tests, violating case and
+compliant control per rule). A smoke run on 87 recent turns flagged 1 R1, 1 R4,
+1 R5-over; spot checks first exposed two false positives (dangerous-string
+inside a Write payload, conversational "done"), both fixed with regressions.
+**Alternatives rejected:** a long rule list (adherence dilution, no attribution);
+relying on optional MCP pulls (0 resolver calls observed); judge-only grading.
+**Consequences:** checks are lower-bound detectors; absence of a flag is not
+compliance. R2 is heuristic. No claim of behaviour change until a paired
+with/without-block comparison is run and independently reviewed.
+**Reversibility:** delete `evals/personal-rules/`; no runtime or schema change.
+**Reopen:** the owner reports a failure no current rule covers; or detector
+precision on a hand-labelled sample is below an agreed threshold.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |
