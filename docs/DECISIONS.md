@@ -1606,13 +1606,13 @@ pipeline; published attestations stay valid.
 **Reopen:** attestation service outages block releases repeatedly, or a Go-free
 install path is requested by external users (then add the tap per (3)).
 
-## ADR-046 — Personal rule set: five always-on rules, each with a violation check
+## ADR-046 — Personal rule set: six always-on rules, each with a violation check
 
 **Status:** accepted (owner, 2026-10-29). **Class:** YELLOW.
 **Context:** transcript counts show briefings reach Claude Code sessions (11/11)
 but resolver calls are 0/15 and explicit citation is at most 2/135 items; the
 owner reports no perceived behaviour change. Delivery is not use.
-**Decision:** (1) The first personal-use release targets five always-on rules
+**Decision:** (1) The first personal-use release targets six always-on rules
 (`evals/personal-rules/RULES.md`): evidence before "done"; one recommendation not
 a menu; short and direct; plain failure reporting; act without asking except
 purchases, public-platform posts and dangerous deletions (database, instance).
@@ -1624,6 +1624,14 @@ read-only, stdlib detector that emits rule IDs and counts, never message text.
 compliant control per rule). A smoke run on 87 recent turns flagged 1 R1, 1 R4,
 1 R5-over; spot checks first exposed two false positives (dangerous-string
 inside a Write payload, conversational "done"), both fixed with regressions.
+**Amendment (2026-10-30):** rule 6 added at the owner's request (review documents
+about 60 lines). Propagation audit: the style line loads in 6/6 Claude Code and
+15/15 Codex sessions, but the five rules were in no loaded file. Permission
+questions came from the Desktop harness (`wrap_up` carried a question in 32 of
+44 calls; 11 about commit/push/PR) and its default "commit or push only when
+the user asks"; a durable standing authorization in the global instruction
+files is the supported override. The rule block now lives in both global files,
+outside the managed Be Me blocks (backups in the private deployment).
 **Alternatives rejected:** a long rule list (adherence dilution, no attribution);
 relying on optional MCP pulls (0 resolver calls observed); judge-only grading.
 **Consequences:** checks are lower-bound detectors; absence of a flag is not

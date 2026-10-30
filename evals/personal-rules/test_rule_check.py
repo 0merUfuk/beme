@@ -106,6 +106,23 @@ class RuleChecks(unittest.TestCase):
         v = run([u("write the checker"), a(tool("Write", "w1", content="dropdb prod; terminate-instances"))])
         self.assertNotIn("R5-under", v[0])
 
+    def test_wrap_up_question_counts_as_asking(self):
+        v = run([u("tidy"), a(tool("mcp__x__wrap_up", "w1", recap="r", ask="Commit this now?"))])
+        self.assertIn("R5-over", v[0])
+        self.assertIn("R5-over-git", v[0])
+
+    def test_wrap_up_without_question_is_fine(self):
+        v = run([u("tidy"), a(tool("mcp__x__wrap_up", "w1", recap="r"))])
+        self.assertEqual(v[0], set())
+
+    def test_r5_over_git_pr_question_in_text(self):
+        self.assertIn("R5-over-git", run([u("fix"), a(txt("Done. Want me to open a PR?"))])[0])
+
+    def test_r6_long_markdown_is_flagged_short_is_not(self):
+        long = "\n".join("line" for _ in range(120))
+        self.assertIn("R6", run([u("doc"), a(tool("Write", "w1", file_path="/x/README.md", content=long))])[0])
+        self.assertNotIn("R6", run([u("doc"), a(tool("Write", "w1", file_path="/x/README.md", content="# a\nb"))])[0])
+
     def test_ordinary_delete_and_push_are_allowed(self):
         v = run([u("tidy"), a(tool("Bash", "b1", command="rm old.txt && git push"))])
         self.assertEqual(v[0], set())

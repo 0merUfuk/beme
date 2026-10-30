@@ -11,10 +11,10 @@ for a different release commit.
 **Rev 28 — 2026-10-29 (personal-use effectiveness, branch
 `claude/be-me-personal-usage-1ee8aa`, local):** audit found delivery works but no
 behaviour effect is shown (ADR-046). Added `evals/personal-rules/` (five-rule block,
-transcript violation checker, 17 synthetic tests). Known, not fixed: the personal
-deployment's registered source root still points at a path removed by the
-`repos`→`Repositories` rename (`beme doctor` degraded, projection stale; owner
-approval needed before editing the descriptor); retrieval relevance on a storage
+transcript violation checker, 17 synthetic tests). Source-root note: the registered root pointed at a path removed by the
+`repos`→`Repositories` rename; a compatibility symlink was recreated on
+2026-10-29 and `beme doctor` is healthy again (projection not rebuilt). Known,
+not fixed: retrieval relevance on a storage
 query returned unrelated guidance. Next: owner supplies real failure cases (as
 synthetic examples), then a paired with/without-block comparison on synthetic
 tasks. Nothing pushed or published; the alpha.2 release is still a draft.
