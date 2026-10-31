@@ -8,6 +8,8 @@ Canonical source/evidence status is in §1. Live merge, CI and publication state
 must be read from the linked GitHub objects; historical results are not evidence
 for a different release commit.
 
+**Rev 29 — 2026-11-01:** added `beme setup` (ADR-047, FR-094, `docs/SETUP.md`): guided, reversible personal-rules setup. Verified by isolated-HOME binary tests only; not run against any real home. Not done: Go port of the rule checker, Cursor/Hermes writers, Homebrew tap, alpha.2 publication.
+
 **Rev 28 — 2026-10-29 (personal-use effectiveness, branch
 `claude/be-me-personal-usage-1ee8aa`, local):** audit found delivery works but no
 behaviour effect is shown (ADR-046). Added `evals/personal-rules/` (five-rule block,

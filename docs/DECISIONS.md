@@ -1641,6 +1641,27 @@ with/without-block comparison is run and independently reviewed.
 **Reopen:** the owner reports a failure no current rule covers; or detector
 precision on a hand-labelled sample is below an agreed threshold.
 
+## ADR-047 — Guided setup (`beme setup`) renders rules from one answers file
+
+**Status:** accepted (owner delegation, 2026-11-01). **Class:** YELLOW.
+**Context:** a new user had to hand-write source YAML and had no way to author
+personal rules; the audit showed only text in loaded instruction files reached
+every session (ADR-046).
+**Decision:** `beme setup` interviews (terminal, or `--print-questions` +
+`--answers` for any agent), validates closed vocabularies, and renders both the
+always-on managed block and Be Me entries from `answers.json`. Dry run by
+default; backups; writes only inside `beme-rules` markers; `--refresh` and
+`--remove` are byte-exact; harness MCP configuration is printed, never edited.
+**Alternatives rejected:** editing harness MCP config (user-owned, ADR-013);
+entries only (agents rarely call the resolver); a Go port of the checker now
+(deferred); a web or TUI wizard (no terminal-free requirement yet).
+**Consequences:** rules are advisory text; benefit stays unmeasured. Custom rule
+text is the user's own instruction, so length, line and marker checks apply.
+**Reversibility:** `beme setup --remove --apply`; deleting `cmd/beme/setup.go`
+and `internal/setup` removes the feature.
+**Reopen:** users need non-terminal setup, or a harness offers a supported
+install API.
+
 ## Open decisions (tracked, none blocking contracts work)
 
 | Question | Default action | Escalate when |
