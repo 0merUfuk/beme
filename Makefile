@@ -1,4 +1,4 @@
-.PHONY: help validate validate-private test build vet fmt scan bench check release-check brain-live
+.PHONY: help validate validate-private test build vet fmt scan bench bench-check check release-check brain-live
 
 help:
 	@echo "validate          — public contract fixtures vs schemas (repo-local only, CI-safe)"
@@ -6,6 +6,7 @@ help:
 	@echo "test / build / vet — Go toolchain gates"
 	@echo "scan              — private-data leakage scan (public patterns + local terms)"
 	@echo "bench             — NFR-008 benchmark on the public seed corpus (writes evals/benchmarks/seed-baseline.json)"
+	@echo "bench-check       — regression budget: fails when warm resolve p95 exceeds 250ms at any scale (writes nothing)"
 	@echo "check             — public gate: validate + build + vet + test + scan + release-check"
 	@echo "release-check     — synthetic release, smoke and workflow regression tests (no publication)"
 	@echo "brain-live        — owner-run real harness/model calls (paid/quota; never part of check)"
@@ -40,6 +41,12 @@ scan:
 # corpus. Not part of `check`: timings are machine-dependent evidence.
 bench:
 	go run ./cmd/beme-bench --seed testdata/synthetic/records.json --out evals/benchmarks/seed-baseline.json
+
+# Regression budget: ~4x headroom over the 2026-11-01 baseline (56ms p95 at
+# 200x). Stricter than the 1s NFR-008 target so a real slowdown is caught.
+# Machine-dependent, so not part of `check`; run it before a release.
+bench-check:
+	go run ./cmd/beme-bench --seed testdata/synthetic/records.json --target 250ms --enforce --out -  >/dev/null
 
 release-check: export PYTHONDONTWRITEBYTECODE = 1
 release-check:

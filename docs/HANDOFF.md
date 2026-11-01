@@ -8,6 +8,8 @@ Canonical source/evidence status is in §1. Live merge, CI and publication state
 must be read from the linked GitHub objects; historical results are not evidence
 for a different release commit.
 
+**Rev 30 — 2026-11-02:** performance re-measured and gated. Baseline refreshed (200×: resolve p95 56 ms, build p50 103 ms; resolve is slower than Sept because `2765ea8` ranks by relevance and returns ~23 items, not ~100). Added `make bench-check` (fails if resolve p95 > 250 ms at any scale; negative control at 1 ms exits 1). Not covered: MCP startup, brain hook cost, real corpus, relevance quality.
+
 **Rev 29 — 2026-11-01:** added `beme setup` (ADR-047, FR-094, `docs/SETUP.md`): guided, reversible personal-rules setup. Verified by isolated-HOME binary tests only; not run against any real home. Not done: Go port of the rule checker, Cursor/Hermes writers, Homebrew tap, alpha.2 publication.
 
 **Rev 28 — 2026-10-29 (personal-use effectiveness, branch
