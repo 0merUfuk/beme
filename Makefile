@@ -44,7 +44,7 @@ bench:
 
 # Regression budget: ~4x headroom over the 2026-11-01 baseline (56ms p95 at
 # 200x). Stricter than the 1s NFR-008 target so a real slowdown is caught.
-# Machine-dependent, so not part of `check`; run it before a release.
+# Machine-dependent, so not part of `check`; CI runs it as its own step.
 bench-check:
 	go run ./cmd/beme-bench --seed testdata/synthetic/records.json --target 250ms --enforce --out -  >/dev/null
 

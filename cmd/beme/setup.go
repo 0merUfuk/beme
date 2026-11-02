@@ -67,8 +67,7 @@ func setupCmd(args []string) {
 		_ = enc.Encode(setup.Questions())
 		return
 	}
-	cfg, cfgDir, err := app.ResolveConfig(cfgFlag)
-	_ = cfg
+	_, cfgDir, err := app.ResolveConfig(cfgFlag)
 	if err != nil {
 		fatalf(1, "error: %v", err)
 	}
@@ -170,15 +169,26 @@ func setupCmd(args []string) {
 		}
 		fmt.Printf("installed rules block into %s\n", t)
 	}
+	failed := false
 	if !noBuild {
-		self, _ := os.Executable()
+		self, eerr := os.Executable()
+		if eerr != nil {
+			fatalf(1, "error: cannot locate the beme binary to run build and doctor: %v", eerr)
+		}
 		for _, sub := range [][]string{{"build", "--profile", "personal"}, {"doctor"}} {
-			cmdArgs := append(sub, cfgArgs(cfgFlag)...)
-			out, _ := exec.Command(self, cmdArgs...).CombinedOutput()
+			cmdArgs := append(append([]string{}, sub...), cfgArgs(cfgFlag)...)
+			out, rerr := exec.Command(self, cmdArgs...).CombinedOutput()
 			fmt.Printf("\n$ beme %s\n%s", strings.Join(sub, " "), strings.TrimRight(string(out), "\n")+"\n")
+			if rerr != nil {
+				fmt.Printf("FAILED: beme %s: %v\n", strings.Join(sub, " "), rerr)
+				failed = true
+			}
 		}
 	}
 	printNextSteps(cfgFlag, harnesses)
+	if failed {
+		fatalf(1, "error: rules were written, but build or doctor failed (output above)")
+	}
 }
 
 func cfgArgs(cfgFlag string) []string {
@@ -195,14 +205,13 @@ func fatalf(code int, format string, a ...any) {
 
 func pickHarnesses(csv string) ([]string, error) {
 	if csv == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
 		var out []string
-		for _, h := range []string{"claude-code", "codex"} {
-			dir := map[string]string{"claude-code": ".claude", "codex": ".codex"}[h]
-			if st, err := os.Stat(filepath.Join(home, dir)); err == nil && st.IsDir() {
+		for _, h := range setup.KnownHarnesses {
+			t, terr := targetFile(h)
+			if terr != nil {
+				continue // no managed instruction file for this harness
+			}
+			if st, err := os.Stat(filepath.Dir(t)); err == nil && st.IsDir() {
 				out = append(out, h)
 			}
 		}
@@ -228,25 +237,54 @@ func pickHarnesses(csv string) ([]string, error) {
 }
 
 // applyRules writes the answers file, the managed RULE-*.md entries and the
-// source descriptor. Only files this command owns are replaced.
+// source descriptor. Only files this command owns are replaced. New content is
+// staged beside its destination and renamed into place, and stale entries are
+// removed only after every new one is staged, so a failure leaves the previous
+// rules intact.
 func applyRules(cfgDir, rulesDir string, a setup.Answers, rules []setup.Rule) error {
 	entries := filepath.Join(rulesDir, "entries")
 	if err := os.MkdirAll(entries, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(rulesDir, "answers.json"), setup.Marshal(a), 0o600); err != nil {
+	type staged struct{ tmp, dst string }
+	var plan []staged
+	cleanup := func() {
+		for _, s := range plan {
+			_ = os.Remove(s.tmp)
+		}
+	}
+	stage := func(dst string, data []byte) error {
+		tmp := dst + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err != nil {
+			return err
+		}
+		plan = append(plan, staged{tmp, dst})
+		return nil
+	}
+	keep := map[string]bool{}
+	for _, r := range rules {
+		keep[r.ID+".md"] = true
+		if err := stage(filepath.Join(entries, r.ID+".md"), []byte(setup.Entry(r))); err != nil {
+			cleanup()
+			return err
+		}
+	}
+	if err := stage(filepath.Join(rulesDir, "answers.json"), setup.Marshal(a)); err != nil {
+		cleanup()
 		return err
 	}
 	old, _ := os.ReadDir(entries)
 	for _, e := range old {
-		if !e.IsDir() && managedRuleFile.MatchString(e.Name()) {
+		if !e.IsDir() && managedRuleFile.MatchString(e.Name()) && !keep[e.Name()] {
 			if err := os.Remove(filepath.Join(entries, e.Name())); err != nil {
+				cleanup()
 				return err
 			}
 		}
 	}
-	for _, r := range rules {
-		if err := os.WriteFile(filepath.Join(entries, r.ID+".md"), []byte(setup.Entry(r)), 0o600); err != nil {
+	for _, s := range plan {
+		if err := os.Rename(s.tmp, s.dst); err != nil {
+			cleanup()
 			return err
 		}
 	}
@@ -255,9 +293,16 @@ func applyRules(cfgDir, rulesDir string, a setup.Answers, rules []setup.Rule) er
 		return err
 	}
 	desc := filepath.Join(srcDir, "personal-rules.yaml")
-	if _, err := os.Stat(desc); os.IsNotExist(err) {
-		root := filepath.ToSlash(rulesDir)
-		return os.WriteFile(desc, []byte(fmt.Sprintf(rulesSourceDescriptor, root)), 0o600)
+	want := fmt.Sprintf(rulesSourceDescriptor, strconv.Quote(filepath.ToSlash(rulesDir)))
+	existing, err := os.ReadFile(desc)
+	switch {
+	case os.IsNotExist(err):
+		return os.WriteFile(desc, []byte(want), 0o600)
+	case err != nil:
+		return err
+	case string(existing) != want:
+		fmt.Printf("note: %s already exists and was not changed; make sure its root is %s so the entries are indexed\n",
+			desc, filepath.ToSlash(rulesDir))
 	}
 	return nil
 }
@@ -286,13 +331,13 @@ func printNextSteps(cfgFlag string, harnesses []string) {
 	self, _ := os.Executable()
 	cfg := ""
 	if cfgFlag != "" {
-		cfg = " --config " + cfgFlag
+		cfg = " --config " + shellQuote(cfgFlag)
 	}
 	fmt.Println("\nnext steps (the wizard never edits harness MCP configuration):")
 	for _, h := range harnesses {
 		switch h {
 		case "claude-code":
-			fmt.Printf("  claude mcp add beme -- %s serve --projection personal --capability cap_personalclaude --transport stdio%s\n", self, cfg)
+			fmt.Printf("  claude mcp add beme -- %s serve --projection personal --capability cap_personalclaude --transport stdio%s\n", shellQuote(self), cfg)
 		case "codex":
 			fmt.Printf("  add to ~/.codex/config.toml:\n    [mcp_servers.beme]\n    command = %q\n    args = [\"serve\", \"--projection\", \"personal\", \"--capability\", \"cap_personalcodex\", \"--transport\", \"stdio\"%s]\n", self, tomlCfg(cfgFlag))
 		}
@@ -376,20 +421,27 @@ func interview(r io.Reader, w io.Writer) (setup.Answers, error) {
 		return a, err
 	}
 	if a.Autonomy == "act" {
-		fmt.Fprintf(w, "Always confirm first before (comma list of purchase,public-post,dangerous-deletion; 'none' for nothing) [%s] ", strings.Join(a.Gates, ","))
-		s, ok := read()
-		if !ok {
-			return a, io.ErrUnexpectedEOF
-		}
-		switch {
-		case s == "":
-		case strings.EqualFold(s, "none"):
-			a.Gates = nil
-		default:
-			a.Gates = nil
-			for _, g := range strings.Split(s, ",") {
-				a.Gates = append(a.Gates, strings.TrimSpace(g))
+		for {
+			fmt.Fprintf(w, "Always confirm first before (comma list of purchase,public-post,dangerous-deletion; 'none' for nothing) [%s] ", strings.Join(a.Gates, ","))
+			s, ok := read()
+			if !ok {
+				return a, io.ErrUnexpectedEOF
 			}
+			if s == "" {
+				break
+			}
+			var gates []string
+			if !strings.EqualFold(s, "none") {
+				for _, g := range strings.Split(s, ",") {
+					gates = append(gates, strings.TrimSpace(g))
+				}
+			}
+			if verr := setup.ValidateGates(gates); verr != nil {
+				fmt.Fprintf(w, "  %v\n", verr)
+				continue
+			}
+			a.Gates = gates
+			break
 		}
 	} else {
 		a.Gates = nil
@@ -404,17 +456,26 @@ func interview(r io.Reader, w io.Writer) (setup.Answers, error) {
 			break
 		}
 		n, perr := strconv.Atoi(s)
-		if perr == nil {
-			a.DocMaxLines = n
-			break
+		if perr != nil {
+			fmt.Fprintln(w, "  enter a number")
+			continue
 		}
-		fmt.Fprintln(w, "  enter a number")
+		if verr := setup.ValidateDocLines(n); verr != nil {
+			fmt.Fprintf(w, "  %v\n", verr)
+			continue
+		}
+		a.DocMaxLines = n
+		break
 	}
 	fmt.Fprintf(w, "Up to %d extra rules of your own, one per line, blank line to finish:\n", setup.MaxCustom)
 	for len(a.Custom) < setup.MaxCustom {
 		s, ok := read()
 		if !ok || s == "" {
 			break
+		}
+		if verr := setup.ValidateCustom(s); verr != nil {
+			fmt.Fprintf(w, "  %v\n", verr)
+			continue
 		}
 		a.Custom = append(a.Custom, s)
 	}

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/0merUfuk/beme/internal/setup"
 	"testing"
 )
 
@@ -250,8 +252,9 @@ func TestInterviewAcceptsDefaultsAndOverrides(t *testing.T) {
 	if _, err = interview(strings.NewReader("y\n"), &w); err == nil {
 		t.Fatal("truncated input must be an error, not silent defaults")
 	}
-	if _, err = interview(strings.NewReader("\n\n\n\n\n\n\n<!-- x\n\n"), &w); err == nil {
-		t.Fatal("a forged-marker custom rule must be rejected")
+	a, err = interview(strings.NewReader("\n\n\n\n\n\n\n<!-- x\n\n"), &w)
+	if err != nil || len(a.Custom) != 0 {
+		t.Fatalf("a forged-marker custom rule must be rejected at the prompt, not stored: %+v err=%v", a, err)
 	}
 }
 
@@ -265,5 +268,47 @@ func TestSetupDoesNotTouchRealHomeOnWindowsPathsEither(t *testing.T) {
 	p, err := targetFile("claude-code")
 	if err != nil || !strings.HasPrefix(p, os.Getenv("HOME")) {
 		t.Fatalf("targetFile ignores HOME: %s %v", p, err)
+	}
+}
+
+func TestInterviewReprompts(t *testing.T) {
+	// y, y, short, y, act, bad gate then none, 5 (out of range) then 40, bad custom then good, end
+	in := "\n\n\n\n\npurchse\nnone\n5\n40\n<!-- x -->\nmy rule\n\n"
+	var out bytes.Buffer
+	a, err := interview(strings.NewReader(in), &out)
+	if err != nil {
+		t.Fatalf("interview failed instead of re-prompting: %v\n%s", err, out.String())
+	}
+	if len(a.Gates) != 0 || a.DocMaxLines != 40 || len(a.Custom) != 1 || a.Custom[0] != "my rule" {
+		t.Fatalf("unexpected answers: %+v", a)
+	}
+}
+
+func TestApplyRulesKeepsOldEntriesWhenStagingFails(t *testing.T) {
+	cfg := t.TempDir()
+	rules := filepath.Join(cfg, "rules")
+	a := setup.Defaults()
+	if err := applyRules(cfg, rules, a, setup.Rules(a)); err != nil {
+		t.Fatal(err)
+	}
+	entries := filepath.Join(rules, "entries")
+	// A directory where the staging file must go makes staging fail.
+	if err := os.Mkdir(filepath.Join(entries, "RULE-002.md.tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b := setup.Defaults()
+	b.Style = "balanced"
+	if err := applyRules(cfg, rules, b, setup.Rules(b)); err == nil {
+		t.Fatal("expected a staging failure")
+	}
+	list, _ := os.ReadDir(entries)
+	n := 0
+	for _, e := range list {
+		if managedRuleFile.MatchString(e.Name()) {
+			n++
+		}
+	}
+	if n != len(setup.Rules(a)) {
+		t.Fatalf("previous entries were lost: %d left", n)
 	}
 }

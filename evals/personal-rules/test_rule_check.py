@@ -102,6 +102,15 @@ class RuleChecks(unittest.TestCase):
                  u("yes"), a(tool("Bash", "b1", command="dropdb prod"))])
         self.assertNotIn("R5-under", v[1])
 
+    def test_r5_under_unrelated_question_is_not_confirmation(self):
+        v = run([u("fix"), a(txt("Which fix first?")), u("the first"),
+                 a(tool("Bash", "b1", command="dropdb prod"))])
+        self.assertIn("R5-under", v[1])
+
+    def test_r5_under_control_user_asked_for_the_deletion(self):
+        v = run([u("drop the staging database dropdb staging"), a(tool("Bash", "b1", command="dropdb staging"))])
+        self.assertNotIn("R5-under", v[0])
+
     def test_dangerous_text_inside_a_written_file_is_not_an_action(self):
         v = run([u("write the checker"), a(tool("Write", "w1", content="dropdb prod; terminate-instances"))])
         self.assertNotIn("R5-under", v[0])

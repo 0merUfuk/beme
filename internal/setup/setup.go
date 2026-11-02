@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"unicode"
@@ -66,14 +67,16 @@ func Defaults() Answers {
 // Parse decodes and validates an answers document. Unknown keys are rejected
 // so a typo cannot silently drop a rule.
 func Parse(data []byte) (Answers, error) {
+	// Omitted keys keep their recommended defaults, including ask_before: a
+	// missing key must never silently remove the confirmation gates.
 	a := Defaults()
-	a.Gates = nil
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&a); err != nil {
 		return Answers{}, fmt.Errorf("answers: %w", err)
 	}
-	if dec.More() {
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
 		return Answers{}, fmt.Errorf("answers: trailing data after the JSON document")
 	}
 	if err := a.Validate(); err != nil {
@@ -95,18 +98,11 @@ func (a *Answers) Validate() error {
 	if a.Autonomy != "act" && a.Autonomy != "ask" {
 		return fmt.Errorf("answers: autonomy must be act or ask")
 	}
-	seen := map[string]bool{}
-	for _, g := range a.Gates {
-		if _, ok := gateText[g]; !ok {
-			return fmt.Errorf("answers: unknown gate %q (allowed: %s)", g, strings.Join(allGates, ", "))
-		}
-		if seen[g] {
-			return fmt.Errorf("answers: duplicate gate %q", g)
-		}
-		seen[g] = true
+	if err := ValidateGates(a.Gates); err != nil {
+		return err
 	}
-	if a.DocMaxLines != 0 && (a.DocMaxLines < MinDocLines || a.DocMaxLines > MaxDocLines) {
-		return fmt.Errorf("answers: review_doc_max_lines must be 0 or %d..%d", MinDocLines, MaxDocLines)
+	if err := ValidateDocLines(a.DocMaxLines); err != nil {
+		return err
 	}
 	if len(a.Custom) > MaxCustom {
 		return fmt.Errorf("answers: at most %d custom rules", MaxCustom)
@@ -118,6 +114,32 @@ func (a *Answers) Validate() error {
 	}
 	return nil
 }
+
+// ValidateGates checks the confirmation-gate list against the closed vocabulary.
+func ValidateGates(gates []string) error {
+	seen := map[string]bool{}
+	for _, g := range gates {
+		if _, ok := gateText[g]; !ok {
+			return fmt.Errorf("answers: unknown gate %q (allowed: %s)", g, strings.Join(allGates, ", "))
+		}
+		if seen[g] {
+			return fmt.Errorf("answers: duplicate gate %q", g)
+		}
+		seen[g] = true
+	}
+	return nil
+}
+
+// ValidateDocLines checks the review-document length limit (0 = no limit).
+func ValidateDocLines(n int) error {
+	if n != 0 && (n < MinDocLines || n > MaxDocLines) {
+		return fmt.Errorf("answers: review_doc_max_lines must be 0 or %d..%d", MinDocLines, MaxDocLines)
+	}
+	return nil
+}
+
+// ValidateCustom checks one custom rule line.
+func ValidateCustom(s string) error { return validCustom(s) }
 
 func validCustom(s string) error {
 	t := strings.TrimSpace(s)

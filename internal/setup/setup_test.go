@@ -131,3 +131,26 @@ func TestQuestionsCoverEveryAnswerKey(t *testing.T) {
 		}
 	}
 }
+
+func TestOmittedAskBeforeKeepsRecommendedGates(t *testing.T) {
+	a, err := Parse([]byte(`{"schema_version":1,"style":"short","autonomy":"act"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Gates) != 3 || !strings.Contains(Block(a), "Ask first only before") {
+		t.Fatalf("omitted ask_before must keep the gates, got %v", a.Gates)
+	}
+	b, err := Parse([]byte(`{"schema_version":1,"style":"short","autonomy":"act","ask_before":[]}`))
+	if err != nil || len(b.Gates) != 0 {
+		t.Fatalf("explicit empty list means no gates: %v %v", b.Gates, err)
+	}
+}
+
+func TestTrailingBraceRejected(t *testing.T) {
+	for _, tail := range []string{"}", "]", " {}", "x"} {
+		doc := `{"schema_version":1,"style":"short","autonomy":"act"}` + tail
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("trailing %q was accepted", tail)
+		}
+	}
+}

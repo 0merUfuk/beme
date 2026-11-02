@@ -287,8 +287,8 @@ version. Timings are machine-dependent evidence, so `bench` is not part of
 
 `make bench-check` runs the same benchmark with `--target 250ms --enforce`
 and writes nothing: it exits 1 when warm resolve p95 exceeds 250 ms at any
-scale (about 4× headroom over the 2026-11-01 baseline). Run it before a
-release; it is not in `make check` because timings are machine-dependent.
+scale (about 4× headroom over the 2026-11-01 baseline). CI runs it as its own step; it is not in
+`make check` because timings are machine-dependent.
 The baseline file is refreshed with `make bench` after a deliberate resolver
 change (relevance ranking in `2765ea8` made resolve slower but selective).
 
