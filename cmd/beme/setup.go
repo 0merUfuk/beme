@@ -127,6 +127,9 @@ func setupCmd(args []string) {
 		}
 	}
 
+	if len(harnesses) == 0 {
+		fmt.Fprintln(os.Stderr, "warning: no harness instruction file selected (no ~/.claude or ~/.codex found); only the Be Me entries will be written. Pass --harness claude-code,codex,cursor,hermes to choose.")
+	}
 	block := setup.Block(a)
 	rules := setup.Rules(a)
 	fmt.Printf("rules (%d):\n%s\n\n", len(rules), block)

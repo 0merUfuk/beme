@@ -312,3 +312,12 @@ func TestApplyRulesKeepsOldEntriesWhenStagingFails(t *testing.T) {
 		t.Fatalf("previous entries were lost: %d left", n)
 	}
 }
+
+func TestSetupWarnsWhenNoHarnessDetected(t *testing.T) {
+	bin := buildBemeBinary(t, "beme")
+	home := t.TempDir() // no .claude or .codex inside
+	_, serr, code := runSetup(t, bin, home, "", "setup", "--defaults", "--config", filepath.Join(home, "cfg"))
+	if code != 0 || !strings.Contains(serr, "no harness instruction file selected") {
+		t.Fatalf("expected a no-harness warning, code=%d stderr=%s", code, serr)
+	}
+}
