@@ -8,6 +8,23 @@ Canonical source/evidence status is in §1. Live merge, CI and publication state
 must be read from the linked GitHub objects; historical results are not evidence
 for a different release commit.
 
+**Rev 31 — 2026-11-02:** PR 5 review fixes: omitted `ask_before` keeps the recommended gates; trailing JSON rejected; build/doctor failures now fail setup; per-question re-prompts; atomic entry replacement; quoted next-step commands; existing source descriptor noted not silently ignored; `bench-check` runs in CI; checker R5-under no longer treats unrelated questions as confirmation.
+
+**Rev 30 — 2026-11-02:** performance re-measured and gated. Baseline refreshed (200×: resolve p95 56 ms, build p50 103 ms; resolve is slower than Sept because `2765ea8` ranks by relevance and returns ~23 items, not ~100). Added `make bench-check` (fails if resolve p95 > 250 ms at any scale; negative control at 1 ms exits 1). Not covered: MCP startup, brain hook cost, real corpus, relevance quality.
+
+**Rev 29 — 2026-11-01:** added `beme setup` (ADR-047, FR-094, `docs/SETUP.md`): guided, reversible personal-rules setup. Verified by isolated-HOME binary tests only; not run against any real home. Not done: Go port of the rule checker, Cursor/Hermes writers, Homebrew tap, alpha.2 publication.
+
+**Rev 28 — 2026-10-29 (personal-use effectiveness, branch
+`claude/be-me-personal-usage-1ee8aa`, local):** audit found delivery works but no
+behaviour effect is shown (ADR-046). Added `evals/personal-rules/` (five-rule block,
+transcript violation checker, 17 synthetic tests). Source-root note: the registered root pointed at a path removed by the
+`repos`→`Repositories` rename; a compatibility symlink was recreated on
+2026-10-29 and `beme doctor` is healthy again (projection not rebuilt). Known,
+not fixed: retrieval relevance on a storage
+query returned unrelated guidance. Next: owner supplies real failure cases (as
+synthetic examples), then a paired with/without-block comparison on synthetic
+tasks. Nothing pushed or published; the alpha.2 release is still a draft.
+
 **Rev 27 — 2026-10-21 (release preparation for `v0.1.0-alpha.2`):** the owner
 requested the release, which lifts the merge hold. Added: `beme brain status`
 reports live counts as unknown instead of zeros when its bounded scan is

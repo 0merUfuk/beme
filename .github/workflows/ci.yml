@@ -57,6 +57,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Performance budget (NFR-008 regression gate)
+        run: make bench-check
       - name: Threat corpus runner (shared registry, synthetic data)
         run: go run ./cmd/beme-threat-corpus --repo .
 

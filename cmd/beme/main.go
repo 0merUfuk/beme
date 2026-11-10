@@ -103,13 +103,13 @@ performed by writing a descriptor under <config>/sources/ yourself.
 See "Registering a source" in docs/OPERATIONS.md.
 `, cmd)
 		os.Exit(2)
-	case "adapter", "candidate", "brain":
+	case "adapter", "candidate", "brain", "setup":
 		// handled directly below (need raw positional args)
 	default:
 		usage()
 		os.Exit(2)
 	}
-	if cmd != "adapter" && cmd != "brain" {
+	if cmd != "adapter" && cmd != "brain" && cmd != "setup" {
 		if err := fs.Parse(args[1:]); err != nil {
 			os.Exit(2)
 		}
@@ -245,6 +245,8 @@ See "Registering a source" in docs/OPERATIONS.md.
 		adapterCmd(args[1:])
 	case "brain":
 		brainCmd(args[1:])
+	case "setup":
+		setupCmd(args[1:])
 	case "explain":
 		if task == "" {
 			fmt.Fprintln(os.Stderr, "error: --trace required")
@@ -373,6 +375,8 @@ Usage:
   beme candidate list|inspect|review [--config DIR] [--json]
         review queue for quarantined observations (never canonical)
   beme adapter install|remove|verify codex|claude-code
+  beme setup [--defaults|--answers FILE] [--harness LIST] [--apply] [--refresh|--remove]
+        guided personal-rules setup; dry run unless --apply; --print-questions for agents
   beme serve --projection P --capability NAME --transport stdio
   beme mcp      (alias of serve)
   beme brain ...  second-brain work memory (init|project|capture|doctor|session-start|briefing|list|show|done|archive|hooks|install-hooks|adapter|status|backup|restore|freeze)

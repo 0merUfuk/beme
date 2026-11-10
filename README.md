@@ -126,6 +126,12 @@ Install options, in order of preference. No Homebrew tap is provided yet.
    export PATH="$(go env GOPATH)/bin:$PATH"   # or set GOBIN to a directory on PATH
    ```
 
+Then set up your rules with the guided wizard ([`docs/SETUP.md`](docs/SETUP.md)):
+
+```sh
+beme setup            # dry run first; add --apply to write
+```
+
 Then run the health check:
 
 ```sh
