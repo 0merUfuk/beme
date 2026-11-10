@@ -8,6 +8,8 @@ Canonical source/evidence status is in §1. Live merge, CI and publication state
 must be read from the linked GitHub objects; historical results are not evidence
 for a different release commit.
 
+**Rev 32 — 2026-11-10:** PR 5 merged (`6b8a4fb`); installed binary `src-6b8a4fb`. `beme setup --apply` run on the real personal config (`beme-personal`): hand-maintained rules blocks replaced by managed `beme-rules` blocks in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` (backups in `backups/`), 7 rules, personal build 15 records from 2 sources. Setup now warns when no harness file is found. Note: running setup without `--config` wrote to the default `beme` config dir, not `beme-personal`.
+
 **Rev 31 — 2026-11-02:** PR 5 review fixes: omitted `ask_before` keeps the recommended gates; trailing JSON rejected; build/doctor failures now fail setup; per-question re-prompts; atomic entry replacement; quoted next-step commands; existing source descriptor noted not silently ignored; `bench-check` runs in CI; checker R5-under no longer treats unrelated questions as confirmation.
 
 **Rev 30 — 2026-11-02:** performance re-measured and gated. Baseline refreshed (200×: resolve p95 56 ms, build p50 103 ms; resolve is slower than Sept because `2765ea8` ranks by relevance and returns ~23 items, not ~100). Added `make bench-check` (fails if resolve p95 > 250 ms at any scale; negative control at 1 ms exits 1). Not covered: MCP startup, brain hook cost, real corpus, relevance quality.
